@@ -516,12 +516,11 @@ void Settings::setApplicationFont(const QFont &font)
 
 QFont Settings::tickerFont()
 {
-    QFontDatabase fdb;
     QFont font;
     QFont defaultFont = QApplication::font();
-    if (fdb.hasFamily("Roboto Medium"))
+    if (QFontDatabase::hasFamily("Roboto Medium"))
         defaultFont = QFont("Roboto Medium");
-    else if (fdb.hasFamily("Verdana"))
+    else if (QFontDatabase::hasFamily("Verdana"))
         defaultFont = QFont("Verdana");
     defaultFont.setPointSize(48);
     font.fromString(settings->value("tickerFont", defaultFont.toString()).toString());
@@ -530,12 +529,11 @@ QFont Settings::tickerFont()
 
 QFont Settings::applicationFont() const
 {
-    QFontDatabase fdb;
     QFont font;
     QFont defaultFont = QApplication::font();
-    if (fdb.hasFamily("Roboto"))
+    if (QFontDatabase::hasFamily("Roboto"))
         defaultFont = QFont("Roboto");
-    else if (fdb.hasFamily("Verdana"))
+    else if (QFontDatabase::hasFamily("Verdana"))
         defaultFont = QFont("Verdana");
     defaultFont.setPointSize(14);
     font.fromString(settings->value("applicationFont", defaultFont.toString()).toString());
@@ -576,14 +574,13 @@ void Settings::setTickerTextColor(QColor color)
 
 QFont Settings::cdgRemainFont()
 {
-    QFontDatabase fdb;
     QFont font;
     QFont defaultFont = QApplication::font();
-    if (fdb.hasFamily("Roboto Mono Medium"))
+    if (QFontDatabase::hasFamily("Roboto Mono Medium"))
         defaultFont = QFont("Roboto Mono Medium");
-    else if (fdb.hasFamily("Source Code Pro Medium"))
+    else if (QFontDatabase::hasFamily("Source Code Pro Medium"))
         defaultFont = QFont("Source Code Pro Medium");
-    else if (fdb.hasFamily("Verdana"))
+    else if (QFontDatabase::hasFamily("Verdana"))
         defaultFont = QFont("Verdana");
     defaultFont.setPointSize(48);
     font.fromString(settings->value("cdgRemainFont", defaultFont.toString()).toString());

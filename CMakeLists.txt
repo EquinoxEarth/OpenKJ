@@ -27,7 +27,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt6 Configuration
-find_package(Qt6 COMPONENTS Core Gui Sql Network NetworkAuth Widgets Concurrent Svg PrintSupport Multimedia WebSockets REQUIRED)
+find_package(Qt6 6.8 COMPONENTS Core Gui Sql Network NetworkAuth Widgets Concurrent Svg PrintSupport Multimedia WebSockets REQUIRED)
 
 include_directories(
         src/
@@ -108,6 +108,7 @@ set(SOURCE_FILES
         src/mainwindow.cpp
         src/dbupdater.cpp
         src/directorymonitor.cpp
+        src/directorylisting.h
         src/dlgkeychange.cpp
         src/dlgdatabase.cpp
         src/dlgrequests.cpp
@@ -276,6 +277,10 @@ option(OPENKJ_BUILD_SMOKE_TESTS "Build isolated Qt/SQLite/GStreamer runtime chec
 if(OPENKJ_BUILD_SMOKE_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     enable_testing()
+    add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
+    target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
+    add_test(NAME directory-listing COMMAND openkj-directory-listing-test)
+    set_tests_properties(directory-listing PROPERTIES TIMEOUT 15)
     add_executable(openkj-simplecrypt-compat-test packaging/simplecrypt_compat_test.cpp src/simplecrypt.cpp)
     target_link_libraries(openkj-simplecrypt-compat-test PRIVATE Qt6::Core)
     add_test(NAME simplecrypt-compat COMMAND openkj-simplecrypt-compat-test)

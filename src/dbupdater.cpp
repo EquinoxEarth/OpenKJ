@@ -6,7 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <QFileInfo>
 #include <QDir>
-#include <QDirIterator>
+#include "directorylisting.h"
 #include <QStandardPaths>
 #include <QApplication>
 #include "mzarchive.h"
@@ -245,18 +245,16 @@ void DbUpdater::DiskEnumerator::findKaraokeFilesOnDisk() {
 
         int foundInPath = 0;
         QDir dir(path);
-        QDirIterator iterator(dir.absolutePath(), QDirIterator::Subdirectories);
-        while (iterator.hasNext()) {
-            iterator.next();
-            if (!iterator.fileInfo().isDir()) {
-                const std::string ext = iterator.fileInfo().suffix().toLower().toStdString();
+        for (const auto &entry : okj::listEntriesRecursively(dir.absolutePath())) {
+            if (entry.isFile()) {
+                const std::string ext = entry.suffix().toLower().toStdString();
 
                 if (std::binary_search(m_parent.karaoke_file_extensions.begin(), m_parent.karaoke_file_extensions.end(), ext)) {
-                    karaoke_files.append(iterator.filePath());
+                    karaoke_files.append(entry.filePath());
                     foundInPath++;
                 }
                 else if (std::binary_search(m_parent.audio_file_extensions.begin(), m_parent.audio_file_extensions.end(), ext)) {
-                    const QString filePath = iterator.filePath();
+                    const QString filePath = entry.filePath();
                     audio_files.append(filePath.left(filePath.lastIndexOf('.')));
                 }
             }

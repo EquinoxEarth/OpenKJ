@@ -43,11 +43,11 @@ Database entries for the songs are based on the file naming scheme. Custom patte
 
 ## Building OpenKJ
 
-OpenKJ is built using CMake and requires a C++20 compliant compiler, Qt 6, and GStreamer (including the SoundTouch pitch plugin).
+OpenKJ is built using CMake and requires a C++20 compliant compiler, Qt 6.8 or newer, and GStreamer (including the SoundTouch pitch plugin).
 *Note: `spdlog`, `libzip`, and `taglib` are automatically fetched and built statically using CPM (CMake Package Manager) during configuration.*
 
 ### Requirements
-- **Qt 6** (Core, Gui, Sql, Network, NetworkAuth, Widgets, Concurrent, Svg, PrintSupport, Multimedia, WebSockets)
+- **Qt 6.8 or newer** (Core, Gui, Sql, Network, NetworkAuth, Widgets, Concurrent, Svg, PrintSupport, Multimedia, WebSockets)
 - **GStreamer** (the macOS setup uses 1.28.x), with audio/video plugins and SoundTouch
 - **CMake** (3.14+)
 - **Ninja** or **Make**

@@ -23,7 +23,6 @@
 
 #include <QDialog>
 #include <QDir>
-#include <QDirIterator>
 #include "src/models/tablemodelkaraokesourcedirs.h"
 #include "dlgcustompatterns.h"
 #include <QSqlDatabase>

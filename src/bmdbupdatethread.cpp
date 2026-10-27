@@ -20,7 +20,7 @@
 
 #include "bmdbupdatethread.h"
 #include <QDir>
-#include <QDirIterator>
+#include "directorylisting.h"
 #include <QSqlQuery>
 #include <QFileInfo>
 #include <QApplication>
@@ -58,18 +58,14 @@ QStringList BmDbUpdateThread::findMediaFiles(const QString& directory)
 {
     QStringList files;
     QDir dir(directory);
-    QDirIterator iterator(dir.absolutePath(), QDirIterator::Subdirectories);
-    while (iterator.hasNext()) {
-        iterator.next();
-        if (!iterator.fileInfo().isDir()) {
-            QString filename = iterator.filePath();
-            for (int i=0; i<supportedExtensions.size(); i++)
+    for (const auto &entry : okj::listFilesRecursively(dir.absolutePath())) {
+        QString filename = entry.filePath();
+        for (int i=0; i<supportedExtensions.size(); i++)
+        {
+            if (filename.endsWith(supportedExtensions.at(i),Qt::CaseInsensitive))
             {
-                if (filename.endsWith(supportedExtensions.at(i),Qt::CaseInsensitive))
-                {
-                    files.append(filename);
-                    break;
-                }
+                files.append(filename);
+                break;
             }
         }
     }

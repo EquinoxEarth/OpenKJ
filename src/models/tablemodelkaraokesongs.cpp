@@ -10,7 +10,6 @@
 #include <QPainter>
 #include <QFileInfo>
 #include <QDir>
-#include <QDirIterator>
 #include <QSvgRenderer>
 #include <QMimeData>
 #include <array>

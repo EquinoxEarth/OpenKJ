@@ -2,7 +2,9 @@
 #define OKJUTIL_H
 #include <QString>
 #include <QFileInfo>
-#include <QDirIterator>
+#include <QDir>
+#include <QFile>
+#include <array>
 
 // Given a cdg file path, tries to find a matching supported audio file
 // Returns an empty QString if no match is found

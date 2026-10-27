@@ -1,5 +1,7 @@
 #include "directorymonitor.h"
 #include "dbupdater.h"
+#include "directorylisting.h"
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QtConcurrent>
 
@@ -27,9 +29,8 @@ QStringList DirectoryMonitor::enumeratePathsAsync(QStringList paths)
         if (finfo.isDir() && finfo.isReadable())
         {
             result.append(path);
-            QDirIterator it(path, QDir::AllDirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-            while (it.hasNext()) {
-                result.append(it.next());
+            for (const auto &entry : okj::listDirectoriesRecursively(path)) {
+                result.append(entry.filePath());
             }
         }
     }

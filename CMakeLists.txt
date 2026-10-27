@@ -282,6 +282,13 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-logging-test PRIVATE Qt6::Core spdlog::spdlog)
     add_test(NAME logging COMMAND openkj-logging-test)
     set_tests_properties(logging PROPERTIES TIMEOUT 10)
+    add_executable(openkj-library-sort-test
+        packaging/library_sort_test.cpp src/models/tablemodelkaraokesongs.cpp
+        src/okjtypes.cpp src/settings.cpp src/simplecrypt.cpp src/resources.qrc)
+    target_link_libraries(openkj-library-sort-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
+        Qt6::Svg Qt6::Concurrent spdlog::spdlog)
+    add_test(NAME library-sort COMMAND openkj-library-sort-test)
+    set_tests_properties(library-sort PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
     add_test(NAME directory-listing COMMAND openkj-directory-listing-test)

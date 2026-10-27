@@ -76,14 +76,23 @@ private:
     std::shared_ptr<okj::KaraokeSong> findSongById(int songId) const;
     QHash<int, int> m_visibleRows;
     void rebuildVisibleRows();
-    // Immutable search fields: workers never read mutable song/model state.
+    // Immutable search and sort fields: workers never read mutable song/model state.
     struct SearchEntry {
         QString all, artist, title;
+        QString artistSort, titleSort, songidSort, filenameSort;
         int id;
+        int duration, plays;
+        QDateTime lastPlay;
         bool excluded;
         std::shared_ptr<okj::KaraokeSong> song;
     };
-    struct SnapshotChange { SearchEntry entry; int beforeId; };
+    static SearchEntry searchEntry(const std::shared_ptr<okj::KaraokeSong> &song);
+    struct SnapshotChange {
+        std::shared_ptr<const SearchEntry> record;
+        int id, duration, plays;
+        QDateTime lastPlay;
+    };
+    static SnapshotChange snapshotChange(const std::shared_ptr<okj::KaraokeSong> &song, bool fullRecord = false);
     std::vector<SnapshotChange> m_snapshotChanges;
     QHash<int, okj::KaraokeSong> m_recordsDuringLoad;
     void applySongRecord(const okj::KaraokeSong &record);
@@ -100,6 +109,9 @@ private:
     };
     struct SearchResult {
         quint64 revision;
+        size_t changesApplied = 0;
+        int sortColumn = -1;
+        Qt::SortOrder sortOrder = Qt::AscendingOrder;
         qint64 elapsedMs = 0;
         std::vector<std::shared_ptr<okj::KaraokeSong>> songs;
         QHash<int, int> rows;
@@ -107,6 +119,8 @@ private:
         std::shared_ptr<const std::vector<SearchEntry>> snapshot;
     };
     std::shared_ptr<const std::vector<SearchEntry>> m_searchSnapshot;
+    int m_snapshotSortColumn = -2; // -1 is a valid request for natural (ID) order.
+    Qt::SortOrder m_snapshotSortOrder = Qt::AscendingOrder;
     QFutureWatcher<std::shared_ptr<SearchResult>> m_searchWatcher{this};
     std::shared_ptr<std::atomic<quint64>> m_searchRevision = std::make_shared<std::atomic<quint64>>(0);
     bool m_searchBusy = false;
@@ -124,8 +138,7 @@ private:
     Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
     void startLibraryLoad();
     void reloadIfLoading();
-    static bool songLess(const std::shared_ptr<okj::KaraokeSong> &a, const std::shared_ptr<okj::KaraokeSong> &b, int column);
-    static void sortSongs(std::vector<std::shared_ptr<okj::KaraokeSong>> &songs, int column, Qt::SortOrder order);
+    static bool entryLess(const SearchEntry &a, const SearchEntry &b, int column);
     QString m_lastSearch;
     int m_curFontHeight{0};
     QImage m_iconCdg;

@@ -2,8 +2,11 @@
 #define TABLEMODELBREAKSONGSNEW_H
 
 #include <QAbstractTableModel>
+#include <QHash>
 #include <QTime>
 #include <chrono>
+#include <cstddef>
+#include <vector>
 #include <spdlog/async_logger.h>
 #include "spdlog/spdlog.h"
 #include "logging.h"
@@ -35,6 +38,7 @@ public:
     void sort(int column, Qt::SortOrder order) override;
     QMimeData *mimeData(const QModelIndexList &indexes) const override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
+    // Requires an existing song ID; throws std::out_of_range if absent.
     BreakSong &getSong(const int breakSongId);
     int getSongId(const QString &filePath);
     void loadDatabase();
@@ -46,6 +50,9 @@ private:
     std::shared_ptr<spdlog::logger> m_logger;
     std::vector<BreakSong> m_filteredSongs;
     std::vector<BreakSong> m_allSongs;
+    // Rows refer to library storage, independent of filtered/display order.
+    QHash<int, std::size_t> m_songRowsById;
+    QHash<QString, int> m_songIdsByPath;
     QString m_lastSearch;
     Qt::SortOrder m_lastSortOrder{Qt::AscendingOrder};
     int m_lastSortColumn{1};

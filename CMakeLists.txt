@@ -289,6 +289,13 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         Qt6::Svg Qt6::Concurrent spdlog::spdlog)
     add_test(NAME library-sort COMMAND openkj-library-sort-test)
     set_tests_properties(library-sort PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-break-song-lookups-test
+        packaging/break_song_lookups_test.cpp src/models/tablemodelbreaksongs.cpp
+        src/models/tablemodelplaylistsongs.cpp src/settings.cpp src/simplecrypt.cpp src/resources.qrc)
+    target_link_libraries(openkj-break-song-lookups-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
+        Qt6::Svg spdlog::spdlog)
+    add_test(NAME break-song-lookups COMMAND openkj-break-song-lookups-test)
+    set_tests_properties(break-song-lookups PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
     add_test(NAME directory-listing COMMAND openkj-directory-listing-test)

@@ -1,11 +1,13 @@
 #include "tablemodelbreaksongs.h"
 
 #include <QDataStream>
+#include <QIODevice>
 #include <QMimeData>
 #include <QSqlQuery>
 #include <QString>
 #include <spdlog/spdlog.h>
-#include <okjsongbookapi.h>
+#include <algorithm>
+#include <stdexcept>
 
 
 std::ostream& operator<<(std::ostream& os, const BreakSong& b)
@@ -105,6 +107,8 @@ void TableModelBreakSongs::loadDatabase()
     emit layoutAboutToBeChanged();
     m_allSongs.clear();
     m_filteredSongs.clear();
+    m_songRowsById.clear();
+    m_songIdsByPath.clear();
     QSqlQuery query;
     query.exec("SELECT songid,artist,title,path,filename,duration,searchstring FROM bmsongs");
     while (query.next())
@@ -119,6 +123,13 @@ void TableModelBreakSongs::loadDatabase()
             query.value(5).toInt(),
             query.value(6).toString().toLower().toStdString(),
         });
+    }
+    m_songRowsById.reserve(static_cast<qsizetype>(m_allSongs.size()));
+    m_songIdsByPath.reserve(static_cast<qsizetype>(m_allSongs.size()));
+    for (std::size_t row = 0; row < m_allSongs.size(); ++row) {
+        const auto &song = m_allSongs[row];
+        m_songRowsById.insert(song.id, row);
+        m_songIdsByPath.insert(song.path, song.id);
     }
     emit layoutChanged();
     search(m_lastSearch);
@@ -213,20 +224,15 @@ QMimeData *TableModelBreakSongs::mimeData(const QModelIndexList &indexes) const
 
 BreakSong &TableModelBreakSongs::getSong(const int breakSongId)
 {
-    auto it = std::find_if(m_allSongs.begin(), m_allSongs.end(), [&breakSongId] (BreakSong &song) {
-        return (song.id == breakSongId);
-    });
-    return *it;
+    const auto row = m_songRowsById.constFind(breakSongId);
+    if (row == m_songRowsById.cend())
+        throw std::out_of_range("Song ID is absent from the break-music library");
+    return m_allSongs[row.value()];
 }
 
 int TableModelBreakSongs::getSongId(const QString &filePath)
 {
-    auto it = std::find_if(m_allSongs.begin(), m_allSongs.end(), [&filePath] (BreakSong &song) {
-        return (song.path == filePath);
-    });
-    if (it == m_allSongs.end())
-        return -1;
-    return it->id;
+    return m_songIdsByPath.value(filePath, -1);
 }
 
 Qt::ItemFlags TableModelBreakSongs::flags([[maybe_unused]]const QModelIndex &index) const

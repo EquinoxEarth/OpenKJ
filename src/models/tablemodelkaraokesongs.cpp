@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QSvgRenderer>
 #include <QMimeData>
+#include <QStringView>
 #include <array>
 #include <stdexcept>
 #include <QtConcurrent/QtConcurrentRun>
@@ -579,14 +580,14 @@ void TableModelKaraokeSongs::searchExec() {
                     return std::shared_ptr<SearchResult>{};
                 if (entry.excluded)
                     continue;
-                QString haystack;
+                const auto &text = ignoreApos && entry.withoutApostrophes
+                    ? *entry.withoutApostrophes : entry.text;
+                QStringView haystack;
                 switch (type) {
-                    case SEARCH_TYPE_ALL: haystack = entry.all; break;
-                    case SEARCH_TYPE_ARTIST: haystack = entry.artist; break;
-                    case SEARCH_TYPE_TITLE: haystack = entry.title; break;
+                    case SEARCH_TYPE_ALL: haystack = text.all; break;
+                    case SEARCH_TYPE_ARTIST: haystack = text.artist; break;
+                    case SEARCH_TYPE_TITLE: haystack = text.title; break;
                 }
-                if (ignoreApos)
-                    haystack.remove('\'');
                 bool match = true;
                 for (const auto &needle : needles) {
                     if (!haystack.contains(needle)) {
@@ -717,8 +718,18 @@ Qt::ItemFlags TableModelKaraokeSongs::flags(const QModelIndex &index) const {
 
 TableModelKaraokeSongs::SearchEntry TableModelKaraokeSongs::searchEntry(
     const std::shared_ptr<okj::KaraokeSong> &song) {
-    return {song->searchString,
-            QString(song->artistL).replace('&', " and "), QString(song->titleL).replace('&', " and "),
+    SearchText text{song->searchString,
+                    QString(song->artistL).replace('&', " and "), QString(song->titleL).replace('&', " and ")};
+    std::shared_ptr<const SearchText> withoutApostrophes;
+    if (text.all.contains('\'') || text.artist.contains('\'') || text.title.contains('\'')) {
+        auto normalized = std::make_shared<SearchText>(text);
+        for (auto *value : {&normalized->all, &normalized->artist, &normalized->title}) {
+            if (value->contains('\''))
+                value->remove('\'');
+        }
+        withoutApostrophes = std::move(normalized);
+    }
+    return {std::move(text), std::move(withoutApostrophes),
             song->artistL, song->titleL, song->songidL, song->filename.toLower(),
             song->id, song->duration, song->plays, song->lastPlay, song->bad || song->dropped, song};
 }

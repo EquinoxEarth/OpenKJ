@@ -57,6 +57,14 @@ public:
         QThreadPool::globalInstance()->waitForDone();
     }
 };
+
+class SearchOptions {
+    Settings settings;
+    const bool previous = settings.ignoreAposInSearch();
+public:
+    void ignoreApostrophes(bool enabled) { settings.setIgnoreAposInSearch(enabled); }
+    ~SearchOptions() { settings.setIgnoreAposInSearch(previous); }
+};
 }
 
 class LibrarySortTest : public QObject {
@@ -127,6 +135,79 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
         QCOMPARE(ids(model), QList<int>({1,4,3,2}));
         QVERIFY(!wrongThread);
+    }
+
+    void normalizedSearchText()
+    {
+        exec("DELETE FROM dbsongs");
+        exec("INSERT INTO dbsongs VALUES "
+             "(10,'Guns N'' Roses','Don''t Cry','A',100,'a.zip','/10','guns n'' roses don''t cry',0,NULL),"
+             "(11,'O''Connor','Rock & Roll','B',100,'b.zip','/11','o''connor rock & roll',0,NULL),"
+             "(12,'Björk','It’s Oh So Quiet','C',100,'c.zip','/12','björk it’s oh so quiet',0,NULL),"
+             "(13,'Plain','Ordinary','D',100,'d.zip','/13','plain ordinary',0,NULL),"
+             "(14,'AC/DC','Don''t Stop','E',100,'e.zip','/14','ac/dc don''t stop',0,NULL),"
+             "(15,'Oconnor','Another','F',100,'f.zip','/15','oconnor another',0,NULL)");
+        SearchOptions options;
+        options.ignoreApostrophes(false);
+        TableModelKaraokeSongs model;
+        QSignalSpy loaded(&model, &TableModelKaraokeSongs::libraryLoadFinished);
+        model.loadData();
+        QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+        struct SearchCase {
+            bool ignore;
+            TableModelKaraokeSongs::SearchType type;
+            QString query;
+            QList<int> expected;
+        };
+        using Model = TableModelKaraokeSongs;
+        const QList<SearchCase> cases = {
+            {false, Model::SEARCH_TYPE_ALL, "dont", {}},
+            {true, Model::SEARCH_TYPE_ALL, "dont", {10,14}},
+            {false, Model::SEARCH_TYPE_TITLE, "don't", {10,14}},
+            {true, Model::SEARCH_TYPE_TITLE, "don't", {10,14}},
+            {false, Model::SEARCH_TYPE_ARTIST, "oconnor", {15}},
+            {true, Model::SEARCH_TYPE_ARTIST, "oconnor", {11,15}},
+            {true, Model::SEARCH_TYPE_ARTIST, "GUNS N ROSES", {10}},
+            {false, Model::SEARCH_TYPE_TITLE, "rock and roll", {11}},
+            {true, Model::SEARCH_TYPE_ALL, "rock & roll", {11}},
+            {true, Model::SEARCH_TYPE_ALL, "björk", {12}},
+            {true, Model::SEARCH_TYPE_TITLE, "its", {}}, // Preserve curly-apostrophe behavior.
+            {true, Model::SEARCH_TYPE_TITLE, "it’s", {12}},
+            {true, Model::SEARCH_TYPE_ALL, "ordinary", {13}},
+            {false, Model::SEARCH_TYPE_ALL, "ordinary", {13}}
+        };
+        for (const auto &test : cases) {
+            options.ignoreApostrophes(test.ignore);
+            QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+            model.setSearchType(test.type);
+            model.search(test.query);
+            QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
+            QCOMPARE(ids(model), test.expected);
+        }
+
+        // Reuse both variants without reloading, including after a live record edit.
+        options.ignoreApostrophes(true);
+        QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+        model.setSearchType(Model::SEARCH_TYPE_ARTIST);
+        model.search("oconnor");
+        model.sort(Model::COL_ARTIST, Qt::AscendingOrder);
+        QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
+        QCOMPARE(ids(model), QList<int>({11,15})); // Sorting uses the original spelling.
+        reset.clear();
+        {
+            WorkerGate gate;
+            model.search("oneal");
+            QTest::qWait(150);
+            exec("UPDATE dbsongs SET artist='O''Neal',searchstring='o''neal rock & roll' WHERE songid=11");
+            QVERIFY(model.refreshSong(11));
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
+        QCOMPARE(ids(model), QList<int>({11}));
+        reset.clear();
+        options.ignoreApostrophes(false);
+        model.search("oneal");
+        QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
+        QCOMPARE(ids(model), QList<int>{});
     }
 
     void latestRequestAndRecordEditsWin()
@@ -258,12 +339,14 @@ private slots:
 
     void largeLibrary()
     {
+        SearchOptions options;
+        options.ignoreApostrophes(false);
         exec("DELETE FROM dbsongs");
         const int count = qEnvironmentVariableIntValue("OPENKJ_SORT_TEST_SONGS") == 600000 ? 600000 : 100000;
         exec(QString("WITH RECURSIVE n(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM n WHERE id<@COUNT@) "
              "INSERT INTO dbsongs SELECT id, printf('Artist %06d',(id*7919)%@COUNT@), "
              "printf('Title %06d',(id*3571)%@COUNT@), printf('Disc %06d',id), id*10, "
-             "printf('File %06d.zip',@COUNT@+1-id), printf('/songs/%d',id), 'artist title', id%100, "
+             "printf('File %06d.zip',@COUNT@+1-id), printf('/songs/%d',id), 'artist''s title''s', id%100, "
              "'2024-01-01T00:00:00Z' FROM n").replace("@COUNT@", QString::number(count)));
         TableModelKaraokeSongs model;
         QSignalSpy loaded(&model, &TableModelKaraokeSongs::libraryLoadFinished);
@@ -287,6 +370,18 @@ private slots:
         QCOMPARE(model.index(count - 1, 0).data().toInt(), 1);
         qInfo("%d songs: sort request %.3f ms; completion %lld ms; UI heartbeats %d",
               count, requestNs / 1000000.0, static_cast<long long>(timer.elapsed()), heartbeats);
+
+        // Repeated searches reuse apostrophe-free text captured when entries are built.
+        options.ignoreApostrophes(true);
+        for (const auto &query : {QString("artists"), QString("titles"), QString("artists titles")}) {
+            reset.clear();
+            timer.restart();
+            model.search(query);
+            QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, timeout);
+            QCOMPARE(model.rowCount({}), count);
+            qInfo("%d songs: cached normalized search '%s' completed in %lld ms",
+                  count, qPrintable(query), static_cast<long long>(timer.elapsed()));
+        }
     }
 
     void cleanupTestCase()

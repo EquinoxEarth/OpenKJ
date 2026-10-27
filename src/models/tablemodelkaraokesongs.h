@@ -77,8 +77,13 @@ private:
     QHash<int, int> m_visibleRows;
     void rebuildVisibleRows();
     // Immutable search and sort fields: workers never read mutable song/model state.
-    struct SearchEntry {
+    struct SearchText {
         QString all, artist, title;
+    };
+    struct SearchEntry {
+        SearchText text;
+        // Only songs containing apostrophes need an additional text variant.
+        std::shared_ptr<const SearchText> withoutApostrophes;
         QString artistSort, titleSort, songidSort, filenameSort;
         int id;
         int duration, plays;

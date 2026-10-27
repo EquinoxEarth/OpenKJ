@@ -148,7 +148,7 @@ void SongShop::onNetworkReply(QNetworkReply *reply) {
         emit knLoginSuccess();
     } else if ((json.object().value("result").toString() == "ERROR") &&
                (json.object().value("error").toString() == "Wrong username or password")) {
-        m_logger->warn("PartyTyme login failed, incorrect username or password", m_loggingPrefix);
+        m_logger->warn("{} PartyTyme login failed, incorrect username or password", m_loggingPrefix);
         knLoginError = true;
         knSessionId = "";
         emit knLoginFailure();

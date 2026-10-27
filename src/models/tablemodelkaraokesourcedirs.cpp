@@ -219,7 +219,7 @@ SourceDir TableModelKaraokeSourceDirs::getDirByPath(const QString& path)
         }
     }
     if (match.getIndex() != -1) {
-        m_logger->debug("{} Match found - {} - {}", m_loggingPrefix, match.getPath(), match.getPattern());
+        m_logger->debug("{} Match found - {} - {}", m_loggingPrefix, match.getPath(), static_cast<int>(match.getPattern()));
         return match;
     }
     m_logger->debug("{} No match found - {}", m_loggingPrefix, path);

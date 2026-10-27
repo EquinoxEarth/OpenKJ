@@ -103,7 +103,7 @@
         "install -Dm644 LICENSE /app/share/licenses/openkj/LICENSE",
         "install -Dm644 vendor/libzip/LICENSE /app/share/licenses/openkj/libzip-LICENSE",
         "install -Dm644 vendor/spdlog/LICENSE /app/share/licenses/openkj/spdlog-LICENSE",
-        "install -Dm644 vendor/spdlog/include/spdlog/fmt/bundled/LICENSE.rst /app/share/licenses/openkj/fmt-LICENSE",
+        "install -Dm644 packaging/licenses/fmt-12.1.0-LICENSE /app/share/licenses/openkj/fmt-LICENSE",
         "install -Dm644 vendor/taglib/COPYING.LGPL /app/share/licenses/openkj/taglib-COPYING.LGPL",
         "install -Dm644 vendor/taglib/COPYING.MPL /app/share/licenses/openkj/taglib-COPYING.MPL"
       ],
@@ -122,7 +122,7 @@
         {
           "type": "git",
           "url": "https://github.com/gabime/spdlog.git",
-          "commit": "de0dbfa3596a18cd70a4619b6a9766847a941276",
+          "commit": "79524ddd08a4ec981b7fea76afd08ee05f83755d",
           "dest": "vendor/spdlog"
         },
         {

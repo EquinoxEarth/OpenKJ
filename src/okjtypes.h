@@ -5,7 +5,7 @@
 #include <QString>
 #include <qmetatype.h>
 #include <spdlog/async_logger.h>
-#include <spdlog/fmt/ostr.h>
+#include "logging.h"
 #include "settings.h"
 
 namespace okj {

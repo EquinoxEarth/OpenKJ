@@ -31,7 +31,7 @@
 #include "okjsongbookapi.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/async_logger.h>
-#include <spdlog/fmt/ostr.h>
+#include "logging.h"
 
 std::ostream& operator<<(std::ostream& os, const QString& s);
 

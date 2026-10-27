@@ -37,7 +37,7 @@ include_directories(
 include(cmake/CPM.cmake)
 
 # CPM Packages
-CPMAddPackage("gh:gabime/spdlog@1.8.2")
+CPMAddPackage("gh:gabime/spdlog@1.17.0")
 
 # libzip static build via CPM
 set(OPENKJ_LIBZIP_VERSION 1.10.1)
@@ -97,6 +97,7 @@ set(GSTREAMER_LIBRARIES ${GSTREAMER_LIBRARIES})
 
 set(SOURCE_FILES
         src/main.cpp
+        src/logging.h
         src/bundledruntime.h
         src/dlgaddsong.cpp
         src/mediabackend.cpp
@@ -277,6 +278,10 @@ option(OPENKJ_BUILD_SMOKE_TESTS "Build isolated Qt/SQLite/GStreamer runtime chec
 if(OPENKJ_BUILD_SMOKE_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     enable_testing()
+    add_executable(openkj-logging-test packaging/logging_test.cpp)
+    target_link_libraries(openkj-logging-test PRIVATE Qt6::Core spdlog::spdlog)
+    add_test(NAME logging COMMAND openkj-logging-test)
+    set_tests_properties(logging PROPERTIES TIMEOUT 10)
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
     add_test(NAME directory-listing COMMAND openkj-directory-listing-test)

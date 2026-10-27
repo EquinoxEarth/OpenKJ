@@ -7,7 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <spdlog/spdlog.h>
-#include <spdlog/fmt/ostr.h>
+#include "logging.h"
 #include <chrono>
 
 std::ostream& operator<<(std::ostream& os, const QString& s);
@@ -241,7 +241,7 @@ void TableModelRotation::singerMove(const int oldPosition, const int newPosition
         m_logger->debug("{} Moving singer - Name: {} - Old position: {} - New position: {} - Skip DB commit: {}",
                         m_loggingPrefix, singer.name, oldPosition, newPosition, skipCommit);
     else
-        m_logger->error("{} Error loading singer by position!!");
+        m_logger->error("{} Error loading singer by position!!", m_loggingPrefix);
     emit layoutAboutToBeChanged();
     if (oldPosition > newPosition) {
         // moving up

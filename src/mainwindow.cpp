@@ -4667,7 +4667,7 @@ void MainWindow::actionBreakMusicTorture() {
         m_logger->info("{} Karaoke torture test timer timeout", m_loggingPrefix);
         ui->tableViewBmPlaylist->selectRow(0);
         tableViewBmPlaylistDoubleClicked(ui->tableViewBmPlaylist->selectionModel()->selectedRows().at(0));
-        m_logger->info("{} test runs: ", m_loggingPrefix, ++runs);
+        m_logger->info("{} test runs: {}", m_loggingPrefix, ++runs);
     });
     m_timerTest.start(2000);
 }

@@ -58,13 +58,14 @@ def collect(app, build, dependencies):
     (destination / 'qt/source-urls.json').write_text(json.dumps(sources, indent=2) + '\n')
     for dependency, names in {
         'libzip': ['LICENSE'], 'taglib': ['COPYING.LGPL', 'COPYING.MPL'],
-        'spdlog': ['LICENSE', 'include/spdlog/fmt/bundled/LICENSE.rst'],
+        'spdlog': ['LICENSE'],
     }.items():
         for name in names:
             source = build / f'_deps/{dependency}-src' / name
             target = destination / 'static' / dependency / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+    shutil.copyfile(root / 'packaging/licenses/fmt-12.1.0-LICENSE', destination / 'static/spdlog/fmt-LICENSE')
     plugin_license = dependencies / 'gst-plugins-bad-1.28.8/COPYING'
     if not plugin_license.exists():
         # Keep the original external-plugin build path usable as well.

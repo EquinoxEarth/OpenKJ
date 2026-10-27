@@ -8,7 +8,7 @@
 #include <QJsonDocument>
 #include <QUrl>
 #include <QSvgRenderer>
-#include <spdlog/fmt/ostr.h>
+#include "logging.h"
 
 std::ostream & operator<<(std::ostream& os, const QString& s);
 

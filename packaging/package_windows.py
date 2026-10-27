@@ -98,11 +98,12 @@ def stage(build, prefix, destination):
     shutil.copytree(prefix / "share/licenses", destination / "third-party/licenses")
     for dependency, names in {
         "libzip": ["LICENSE"], "taglib": ["COPYING.LGPL", "COPYING.MPL"],
-        "spdlog": ["LICENSE", "include/spdlog/fmt/bundled/LICENSE.rst"],
+        "spdlog": ["LICENSE"],
     }.items():
         for name in names:
             copy(build / f"_deps/{dependency}-src" / name, Path("third-party") / dependency / name)
     root = Path(__file__).resolve().parents[1]
+    copy(root / "packaging/licenses/fmt-12.1.0-LICENSE", "third-party/spdlog/fmt-LICENSE")
     copy(root / "LICENSE", "LICENSE.txt")
     (destination / "third-party/packages.txt").write_text(output("pacman", "-Q"), encoding="utf-8")
     (destination / "third-party/README.txt").write_text(

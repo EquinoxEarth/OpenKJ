@@ -9,6 +9,7 @@
 #include "okjsongbookapi.h"
 #include <spdlog/spdlog.h>
 #include "settings.h"
+#include "tablelayout.h"
 
 namespace Ui {
 class DlgRequests;
@@ -32,6 +33,7 @@ private:
     std::vector<int> m_prevRequestList;
     OKJSongbookAPI &songbookApi;
     Settings m_settings;
+    okj::DeferredLayout m_layout{this, [this] { autoSizeViews(); }};
 
 public:
     bool isLibraryLoading() const { return dbModel.isLoading(); }

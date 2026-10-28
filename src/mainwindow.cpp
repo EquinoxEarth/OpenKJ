@@ -39,52 +39,6 @@
 #include <timeapi.h>
 #endif
 
-// Distribute available width between Artist and Title,
-// then allow both columns to be resized manually.
-// This means that at application start they will fill the available space, but the user can resize them as desired.
-static void sizeFlexibleColumns(
-    QTableView *table,
-    int artistColumn,
-    int titleColumn)
-{
-    auto *header = table->horizontalHeader();
-
-    // All sizing is performed manually.
-    header->setSectionResizeMode(
-        artistColumn, QHeaderView::Interactive);
-    header->setSectionResizeMode(
-        titleColumn, QHeaderView::Interactive);
-
-    // Calculate space after accounting for the other visible columns.
-    int available = table->viewport()->width();
-
-    for (int column = 0; column < header->count(); ++column) {
-        if (column == artistColumn ||
-            column == titleColumn ||
-            header->isSectionHidden(column))
-            continue;
-
-        available -= header->sectionSize(column);
-    }
-
-    // Minimum widths prevent columns from collapsing.
-    constexpr int minimumWidth = 150;
-
-    // Divide the remaining space 30% / 70%.
-    const int artistWidth = std::max(
-        minimumWidth,
-        static_cast<int>(available * 0.30)
-    );
-
-    const int titleWidth = std::max(
-        minimumWidth,
-        available - artistWidth
-    );
-
-    header->resizeSection(artistColumn, artistWidth);
-    header->resizeSection(titleColumn, titleWidth);
-}
-
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "OCDFAInspection"
 void MainWindow::addSfxButton(const QString &filename, const QString &label, bool reset) {
@@ -633,7 +587,7 @@ MainWindow::MainWindow(QWidget *parent) :
     m_timerLazyDurationStart.setSingleShot(true);
     m_timerLazyDurationStart.setInterval(50);
     connect(&m_timerLazyDurationStart, &QTimer::timeout, this, &MainWindow::restartLazyDurationScan);
-    // Connect before the initial load: construction still processes some UI events.
+    // Connect before starting the asynchronous initial library load.
     connect(&m_karaokeSongsModel, &TableModelKaraokeSongs::libraryLoadStarted, this, [this] {
         m_libraryLoadFailed = false;
         updateDatabaseStatus();
@@ -774,11 +728,14 @@ MainWindow::MainWindow(QWidget *parent) :
     m_updateChecker->checkForUpdates();
     m_timerButtonFlash.start(1000);
     m_logger->info("{} Initial UI setup complete", m_loggingPrefix);
-    QApplication::processEvents();
     appFontChanged(m_settings.applicationFont());
-    QTimer::singleShot(500, [&]() {
+    QTimer::singleShot(500, this, [this]() {
         autosizeViews();
         autosizeBmViews();
+        // Keep the final startup sizing pass from overwriting host-saved widths.
+        m_settings.restoreColumnWidths(ui->tableViewDB);
+        m_settings.restoreColumnWidths(ui->tableViewQueue);
+        m_settings.restoreColumnWidths(ui->tableViewHistory);
     });
     m_dlgRegularSingers.regularsChanged();
     m_dlgRegularSingers.setModal(false);
@@ -891,13 +848,13 @@ void MainWindow::loadSettings() {
             break;
     }
     comboBoxBmPlaylistsIndexChanged(m_settings.bmPlaylistIndex());
-    QTimer::singleShot(250, [&]() {
+    QTimer::singleShot(250, this, [this]() {
         m_settings.restoreWindowState(this);
         m_initialUiSetupDone = true;
         rotationDataChanged();
     });
     if (m_settings.bmAutoStart()) {
-        QTimer::singleShot(1000, [&]() {
+        QTimer::singleShot(1000, this, [this]() {
             if (m_tableModelPlaylistSongs.rowCount() > 0)
             {
                 m_tableModelPlaylistSongs.setCurrentPosition(0);
@@ -918,7 +875,7 @@ void MainWindow::loadSettings() {
     }
     // Without this, QAction items aren't getting set properly on program startup.  Not sure why, but it must be
     // something to do with it needing to be set after the window is finished building.
-    QTimer::singleShot(250, [&] () {
+    QTimer::singleShot(250, this, [this] () {
         appFontChanged(m_settings.applicationFont());
         m_settings.restoreColumnWidths(ui->tableViewDB);
         m_settings.restoreColumnWidths(ui->tableViewQueue);
@@ -1188,29 +1145,15 @@ void MainWindow::setupConnections() {
     connect(ui->actionBurn_in_EOS_Jump, &QAction::triggered, this, &MainWindow::actionBurnInEosJump);
     connect(ui->sliderVolume, &QSlider::valueChanged, this, &MainWindow::sliderVolumeChanged);
     connect(ui->sliderBmVolume, &QSlider::valueChanged, this, &MainWindow::sliderBmVolumeChanged);
-    connect(ui->tabWidgetQueue, &QTabWidget::currentChanged,
-            this, [this](int current) {
-
-        if (current == 1) {
-            // Switching to History.
-            m_settings.saveColumnWidths(ui->tableViewQueue);
-
-            // Wait until Qt has completed the tab switch
-            // before calculating History column widths.
-            QTimer::singleShot(0, this, [this]() {
-            if (ui->tabWidgetQueue->currentIndex() == 1) {
-                autosizeHistoryCols();
-            }
-        });
-
-        } else {
-            // Switching back to Queue.
-            m_settings.saveColumnWidths(ui->tableViewHistory);
-
-            if (!m_settings.restoreColumnWidths(ui->tableViewQueue)) {
-                autosizeQueueCols();
-            }
+    connect(ui->tabWidgetQueue, &QTabWidget::currentChanged, this, [this](int current) {
+        if (current != 0 && current != 1)
+            return;
+        // A rapidly skipped tab has not had its layout applied yet. Do not
+        // overwrite saved widths with that tab's transient geometry.
+        if (!m_queueLayout.isPending()) {
+            m_settings.saveColumnWidths(current == 1 ? ui->tableViewQueue : ui->tableViewHistory);
         }
+        m_queueLayout.schedule();
     });
 
 }
@@ -3606,11 +3549,24 @@ void MainWindow::autosizeKaraokeDbCols() const
     }
 
     // Let artist and title share the remaining space, but remain resizable by the user.
-    sizeFlexibleColumns(
+    okj::sizeFlexibleColumns(
         ui->tableViewDB,
         TableModelKaraokeSongs::COL_ARTIST,
         TableModelKaraokeSongs::COL_TITLE
     );
+}
+
+void MainWindow::applyQueueTabLayout()
+{
+    if (m_shuttingDown || !ui->tabWidgetQueue->isVisible())
+        return;
+    if (ui->tabWidgetQueue->currentIndex() == 1) {
+        autosizeHistoryCols();
+        m_settings.restoreColumnWidths(ui->tableViewHistory);
+    } else if (ui->tabWidgetQueue->currentIndex() == 0) {
+        autosizeQueueCols();
+        m_settings.restoreColumnWidths(ui->tableViewQueue);
+    }
 }
 
 void MainWindow::autosizeQueueCols()
@@ -3657,7 +3613,7 @@ void MainWindow::autosizeQueueCols()
     );
 
     // Let artist and title share the remaining space, but remain resizable by the user.
-    sizeFlexibleColumns(
+    okj::sizeFlexibleColumns(
         ui->tableViewQueue,
         TableModelQueueSongs::COL_ARTIST,
         TableModelQueueSongs::COL_TITLE
@@ -3692,7 +3648,7 @@ void MainWindow::autosizeHistoryCols()
     }
 
     // Let artist and title share the remaining space, but remain resizable by the user.
-    sizeFlexibleColumns(
+    okj::sizeFlexibleColumns(
         ui->tableViewHistory,
         TableModelHistorySongs::ARTIST,
         TableModelHistorySongs::TITLE
@@ -3890,9 +3846,7 @@ void MainWindow::tableViewRotationCurrentChanged(const QModelIndex &cur, const Q
     if (!ui->tabWidgetQueue->isVisible()) {
         ui->tabWidgetQueue->setVisible(true);
         ui->labelNoSinger->setVisible(false);
-        QApplication::processEvents();
-        autosizeQueueCols();
-        m_settings.restoreColumnWidths(ui->tableViewQueue);
+        m_queueLayout.schedule();
     }
 }
 

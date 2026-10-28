@@ -84,7 +84,7 @@ DlgRequests::DlgRequests(TableModelRotation &rotationModel, OKJSongbookAPI &song
     QSize mcbSize(fm.height(), fm.height());
     ui->spinBoxKey->setMaximum(12);
     ui->spinBoxKey->setMinimum(-12);
-    autoSizeViews();
+    m_layout.schedule();
     if (!m_settings.testingEnabled())
         ui->pushButtonRunTortureTest->hide();
     connect(&songbookApi, &OKJSongbookAPI::requestsChanged, this, &DlgRequests::requestsChanged);
@@ -106,7 +106,7 @@ void DlgRequests::databaseAboutToUpdate() {
 
 void DlgRequests::databaseUpdateComplete() {
     dbModel.loadData();
-    autoSizeViews();
+    m_layout.schedule();
 }
 
 void DlgRequests::setSongDuration(const QString &path, unsigned int duration) {
@@ -161,7 +161,7 @@ void DlgRequests::requestsModified() {
         this->show();
         this->raise();
     }
-    autoSizeViews();
+    m_layout.schedule();
     if (requestsModel->count() > 0 && m_settings.testingEnabled() && testTimer.isActive()) {
         ui->tableViewRequests->selectRow(0);
         for (auto i=0; i<20; i++)
@@ -455,49 +455,38 @@ void DlgRequests::lineEditSearchEscapePressed() {
 }
 
 void DlgRequests::autoSizeViews() {
-    int fH = QFontMetrics(m_settings.applicationFont()).height();
-    // toggle between resize modes to force sizing then switch back to interactive sizing
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_LASTPLAY, QHeaderView::ResizeToContents);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_PLAYS, QHeaderView::ResizeToContents);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_DURATION, QHeaderView::ResizeToContents);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_ARTIST, QHeaderView::Stretch);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_TITLE, QHeaderView::Stretch);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_SONGID, QHeaderView::ResizeToContents);
-    QApplication::processEvents();
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_ARTIST, QHeaderView::Interactive);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_TITLE, QHeaderView::Interactive);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_SONGID, QHeaderView::Interactive);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_LASTPLAY, QHeaderView::Interactive);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_PLAYS, QHeaderView::Interactive);
-    ui->tableViewSearch->horizontalHeader()->setSectionResizeMode(TableModelKaraokeSongs::COL_DURATION, QHeaderView::Interactive);
-    int tsWidth = QFontMetrics(m_settings.applicationFont()).horizontalAdvance(" 00/00/00 00:00 xx ");
-    int keyWidth = QFontMetrics(m_settings.applicationFont()).horizontalAdvance("_Key_");
-    int singerColSize = QFontMetrics(m_settings.applicationFont()).horizontalAdvance("_Isaac_Lightburn_");
-    qInfo() << "tsWidth = " << tsWidth;
-    int delwidth = fH * 2;
-    qInfo() << "singerColSize = " << singerColSize;
-    int remainingSpace = ui->tableViewRequests->width() - tsWidth - delwidth - singerColSize - keyWidth - 10;
-    int artistColSize = remainingSpace / 2;
-    int titleColSize = remainingSpace / 2;
-    ui->tableViewRequests->horizontalHeader()->resizeSection(0, singerColSize);
-    ui->tableViewRequests->horizontalHeader()->resizeSection(1, artistColSize);
-    ui->tableViewRequests->horizontalHeader()->resizeSection(2, titleColSize);
-    ui->tableViewRequests->horizontalHeader()->resizeSection(3, tsWidth);
-    ui->tableViewRequests->horizontalHeader()->resizeSection(4, keyWidth);
-    ui->tableViewRequests->horizontalHeader()->resizeSection(5, delwidth);
+    if (!isVisible())
+        return;
+    const QFontMetrics metrics(m_settings.applicationFont());
+    const int padding = metrics.height();
+    const auto width = [&](const QString &label, const QString &sample) {
+        return std::max(metrics.horizontalAdvance(label), metrics.horizontalAdvance(sample)) + padding;
+    };
+    okj::sizeTableColumns(ui->tableViewSearch, {
+        {TableModelKaraokeSongs::COL_SONGID, width(tr("Song ID"), "ABCDEFGHIJ-123")},
+        {TableModelKaraokeSongs::COL_DURATION, width(tr("Duration"), "000:00")},
+        {TableModelKaraokeSongs::COL_PLAYS, width(tr("Plays"), "999999")},
+        {TableModelKaraokeSongs::COL_LASTPLAY, width(tr("Last Played"), "00/00/0000 00:00 xx")}
+    }, TableModelKaraokeSongs::COL_ARTIST, TableModelKaraokeSongs::COL_TITLE);
+    okj::sizeTableColumns(ui->tableViewRequests, {
+        {TableModelRequests::SINGER, width(tr("Singer"), "Isaac Lightburn")},
+        {TableModelRequests::TIMESTAMP, width(tr("Time"), "00/00/00 00:00 xx")},
+        {TableModelRequests::KEYCHG, width(tr("Key"), "+12")},
+        {5, padding * 2}
+    }, TableModelRequests::ARTIST, TableModelRequests::TITLE, 0.50);
     ui->tableViewRequests->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);
 }
 
 
 void DlgRequests::resizeEvent(QResizeEvent *event) {
     QDialog::resizeEvent(event);
-    autoSizeViews();
+    m_layout.schedule();
 }
 
 
 void DlgRequests::showEvent(QShowEvent *event) {
     QDialog::showEvent(event);
-    autoSizeViews();
+    m_layout.schedule();
     ui->comboBoxAddPosition->setCurrentIndex(m_settings.lastSingerAddPositionType());
 }
 

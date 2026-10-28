@@ -98,6 +98,7 @@ set(GSTREAMER_LIBRARIES ${GSTREAMER_LIBRARIES})
 set(SOURCE_FILES
         src/main.cpp
         src/logging.h
+        src/tablelayout.h
         src/bundledruntime.h
         src/dlgaddsong.cpp
         src/mediabackend.cpp
@@ -304,6 +305,10 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         Qt6::Concurrent spdlog::spdlog tag)
     add_test(NAME playlist-import COMMAND openkj-playlist-import-test)
     set_tests_properties(playlist-import PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-table-layout-test packaging/table_layout_test.cpp)
+    target_link_libraries(openkj-table-layout-test PRIVATE Qt6::Test Qt6::Widgets)
+    add_test(NAME table-layout COMMAND openkj-table-layout-test)
+    set_tests_properties(table-layout PROPERTIES TIMEOUT 15 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
     add_test(NAME directory-listing COMMAND openkj-directory-listing-test)

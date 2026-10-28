@@ -27,6 +27,7 @@
 #include "src/models/tablemodelplaylistsongs.h"
 #include "bmdbdialog.h"
 #include "breakplaylistimporter.h"
+#include "tablelayout.h"
 #include <QShortcut>
 #include <QThread>
 #include "audiorecorder.h"
@@ -118,6 +119,8 @@ private:
     void updateDatabaseStatus();
     void connectDurationScanStatus();
     void updateAutoplayStatus();
+    void applyQueueTabLayout();
+    okj::DeferredLayout m_queueLayout{this, [this] { applyQueueTabLayout(); }};
     QTimer m_timerKaraokeAA;
     QTimer m_timerSlowUiUpdate;
     QTimer m_timerLazyDurationStart;

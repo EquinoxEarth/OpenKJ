@@ -1143,8 +1143,9 @@ void MainWindow::setupConnections() {
             &MainWindow::tableViewHistoryContextMenu);
     connect(ui->actionBreak_music_torture, &QAction::triggered, this, &MainWindow::actionBreakMusicTorture);
     connect(ui->actionBurn_in_EOS_Jump, &QAction::triggered, this, &MainWindow::actionBurnInEosJump);
-    connect(ui->sliderVolume, &QSlider::valueChanged, this, &MainWindow::sliderVolumeChanged);
-    connect(ui->sliderBmVolume, &QSlider::valueChanged, this, &MainWindow::sliderBmVolumeChanged);
+    // Gain changes must preserve fade envelopes, including a pending Stop.
+    connect(ui->sliderVolume, &QSlider::valueChanged, &m_mediaBackendKar, &MediaBackend::setVolume);
+    connect(ui->sliderBmVolume, &QSlider::valueChanged, &m_mediaBackendBm, &MediaBackend::setVolume);
     connect(ui->tabWidgetQueue, &QTabWidget::currentChanged, this, [this](int current) {
         if (current != 0 && current != 1)
             return;
@@ -3355,17 +3356,6 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     requestsDialog->setVisible(false);
     m_playlistImporter.cancel();
     event->accept();
-}
-
-void MainWindow::sliderVolumeChanged(int value) {
-    m_mediaBackendKar.setVolume(value);
-    m_mediaBackendKar.fadeInImmediate();
-}
-
-void MainWindow::sliderBmVolumeChanged(int value) {
-    m_mediaBackendBm.setVolume(value);
-    if (m_mediaBackendKar.state() != MediaBackend::PlayingState)
-        m_mediaBackendBm.fadeInImmediate();
 }
 
 void MainWindow::songDropNoSingerSel() {

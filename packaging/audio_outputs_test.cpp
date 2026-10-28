@@ -1,6 +1,13 @@
 #include "mediabackend.h"
+#include "audiofader.h"
 #include <QApplication>
+#include <QDataStream>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QSlider>
 #include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QTest>
 #include <cstdio>
 #include <stdexcept>
 
@@ -19,7 +26,9 @@ static GstElement *createOutput(GstDevice *device, const gchar *name)
     auto *displayName = gst_device_get_display_name(device);
     created.append(QString::fromUtf8(displayName));
     g_free(displayName);
-    return gst_element_factory_make("fakesink", name);
+    auto *sink = gst_element_factory_make("fakesink", name);
+    g_object_set(sink, "sync", TRUE, nullptr);
+    return sink;
 }
 static void test_audio_device_class_init(TestAudioDeviceClass *klass)
 {
@@ -59,6 +68,71 @@ static void require(bool condition, const char *message)
 {
     if (!condition)
         throw std::runtime_error(message);
+}
+
+template<typename Predicate>
+static void waitFor(Predicate predicate, int timeout, const char *message)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < timeout)
+        QTest::qWait(20);
+    require(predicate(), message);
+}
+
+static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType type)
+{
+    MediaBackend backend(nullptr, "Stop and volume test", type);
+    backend.setAudioOutputDevice("Test Speakers");
+    QSlider slider;
+    slider.setRange(0, 100);
+    // Use the same direct volume binding as the application sliders.
+    QObject::connect(&slider, &QSlider::valueChanged, &backend, &MediaBackend::setVolume);
+    slider.setValue(60);
+    backend.setUseFader(false);
+    backend.setMedia(filename);
+    backend.play();
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000, "Test audio must start");
+    auto *fader = backend.findChild<AudioFader *>();
+    require(fader && fader->state() == AudioFader::FadedIn, "Normal playback must be audible");
+    slider.setValue(75);
+    require(backend.getVolume() == 75 && fader->state() == AudioFader::FadedIn,
+            "Normal volume changes must retain the current fade envelope");
+
+    backend.setUseFader(true);
+    backend.stop(false);
+    require(fader->state() == AudioFader::FadingOut, "Stop must begin its fade-out");
+    slider.setValue(85);
+    require(fader->state() == AudioFader::FadingOut, "A slider change must not cancel the stop fade");
+    QTimer changes;
+    changes.setInterval(30);
+    QObject::connect(&changes, &QTimer::timeout, &slider, [&] { slider.setValue((slider.value() + 17) % 101); });
+    changes.start();
+    waitFor([&] { return backend.state() == MediaBackend::StoppedState; }, 5000,
+            "Repeated slider changes must still allow Stop to complete");
+    changes.stop();
+    slider.setValue(37);
+    QTest::qWait(100);
+    require(backend.state() == MediaBackend::StoppedState && fader->state() == AudioFader::FadedOut,
+            "Changing the volume after Stop must leave playback stopped and silent");
+    require(backend.getVolume() == 37, "The requested volume must be retained for the next Play");
+
+    backend.play();
+    slider.setValue(63);
+    require(fader->state() == AudioFader::FadingIn, "A slider change must also preserve a normal fade-in");
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000,
+            "An explicit Play must still restart playback");
+    backend.rawStop();
+
+    if (type == MediaBackend::BackgroundMusic) {
+        backend.play(true);
+        waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000,
+                "Silent break music must start");
+        slider.setValue(90);
+        require(fader->state() == AudioFader::FadedOut,
+                "A break-music slider change must preserve automatic ducking");
+        backend.rawStop();
+    }
 }
 
 int main(int argc, char **argv)
@@ -132,7 +206,28 @@ int main(int argc, char **argv)
         following.setAudioOutputDevice(settings.effectiveAudioOutputDeviceBm());
         require(created.size() == 7 && created.last() == "Test Speakers",
                 "Disabling follow must restore the independent output");
-        std::puts("Audio output routing checks passed");
+        QTemporaryDir temporary;
+        require(temporary.isValid(), "Cannot create temporary audio directory");
+        const auto filename = temporary.filePath("stop-volume.wav");
+        {
+            QFile file(filename);
+            require(file.open(QIODevice::WriteOnly), "Cannot create test audio");
+            QDataStream wave(&file);
+            wave.setByteOrder(QDataStream::LittleEndian);
+            wave.writeRawData("RIFF", 4);
+            wave << quint32(480036);
+            wave.writeRawData("WAVEfmt ", 8);
+            wave << quint32(16) << quint16(1) << quint16(1) << quint32(8000) << quint32(16000)
+                 << quint16(2) << quint16(16);
+            wave.writeRawData("data", 4);
+            wave << quint32(480000);
+            file.write(QByteArray(480000, '\0'));
+        }
+        settings.setAudioOutputDevice("Test Speakers");
+        settings.setAudioOutputDeviceBm("Test Speakers");
+        checkStopAndVolume(filename, MediaBackend::Karaoke);
+        checkStopAndVolume(filename, MediaBackend::BackgroundMusic);
+        std::puts("Audio output routing, stop/volume, and fade checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

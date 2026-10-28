@@ -318,8 +318,6 @@ private slots:
     void tableViewHistoryContextMenu(const QPoint &pos);
     void actionBreakMusicTorture();
     void actionBurnInEosJump();
-    void sliderVolumeChanged(int value);
-    void sliderBmVolumeChanged(int value);
     void showAddSingerDialog();
 
 

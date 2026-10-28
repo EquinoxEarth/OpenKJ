@@ -2,6 +2,10 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QMessageBox>
+#include <QProgressDialog>
+#include <QSignalBlocker>
+#include <QStatusBar>
+#include <limits>
 #include <QElapsedTimer>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QFutureWatcher>
@@ -16,7 +20,6 @@
 #include <algorithm>
 #include "mzarchive.h"
 #include "mediapreparation.h"
-#include "tagreader.h"
 #include "dlgeditsong.h"
 #include "soundfxbutton.h"
 #include "src/models/tableviewtooltipfilter.h"
@@ -1234,7 +1237,7 @@ void MainWindow::tableViewRotationSelChanged() {
 }
 
 void MainWindow::tableViewPlaylistSelectionChanged() {
-    if (ui->tableViewBmPlaylist->selectionModel()->selectedRows().empty()) {
+    if (m_playlistImporter.isRunning() || ui->tableViewBmPlaylist->selectionModel()->selectedRows().empty()) {
         ui->btnPlBottom->setEnabled(false);
         ui->btnPlDown->setEnabled(false);
         ui->btnPlTop->setEnabled(false);
@@ -1580,6 +1583,7 @@ void MainWindow::play(const QString &karaokeFilePath, const bool &k2k) {
 
 MainWindow::~MainWindow() {
     m_shuttingDown = true;
+    m_playlistImporter.cancel();
     cancelMediaPreparation();
     if (m_dbThread) {
         m_dbThread->quit();
@@ -2921,6 +2925,7 @@ void MainWindow::bmDbUpdated() {
 }
 
 void MainWindow::bmDbCleared() {
+    m_playlistImporter.cancel();
     m_logger->info("{} bmDbCleared fired", m_loggingPrefix);
     m_tableModelBreakSongs.loadDatabase();
     bmAddPlaylist("Default");
@@ -3111,6 +3116,8 @@ void MainWindow::actionPlaylistNewTriggered() {
 }
 
 void MainWindow::actionPlaylistImportTriggered() {
+    if (m_playlistImporter.isRunning())
+        return;
 #ifdef Q_OS_LINUX
     QString importFile = QFileDialog::getOpenFileName(
             this,
@@ -3129,96 +3136,99 @@ void MainWindow::actionPlaylistImportTriggered() {
             nullptr
     );
 #endif
-    if (importFile != "") {
-        QFileInfo fi(importFile);
-        QString importPath = fi.absoluteDir().path();
-        QStringList files;
-        QFile textFile;
-        textFile.setFileName(importFile);
-        textFile.open(QFile::ReadOnly);
-        QTextStream textStream(&textFile);
-        while (true) {
-            QString line = textStream.readLine();
-            if (line.isNull())
-                break;
-            else {
-                if (!line.startsWith("#"))
-                    files.append(line.replace("\\", "/"));
-            }
-        }
-        bool ok;
-        QString plTitle = QInputDialog::getText(this, tr("New Playlist"), tr("Playlist title:"), QLineEdit::Normal,
-                                                tr("New Playlist"), &ok);
-
-        if (ok && !plTitle.isEmpty()) {
-            if (!bmPlaylistExists(plTitle)) {
-                if (m_tableModelPlaylists->insertRow(m_tableModelPlaylists->rowCount())) {
-                    QModelIndex index = m_tableModelPlaylists->index(m_tableModelPlaylists->rowCount() - 1, 1);
-                    m_tableModelPlaylists->setData(index, plTitle);
-                    m_tableModelPlaylists->submitAll();
-                    m_tableModelPlaylists->select();
-                    ui->comboBoxBmPlaylists->setCurrentIndex(index.row());
-                    m_tableModelPlaylistSongs.setCurrentPlaylist(
-                            m_tableModelPlaylists->index(index.row(), 0).data().toInt());
-
-                }
-            }
-        }
-        QSqlQuery query;
-        query.exec("BEGIN TRANSACTION");
-        TagReader reader;
-        for (int i = 0; i < files.size(); i++) {
-            if (QFile(files.at(i)).exists()) {
-                reader.setMedia(files.at(i).toLocal8Bit());
-                QString duration = QString::number(reader.getDuration() / 1000);
-                QString artist = reader.getArtist();
-                QString title = reader.getTitle();
-                QString filename = QFileInfo(files.at(i)).fileName();
-                QString queryString =
-                        "INSERT OR IGNORE INTO bmsongs (artist,title,path,filename,duration,searchstring) VALUES(\"" +
-                        artist + "\",\"" + title + "\",\"" + files.at(i) + "\",\"" + filename + "\",\"" + duration +
-                        "\",\"" + artist + title + filename + "\")";
-                query.exec(queryString);
-            } else if (QFile(importPath + "/" + files.at(i)).exists()) {
-                reader.setMedia(importPath + "/" + files.at(i).toLocal8Bit());
-                QString duration = QString::number(reader.getDuration() / 1000);
-                QString artist = reader.getArtist();
-                QString title = reader.getTitle();
-                QString filename = QFileInfo(files.at(i)).fileName();
-                QString path = importPath + "/" + files.at(i);
-                QString searchstring = artist + " " + title + " " + filename;
-                QString queryString = "INSERT OR IGNORE INTO bmsongs (artist,title,path,filename,duration,searchstring) VALUES(:artist,:title,:path,:filename,:duration,:searchstring)";
-                query.prepare(queryString);
-                query.bindValue(":artist", artist);
-                query.bindValue(":title", title);
-                query.bindValue(":path", path);
-                query.bindValue(":filename", filename);
-                query.bindValue(":duration", duration);
-                query.bindValue(":searchstring", searchstring);
-                query.exec();
-            }
-        }
-        query.exec("COMMIT TRANSACTION");
-        m_tableModelBreakSongs.loadDatabase();
-        QApplication::processEvents();
-        QList<int> songIds;
-        for (int i = 0; i < files.size(); i++) {
-            int songId = m_tableModelBreakSongs.getSongId(files.at(i));
-            if (songId >= 0) {
-                songIds.push_back(songId);
-            } else {
-                songId = m_tableModelBreakSongs.getSongId(importPath + "/" + files.at(i));
-                if (songId >= 0) {
-                    songIds.push_back(songId);
-                }
-            }
-        }
-        m_tableModelPlaylistSongs.setCurrentPlaylist(m_bmCurrentPlaylist);
-        std::for_each(songIds.begin(), songIds.end(), [&](int songId) {
-            m_tableModelPlaylistSongs.addSong(songId);
-        });
-        m_tableModelPlaylistSongs.savePlaylistChanges();
+    if (importFile.isEmpty())
+        return;
+    bool ok = false;
+    const auto title = QInputDialog::getText(this, tr("New Playlist"), tr("Playlist title:"),
+                                             QLineEdit::Normal, tr("New Playlist"), &ok);
+    if (!ok || title.isEmpty() || m_playlistImporter.isRunning())
+        return;
+    BreakPlaylistImportRequest request{m_database.databaseName(), importFile, title};
+    QSqlQuery destination(m_database);
+    destination.prepare("SELECT playlistid FROM bmplaylists WHERE title=:title COLLATE NOCASE");
+    destination.bindValue(":title", title);
+    if (!destination.exec()) {
+        QMessageBox::warning(this, tr("Playlist import failed"), destination.lastError().text());
+        return;
     }
+    if (destination.next())
+        request.playlistId = destination.value(0).toInt();
+    destination.finish();
+    const int selectedAtStart = m_bmCurrentPlaylist;
+    auto *progress = new QProgressDialog(tr("Reading playlist…"), tr("Cancel"), 0, 0, this);
+    progress->setWindowTitle(tr("Import Playlist"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    // Playlist edits rewrite the displayed list. Pause them until the worker's
+    // append has been reflected in the models, so a stale view cannot erase it.
+    const QList<QWidget *> widgets{ui->tableViewBmDb, ui->tableViewBmPlaylist,
+        ui->btnPlTop, ui->btnPlUp, ui->btnPlDown, ui->btnPlBottom, ui->btnBmPlRandomize, bmDbDialog.get()};
+    const QList<QAction *> actions{ui->actionPlaylistImport, ui->actionPlaylistNew,
+        ui->actionPlaylistDelete, ui->actionManage_Break_DB};
+    QList<bool> widgetEnabled, actionEnabled;
+    for (auto *widget : widgets) {
+        widgetEnabled.append(widget->isEnabled());
+        widget->setEnabled(false);
+    }
+    for (auto *action : actions) {
+        actionEnabled.append(action->isEnabled());
+        action->setEnabled(false);
+    }
+    connect(progress, &QProgressDialog::canceled, &m_playlistImporter, &BreakPlaylistImporter::cancel);
+    connect(&m_playlistImporter, &BreakPlaylistImporter::progressChanged, progress,
+            [progress](qint64 processed, qint64 total) {
+        if (total > 0) {
+            const auto limit = std::numeric_limits<int>::max();
+            progress->setRange(0, static_cast<int>(std::min<qint64>(total, limit)));
+            progress->setValue(static_cast<int>(std::min<qint64>(processed, limit)));
+            progress->setLabelText(processed == total ? tr("Saving playlist…") :
+                tr("Reading song metadata… %1 of %2").arg(processed).arg(total));
+        }
+    });
+    connect(&m_playlistImporter, &BreakPlaylistImporter::finished, progress,
+            [this, progress, selectedAtStart, widgets, actions, widgetEnabled, actionEnabled]
+            (const BreakPlaylistImportResult &result) {
+        progress->hide();
+        progress->deleteLater();
+        for (qsizetype index = 0; index < widgets.size(); ++index)
+            widgets[index]->setEnabled(widgetEnabled[index]);
+        for (qsizetype index = 0; index < actions.size(); ++index)
+            actions[index]->setEnabled(actionEnabled[index]);
+        tableViewPlaylistSelectionChanged();
+        if (m_shuttingDown || result.cancelled)
+            return;
+        if (!result.error.isEmpty()) {
+            QMessageBox::warning(this, tr("Playlist import failed"), result.error);
+            return;
+        }
+        m_tableModelBreakSongs.loadDatabase();
+        // Keep a later user selection; otherwise display the import destination.
+        const int desired = m_bmCurrentPlaylist == selectedAtStart ? result.playlistId : m_bmCurrentPlaylist;
+        int row = -1;
+        {
+            const QSignalBlocker block(ui->comboBoxBmPlaylists);
+            m_tableModelPlaylists->select();
+            while (m_tableModelPlaylists->canFetchMore())
+                m_tableModelPlaylists->fetchMore();
+            for (int index = 0; index < m_tableModelPlaylists->rowCount(); ++index) {
+                if (m_tableModelPlaylists->index(index, 0).data().toInt() == desired) {
+                    row = index;
+                    break;
+                }
+            }
+            if (row < 0 && m_tableModelPlaylists->rowCount() > 0)
+                row = 0;
+            ui->comboBoxBmPlaylists->setCurrentIndex(row);
+        }
+        const int selected = m_tableModelPlaylists->index(row, 0).data().toInt();
+        if (selected != m_bmCurrentPlaylist || selected == result.playlistId)
+            comboBoxBmPlaylistsIndexChanged(row);
+        statusBar()->showMessage(tr("Imported %1 songs; skipped %2 unavailable files.")
+                                 .arg(result.imported).arg(result.skipped), 10000);
+    });
+    m_playlistImporter.start(request);
+    progress->show();
 }
 
 void MainWindow::actionPlaylistExportTriggered() {
@@ -3400,6 +3410,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     cdgWindow->setVisible(false);
     dlgSongShop->setVisible(false);
     requestsDialog->setVisible(false);
+    m_playlistImporter.cancel();
     event->accept();
 }
 

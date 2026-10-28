@@ -103,6 +103,8 @@ set(SOURCE_FILES
         src/mediabackend.cpp
         src/mzarchive.cpp
         src/mediapreparation.cpp
+        src/breakplaylistimporter.cpp
+        src/breakplaylistimporter.h
         src/okjutil.h
         src/okjtypes.cpp
         src/dlgvideopreview.cpp
@@ -296,6 +298,12 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         Qt6::Svg spdlog::spdlog)
     add_test(NAME break-song-lookups COMMAND openkj-break-song-lookups-test)
     set_tests_properties(break-song-lookups PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-playlist-import-test
+        packaging/playlist_import_test.cpp src/breakplaylistimporter.cpp src/tagreader.cpp)
+    target_link_libraries(openkj-playlist-import-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
+        Qt6::Concurrent spdlog::spdlog tag)
+    add_test(NAME playlist-import COMMAND openkj-playlist-import-test)
+    set_tests_properties(playlist-import PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
     add_test(NAME directory-listing COMMAND openkj-directory-listing-test)

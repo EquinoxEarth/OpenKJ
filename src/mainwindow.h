@@ -26,6 +26,7 @@
 #include "databaseworker.h"
 #include "src/models/tablemodelplaylistsongs.h"
 #include "bmdbdialog.h"
+#include "breakplaylistimporter.h"
 #include <QShortcut>
 #include <QThread>
 #include "audiorecorder.h"
@@ -91,6 +92,7 @@ private:
     TableModelHistorySongs m_historySongsModel{m_karaokeSongsModel};
     TableModelBreakSongs m_tableModelBreakSongs{this};
     TableModelPlaylistSongs m_tableModelPlaylistSongs{m_tableModelBreakSongs, this};
+    BreakPlaylistImporter m_playlistImporter{this};
     std::unique_ptr<QSqlTableModel> m_tableModelPlaylists;
     ItemDelegatePlaylistSongs m_itemDelegatePlSongs{this};
     std::unique_ptr<DlgCdg> cdgWindow;

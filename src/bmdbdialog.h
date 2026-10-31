@@ -6,6 +6,7 @@
 #include <QSqlTableModel>
 #include <QSqlDatabase>
 #include "dlgdbupdate.h"
+#include "bmdbupdatethread.h"
 
 
 namespace Ui {
@@ -19,6 +20,8 @@ class BmDbDialog : public QDialog
 public:
     explicit BmDbDialog(QWidget *parent = nullptr);
     ~BmDbDialog() override;
+    bool isUpdating() const { return m_updater.isRunning(); }
+    void cancelUpdate() { m_updater.cancel(); }
 
 private slots:
     void pushButtonAddClicked();
@@ -35,7 +38,9 @@ signals:
 private:
     std::unique_ptr<Ui::BmDbDialog> ui;
     QSqlTableModel m_pathsModel;
+    BmDbUpdater m_updater{this};
     DlgDbUpdate m_dbUpdateDlg{this};
+    void startUpdate(const QStringList &paths);
 };
 
 #endif // BMDBDIALOG_H

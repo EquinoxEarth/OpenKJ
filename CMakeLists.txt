@@ -305,6 +305,13 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         Qt6::Concurrent spdlog::spdlog tag)
     add_test(NAME playlist-import COMMAND openkj-playlist-import-test)
     set_tests_properties(playlist-import PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-break-music-scan-test
+        packaging/break_music_scan_test.cpp src/bmdbupdatethread.cpp src/tagreader.cpp
+        src/bmdbdialog.cpp src/bmdbdialog.ui src/dlgdbupdate.cpp src/dlgdbupdate.ui)
+    target_link_libraries(openkj-break-music-scan-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
+        Qt6::Concurrent spdlog::spdlog tag)
+    add_test(NAME break-music-scan COMMAND openkj-break-music-scan-test)
+    set_tests_properties(break-music-scan PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(openkj-table-layout-test packaging/table_layout_test.cpp)
     target_link_libraries(openkj-table-layout-test PRIVATE Qt6::Test Qt6::Widgets)
     add_test(NAME table-layout COMMAND openkj-table-layout-test)

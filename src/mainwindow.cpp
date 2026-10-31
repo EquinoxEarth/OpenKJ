@@ -1527,6 +1527,7 @@ void MainWindow::play(const QString &karaokeFilePath, const bool &k2k) {
 
 MainWindow::~MainWindow() {
     m_shuttingDown = true;
+    bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
     cancelMediaPreparation();
     if (m_dbThread) {
@@ -2864,8 +2865,10 @@ void MainWindow::bmAddPlaylist(const QString &title) {
 }
 
 void MainWindow::bmDbUpdated() {
+    if (m_shuttingDown)
+        return;
     m_tableModelBreakSongs.loadDatabase();
-    ui->comboBoxBmPlaylists->setCurrentIndex(0);
+    ui->actionPlaylistImport->setEnabled(!m_playlistImporter.isRunning());
 }
 
 void MainWindow::bmDbCleared() {
@@ -3060,7 +3063,7 @@ void MainWindow::actionPlaylistNewTriggered() {
 }
 
 void MainWindow::actionPlaylistImportTriggered() {
-    if (m_playlistImporter.isRunning())
+    if (m_playlistImporter.isRunning() || bmDbDialog->isUpdating())
         return;
 #ifdef Q_OS_LINUX
     QString importFile = QFileDialog::getOpenFileName(
@@ -3085,7 +3088,7 @@ void MainWindow::actionPlaylistImportTriggered() {
     bool ok = false;
     const auto title = QInputDialog::getText(this, tr("New Playlist"), tr("Playlist title:"),
                                              QLineEdit::Normal, tr("New Playlist"), &ok);
-    if (!ok || title.isEmpty() || m_playlistImporter.isRunning())
+    if (!ok || title.isEmpty() || m_playlistImporter.isRunning() || bmDbDialog->isUpdating())
         return;
     BreakPlaylistImportRequest request{m_database.databaseName(), importFile, title};
     QSqlQuery destination(m_database);
@@ -3354,6 +3357,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     cdgWindow->setVisible(false);
     dlgSongShop->setVisible(false);
     requestsDialog->setVisible(false);
+    bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
     event->accept();
 }
@@ -3727,8 +3731,10 @@ void MainWindow::tabWidgetCurrentChanged(const int &index) {
 }
 
 void MainWindow::bmDatabaseAboutToUpdate() {
-    m_tableModelPlaylists->revertAll();
-    m_tableModelPlaylists->setTable("");
+    // Scanning adds library rows only; keep the current playlist and playback intact.
+    while (m_tableModelPlaylists->canFetchMore())
+        m_tableModelPlaylists->fetchMore();
+    ui->actionPlaylistImport->setEnabled(false);
 }
 
 void MainWindow::bmSongMoved(const int &oldPos, const int &newPos) {

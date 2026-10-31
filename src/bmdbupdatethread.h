@@ -21,34 +21,52 @@
 #ifndef BMDBUPDATETHREAD_H
 #define BMDBUPDATETHREAD_H
 
-#include <QThread>
+#include <QFutureWatcher>
+#include <QMutex>
+#include <QObject>
 #include <QStringList>
-#include <QtSql>
+#include <QTimer>
+#include <atomic>
+#include <memory>
 
-class BmDbUpdateThread : public QThread
-{
+struct BmDbUpdateResult {
+    QString error;
+    QStringList unavailablePaths;
+    qint64 processed = 0, total = 0, added = 0, existing = 0, unavailableFiles = 0;
+    bool cancelled = false;
+};
+Q_DECLARE_METATYPE(BmDbUpdateResult)
+
+class BmDbUpdater : public QObject {
     Q_OBJECT
 public:
-    explicit BmDbUpdateThread(QObject *parent = nullptr);
-    void run() override;
-    void startUnthreaded();
-    [[nodiscard]] QString path() const;
-    void setPath(const QString &path);
+    explicit BmDbUpdater(QObject *parent = nullptr);
+    ~BmDbUpdater() override;
+    bool start(const QString &databasePath, const QStringList &paths);
+    void cancel();
+    bool isRunning() const { return m_running; }
 
 signals:
-    void progressMessage(QString msg);
-    void stateChanged(QString state);
-    void progressChanged(int progress, int max);
-    
-public slots:
+    void progressMessage(const QString &message);
+    void stateChanged(const QString &state);
+    void progressChanged(qint64 processed, qint64 total);
+    void finished(const BmDbUpdateResult &result);
 
 private:
-    QString m_path;
-    QStringList findMediaFiles(const QString& directory);
-    QStringList supportedExtensions;
-    QSqlDatabase database;
-
-    
+    struct State {
+        std::atomic_bool cancelled{false};
+        std::atomic<qint64> processed{0}, total{0};
+        QMutex mutex;
+        QString status, message;
+    };
+    static BmDbUpdateResult run(const QString &databasePath, const QStringList &paths,
+                               const std::shared_ptr<State> &state);
+    void reportProgress();
+    QFutureWatcher<BmDbUpdateResult> m_watcher{this};
+    QTimer m_progressTimer{this};
+    std::shared_ptr<State> m_state;
+    QString m_lastStatus, m_lastMessage;
+    bool m_running = false;
 };
 
-#endif // BMDBUPDATETHREAD_H
+#endif

@@ -97,6 +97,10 @@ set(GSTREAMER_LIBRARIES ${GSTREAMER_LIBRARIES})
 
 set(SOURCE_FILES
         src/main.cpp
+        src/mediainitialization.cpp
+        src/mediainitialization.h
+        src/startupsplash.cpp
+        src/startupsplash.h
         src/logging.h
         src/tablelayout.h
         src/bundledruntime.h

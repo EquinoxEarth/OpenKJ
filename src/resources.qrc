@@ -2,6 +2,7 @@
     <qresource prefix="/icons">
         <file>Icons/splash.png</file>
         <file>Icons/okjlogo.svg</file>
+        <file>Icons/openkj-splash-logo.svg</file>
         <file>Icons/okjicon.ico</file>
         <file>Icons/okjicon.svg</file>
         <file>Icons/OpenKJ.icns</file>

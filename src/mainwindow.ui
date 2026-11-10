@@ -623,6 +623,32 @@
                      </widget>
                     </item>
                     <item>
+                     <widget class="QPushButton" name="buttonClearSearch">
+                      <property name="focusPolicy">
+                       <enum>Qt::NoFocus</enum>
+                      </property>
+                      <property name="toolTip">
+                       <string>Clear search</string>
+                      </property>
+                      <property name="accessibleName">
+                       <string>Clear search</string>
+                      </property>
+                      <property name="text">
+                       <string/>
+                      </property>
+                      <property name="icon">
+                       <iconset theme="edit-clear">
+                        <normaloff>.</normaloff>.</iconset>
+                      </property>
+                      <property name="iconSize">
+                       <size>
+                        <width>32</width>
+                        <height>32</height>
+                       </size>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
                      <spacer name="horizontalSpacerRequests">
                       <property name="orientation">
                        <enum>Qt::Horizontal</enum>

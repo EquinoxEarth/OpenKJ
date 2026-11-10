@@ -5,14 +5,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QElapsedTimer>
-#include <QFontMetrics>
-#include <QPainter>
-#include <QSvgRenderer>
+#include <QFutureWatcher>
 #include <QStandardPaths>
 #include <QDebug>
 #include "mainwindow.h"
 #include <QStyleFactory>
-#include <QSplashScreen>
 #include <QStringList>
 #include <QMessageBox>
 #include "settings.h"
@@ -20,6 +17,9 @@
 #include "runguard/runguard.h"
 #include "okjversion.h"
 #include "bundledruntime.h"
+#include "startupsplash.h"
+#include "mediainitialization.h"
+#include <memory>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/async_logger.h>
@@ -309,42 +309,39 @@ int main(int argc, char *argv[]) {
     settings.setLastRunVersion(OKJ_VERSION_STRING);
     settings.setStartupOk(false);
 
-    // Paint before constructing MainWindow: its media backends initialize
-    // GStreamer, which may need to build the plugin cache on the first launch.
-    QSplashScreen splash;
-    const QString startupMessage = QObject::tr(
-        "Initializing media support.\nFirst launch may take longer.");
-    const QSize messageSize = QFontMetrics(splash.font()).size(Qt::TextExpandTabs, startupMessage);
-    const int padding = 24;
-    const int contentWidth = std::max(360, messageSize.width());
-    QSvgRenderer logo(QStringLiteral(":/icons/Icons/okjlogo.svg"));
-    const QSize logoSize = logo.defaultSize().scaled(contentWidth, 240, Qt::KeepAspectRatio);
-    const QSize splashSize(contentWidth + padding * 2,
-                           logoSize.height() + messageSize.height() + padding * 3);
-    QPixmap splashImage(splashSize * splash.devicePixelRatioF());
-    splashImage.setDevicePixelRatio(splash.devicePixelRatioF());
-    // The existing logo artwork has a black background.
-    splashImage.fill(Qt::black);
-    {
-        QPainter painter(&splashImage);
-        logo.render(&painter, QRectF((splashSize.width() - logoSize.width()) / 2, padding,
-                                    logoSize.width(), logoSize.height()));
-        painter.setFont(splash.font());
-        painter.setPen(Qt::white);
-        painter.drawText(QRect(padding, logoSize.height() + padding * 2,
-                               contentWidth, messageSize.height()), Qt::AlignCenter, startupMessage);
-    }
-    splash.setPixmap(splashImage);
+    // Keep the GUI event loop running while GStreamer builds its plugin cache.
+    // MainWindow and its playback pipelines are constructed on the GUI thread
+    // only after media initialization has finished.
+    StartupSplash splash;
     splash.show();
     // QSplashScreen::repaint delivers the initial window events before any
     // main-window objects exist; no event pumping is needed during construction.
     splash.repaint();
 
-    QElapsedTimer startupTimer;
-    startupTimer.start();
-    MainWindow w;
-    logger->info("Main window initialization completed in {} ms", startupTimer.elapsed());
-    w.show();
-    splash.finish(&w);
-    return QApplication::exec();
+    std::unique_ptr<MainWindow> mainWindow;
+    QFutureWatcher<MediaInitializationResult> mediaInitialization;
+    QObject::connect(&mediaInitialization, &QFutureWatcher<MediaInitializationResult>::finished, &a, [&] {
+        const auto result = mediaInitialization.result();
+        if (!result.success) {
+            logger->error("GStreamer initialization failed: {}", result.error.toStdString());
+            splash.hide();
+            QMessageBox::critical(nullptr, QObject::tr("Unable to start OpenKJ"), result.error);
+            a.exit(1);
+            return;
+        }
+        logger->info("GStreamer initialization completed in {} ms", result.elapsedMs);
+        QElapsedTimer startupTimer;
+        startupTimer.start();
+        mainWindow = std::make_unique<MainWindow>();
+        logger->info("Main window initialization completed in {} ms", startupTimer.elapsed());
+        splash.finishWhenReady(mainWindow.get());
+    });
+    mediaInitialization.setFuture(initializeMediaAsync());
+
+    const int exitCode = QApplication::exec();
+    // Finish the worker before destroying QApplication, including an early quit.
+    mediaInitialization.waitForFinished();
+    if (!mainWindow && exitCode == 0)
+        settings.setStartupOk(true);
+    return exitCode;
 }

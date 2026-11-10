@@ -86,6 +86,7 @@ void MainWindow::updateIcons() {
     ui->btnRotBottom->setIcon(QIcon(thm + "actions/22/go-bottom.svg"));
     ui->btnRotDown->setIcon(QIcon(thm + "actions/22/go-down.svg"));
     ui->pushButton->setIcon(QIcon(thm + "actions/22/edit-find.svg"));
+    ui->buttonClearSearch->setIcon(QIcon(thm + "actions/22/edit-clear.svg"));
     ui->buttonClearQueue->setIcon(QIcon(thm + "actions/22/edit-clear-all.svg"));
     ui->btnQTop->setIcon(QIcon(thm + "actions/22/go-top.svg"));
     ui->btnQUp->setIcon(QIcon(thm + "actions/22/go-up.svg"));
@@ -1026,6 +1027,12 @@ void MainWindow::setupConnections() {
     connect(ui->actionRegulars, &QAction::triggered, &m_dlgRegularSingers, &DlgRegularSingers::showNormal);
     connect(ui->actionIncoming_Requests, &QAction::triggered, requestsDialog.get(), &DlgRequests::show);
     connect(ui->pushButton, &QPushButton::clicked, this, &MainWindow::search);
+    connect(ui->buttonClearSearch, &QPushButton::clicked, this, [this] {
+        ui->lineEdit->clear();
+        if (!m_settings.progressiveSearchEnabled())
+            search();
+        ui->lineEdit->setFocus();
+    });
     connect(ui->buttonClearRotation, &QPushButton::clicked, this, &MainWindow::clearRotation);
     connect(ui->buttonClearQueue, &QPushButton::clicked, this, &MainWindow::clearSingerQueue);
     connect(ui->spinBoxKey, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::spinBoxKeyValueChanged);

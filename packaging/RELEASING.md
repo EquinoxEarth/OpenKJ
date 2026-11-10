@@ -1,9 +1,11 @@
 # Coordinated betas and previews
 
 The main release path is `.github/workflows/release.yml`. An annotated tag such
-as `v2.2.7-beta.1` builds macOS ARM64, Windows x64 ZIP/MSI, and Linux x86_64
-Flatpak from the same commit. Beta tags use `vX.Y.Z-beta.N`; older preview tags remain supported. Packages
-remain experimental and use GitHub's Pre-release flag until a stable release.
+as `v2.2.8-beta.1` builds macOS ARM64, Windows x64 ZIP/MSI, and Linux x86_64
+Flatpak from the same commit. Beta tags use `vX.Y.Z-beta.N`; older preview tags
+remain supported. Beta builds retain the beta label in the application and
+release title, and are published as regular GitHub releases marked Latest.
+Preview tags retain GitHub's Pre-release flag. Packages remain experimental.
 
 1. Update `src/okjversion.h`, both release-note files, and the first release in
    `src/org.openkj.OpenKJ.metainfo.xml`. Keep numeric versions consistent and set `OKJ_VERSION_BRANCH` to `beta` for
@@ -17,7 +19,8 @@ remain experimental and use GitHub's Pre-release flag until a stable release.
    also tests clean Ubuntu/Fedora installations without a development SDK.
 6. Only after all jobs pass does the publisher verify source provenance and
    checksums, create a draft, attach all packages/metadata, and publish it with the
-   matching beta/preview title and GitHub Pre-release flag. It never overwrites an existing release or existing assets.
+   matching beta/preview title and GitHub release status. It never overwrites an
+   existing release or existing assets.
 
 Each package has a SHA-256 file; `SHA256SUMS` also covers release notes and build
 metadata. ZIP/Flatpak names are versioned during release staging, after checking

@@ -328,8 +328,9 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-simplecrypt-compat-test PRIVATE Qt6::Core)
     add_test(NAME simplecrypt-compat COMMAND openkj-simplecrypt-compat-test)
     set_tests_properties(simplecrypt-compat PROPERTIES TIMEOUT 10)
-    add_executable(openkj-runtime-smoke packaging/runtime_smoke.cpp)
-    target_link_libraries(openkj-runtime-smoke PRIVATE Qt6::Widgets Qt6::Sql zip ${GSTREAMER_LIBRARIES})
+    add_executable(openkj-runtime-smoke packaging/runtime_smoke.cpp src/mediainitialization.cpp)
+    target_link_libraries(openkj-runtime-smoke PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent
+        zip ${GSTREAMER_LIBRARIES})
     add_test(NAME runtime-smoke COMMAND openkj-runtime-smoke)
     set_tests_properties(runtime-smoke PROPERTIES TIMEOUT 45 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

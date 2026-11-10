@@ -107,8 +107,14 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           VERSION="${VERSION%%-*}"
           TITLE="$VERSION - Cross Platform Preview"
-          if [[ "$RELEASE_TAG" == *-beta.* ]]; then TITLE="$VERSION Beta"; fi
-          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --latest=false \
+          RELEASE_FLAGS=(--prerelease)
+          MARK_LATEST=false
+          if [[ "$RELEASE_TAG" == *-beta.* ]]; then
+            TITLE="$VERSION Beta"
+            RELEASE_FLAGS=(--prerelease=false)
+            MARK_LATEST=true
+          fi
+          gh release create "$RELEASE_TAG" --verify-tag --draft --latest=false "${RELEASE_FLAGS[@]}" \
             --title "$TITLE" --notes-file RELEASE_NOTES.md
           gh release upload "$RELEASE_TAG" ./*
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false "${RELEASE_FLAGS[@]}" --latest="$MARK_LATEST"

@@ -1,4 +1,4 @@
-# OpenKJ 2.2.7 — Beta
+# OpenKJ 2.2.8 — Beta
 
 Experimental beta builds using Qt 6 / GStreamer from the same source for
 Windows x64, Apple Silicon macOS, and Linux x86_64.
@@ -7,10 +7,10 @@ Windows x64, Apple Silicon macOS, and Linux x86_64.
 
 | Platform | Package | Installation |
 | --- | --- | --- |
-| Windows x64 | `OpenKJ-2.2.7-windows-x64.msi` | Run the installer; administrator approval is required. |
-| Windows x64 portable | `OpenKJ-2.2.7-windows-x64.zip` | Extract the entire folder and open `openkj.exe`. |
-| macOS Apple Silicon | `OpenKJ-2.2.7-macos-arm64.dmg` | Open the DMG and drag OpenKJ to Applications. |
-| Linux x86_64 | `OpenKJ-2.2.7-linux-x86_64.flatpak` | Install with Flatpak using the commands below. |
+| Windows x64 | `OpenKJ-2.2.8-windows-x64.msi` | Run the installer; administrator approval is required. |
+| Windows x64 portable | `OpenKJ-2.2.8-windows-x64.zip` | Extract the entire folder and open `openkj.exe`. |
+| macOS Apple Silicon | `OpenKJ-2.2.8-macos-arm64.dmg` | Open the DMG and drag OpenKJ to Applications. |
+| Linux x86_64 | `OpenKJ-2.2.8-linux-x86_64.flatpak` | Install with Flatpak using the commands below. |
 
 SHA-256 files and `SHA256SUMS` accompany the packages. Build metadata records the
 source commit and Linux runtime/dependency recipe. The macOS app also includes
@@ -18,24 +18,17 @@ dependency notices, Homebrew package metadata and its build environment. The
 Windows ZIP and installed app include dependency versions, license notices and
 a payload hash manifest.
 
-## Changes since 2.2.6
+## Changes since 2.2.7
 
-- Moved library sorting into the background search worker and cached normalized
-  search text to reduce repeated work in large libraries.
-- Indexed break-music song lookups by path and ID.
-- Moved break-music playlist imports and database scans off the UI thread,
-  with progress reporting and cancellation for scans.
-- Fixed changing the volume slider canceling a pending stop or fade.
-- Deferred table layout updates to improve responsiveness without nested event
-  processing during those updates.
-- Added an OpenKJ logo splash before media initialization, with startup timings
-  in the log to help diagnose slow launches.
-- Reduced Windows packaging to 34 selected GStreamer plugins while retaining
-  CDG, SoundTouch pitch, EQ, native audio outputs, and common media formats.
-- Added isolated Windows bundle playback checks for synthetic MP3, FLAC,
-  Vorbis/Opus Ogg, M4A, MP4, MKV, AVI, MPEG, WMV and WMA samples.
-- Updated deprecated Qt APIs, recursive directory scanning and the logging
-  dependency while preserving saved-data compatibility.
+- Added a Clear Search button beside Search. It clears the query and results,
+  then returns focus to the search field so the next search can be typed immediately.
+- Redesigned the startup splash with the OpenKJ logo, a rounded card, version
+  information and an animated loading indicator.
+- Moved initial media setup to a background worker so the splash can keep
+  animating while media support loads and the plugin cache is initialized.
+- The splash remains above the opening main window for a minimum of three
+  seconds, including time already spent starting up.
+- Improved startup error reporting and safe shutdown during media initialization.
 
 ## Windows
 
@@ -60,7 +53,7 @@ Fedora RPM Fusion packages are not required.
 
 ```bash
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user ./OpenKJ-2.2.7-linux-x86_64.flatpak
+flatpak install --user ./OpenKJ-2.2.8-linux-x86_64.flatpak
 flatpak run org.openkj.OpenKJ//preview
 ```
 

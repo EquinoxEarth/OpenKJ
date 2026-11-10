@@ -32,6 +32,16 @@
         <binary>openkj</binary>
     </provides>
     <releases>
+        <release version="2.2.8" date="2026-11-10" type="development">
+            <description>
+                <ul>
+                    <li>Added a Clear Search button that returns focus to the search field.</li>
+                    <li>Redesigned the startup splash with the OpenKJ logo and an animated loading indicator.</li>
+                    <li>Initialized media support in the background to keep the splash responsive.</li>
+                    <li>Kept the splash above the opening main window for a three-second minimum.</li>
+                </ul>
+            </description>
+        </release>
         <release version="2.2.7" date="2026-11-09" type="development">
             <description>
                 <ul>

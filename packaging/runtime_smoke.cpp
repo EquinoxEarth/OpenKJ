@@ -3,6 +3,8 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QDir>
+#include <QEventLoop>
+#include <QFutureWatcher>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -16,6 +18,7 @@
 #include <QFile>
 #include "localmediauri.h"
 #include "bundledruntime.h"
+#include "mediainitialization.h"
 
 static void stage(const char *message)
 {
@@ -131,9 +134,19 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    stage("initialize GStreamer");
+    stage("initialize GStreamer in the background");
     configureWindowsBundledGStreamer();
-    gst_init(nullptr, nullptr);
+    QFutureWatcher<MediaInitializationResult> initialization;
+    QEventLoop startupLoop;
+    QObject::connect(&initialization, &QFutureWatcher<MediaInitializationResult>::finished,
+                     &startupLoop, &QEventLoop::quit);
+    initialization.setFuture(initializeMediaAsync());
+    startupLoop.exec();
+    const auto startupResult = initialization.result();
+    if (!startupResult.success) {
+        qCritical() << "Media initialization failed:" << startupResult.error;
+        return 1;
+    }
     stage("find media elements");
     for (const auto *name : {"playbin", "pitch", "scaletempo", "equalizer-10bands",
              "audiopanorama", "volume", "audioconvert", "audioresample", "autoaudiosink", "appsink", "cdgparse",

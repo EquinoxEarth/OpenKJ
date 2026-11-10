@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify platform artifacts from one CI run and stage a coordinated prerelease."""
+"""Verify platform artifacts from one CI run and stage a coordinated beta or preview."""
 import argparse
 import hashlib
 import json
@@ -15,9 +15,9 @@ def digest(path):
 
 
 def prepare(artifacts, destination, tag, commit):
-    match = re.fullmatch(r'v(\d+\.\d+\.\d+)-(?:prerelease|preview)\.\d+', tag)
+    match = re.fullmatch(r'v(\d+\.\d+\.\d+)-(?:prerelease|preview|beta)\.\d+', tag)
     if not match or not re.fullmatch(r'[0-9a-f]{40}', commit):
-        raise ValueError('Expected a prerelease tag and full source commit SHA')
+        raise ValueError('Expected a beta or preview tag and full source commit SHA')
     version = match[1]
     root = Path(__file__).resolve().parents[1]
     header = (root / 'src/okjversion.h').read_text()

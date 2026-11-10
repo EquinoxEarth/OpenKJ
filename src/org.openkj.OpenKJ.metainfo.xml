@@ -32,6 +32,16 @@
         <binary>openkj</binary>
     </provides>
     <releases>
+        <release version="2.2.7" date="2026-11-09" type="development">
+            <description>
+                <ul>
+                    <li>Beta release with faster library searches and background break-music imports and scans.</li>
+                    <li>Preserved pending stops and fades when changing playback volume.</li>
+                    <li>Added an OpenKJ startup splash and reduced packaged Windows media plugins.</li>
+                    <li>Updated deprecated Qt APIs and logging dependencies.</li>
+                </ul>
+            </description>
+        </release>
         <release version="2.2.6" date="2026-10-23" type="development">
             <description>
                 <ul>

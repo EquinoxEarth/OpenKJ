@@ -59,7 +59,7 @@ jobs:
           for element in pitch equalizer-10bands cdgparse cdgdec avdec_h264; do
             gst-inspect-1.0 "$element"
           done
-      - name: Validate Windows preview tag
+      - name: Validate Windows release tag
         env:
           RELEASE_REF: ${{ github.ref }}
         run: |
@@ -67,9 +67,9 @@ jobs:
           import os, pathlib, re
           ref = os.environ['RELEASE_REF']
           if ref.startswith('refs/tags/'):
-              match = re.fullmatch(r'refs/tags/(?:windows-)?v(\d+\.\d+\.\d+)-(?:prerelease|preview)\.\d+', ref)
+              match = re.fullmatch(r'refs/tags/(?:windows-)?v(\d+\.\d+\.\d+)-(?:prerelease|preview|beta)\.\d+', ref)
               if not match:
-                  raise SystemExit('Expected vX.Y.Z-prerelease.N, vX.Y.Z-preview.N, or a windows-prefixed platform tag')
+                  raise SystemExit('Expected vX.Y.Z-beta.N, -prerelease.N, -preview.N, or a windows-prefixed platform tag')
               header = pathlib.Path('src/okjversion.h').read_text(encoding='utf-8')
               version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', header).group(1)
               parts = [re.search(r'OKJ_VERSION_' + part + r' (\d+)', header).group(1)

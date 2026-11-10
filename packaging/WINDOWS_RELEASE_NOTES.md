@@ -1,11 +1,19 @@
-# OpenKJ 2.2.6 — Windows x64 preview
+# OpenKJ 2.2.7 — Windows x64 Beta
 
-Experimental, unsigned Windows x64 build using Qt 6 and GStreamer.
+Experimental, unsigned Windows x64 beta using Qt 6 and GStreamer.
 
-Changes since 2.2.5: fixed audio output device selection, added an option for
-break music to follow the karaoke output, and improved Add Song To Queue with
-an alphabetical singer list, ten singers per column, responsive sizing and
-clearer spacing. The dialog allows horizontal resizing and adjusts its own height.
+Changes since 2.2.6:
+
+- Faster large-library searches and indexed break-music lookups.
+- Background break-music playlist imports and database scans, with scan progress
+  and cancellation.
+- Volume changes preserve pending stops and fades.
+- OpenKJ logo startup splash and initialization timing logs.
+- Curated set of 34 GStreamer plugins, preserving SoundTouch, EQ, CDG and native
+  Windows audio outputs. ASF parsing supports WMV/WMA playback.
+- Isolated bundle checks decode synthetic MP3, FLAC, Vorbis/Opus Ogg, M4A, MP4,
+  MKV, AVI, MPEG program/transport streams, WMV and WMA with a fresh plugin cache.
+- Updated Qt APIs, directory scans and logging dependencies.
 
 - Native Windows playback, full-library import and singer rotation have been
   tested by the maintainer.

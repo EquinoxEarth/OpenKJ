@@ -1,16 +1,16 @@
-# OpenKJ 2.2.6 — Cross Platform Beta
+# OpenKJ 2.2.7 — Beta
 
-Experimental Qt 6 / GStreamer builds from the same source for Windows x64,
-Apple Silicon macOS, and Linux x86_64. The modern codebase now lives on `master`.
+Experimental beta builds using Qt 6 / GStreamer from the same source for
+Windows x64, Apple Silicon macOS, and Linux x86_64.
 
 ## Downloads
 
 | Platform | Package | Installation |
 | --- | --- | --- |
-| Windows x64 | `OpenKJ-2.2.6-windows-x64.msi` | Run the installer; administrator approval is required. |
-| Windows x64 portable | `OpenKJ-2.2.6-windows-x64.zip` | Extract the entire folder and open `openkj.exe`. |
-| macOS Apple Silicon | `OpenKJ-2.2.6-macos-arm64.dmg` | Open the DMG and drag OpenKJ to Applications. |
-| Linux x86_64 | `OpenKJ-2.2.6-linux-x86_64.flatpak` | Install with Flatpak using the commands below. |
+| Windows x64 | `OpenKJ-2.2.7-windows-x64.msi` | Run the installer; administrator approval is required. |
+| Windows x64 portable | `OpenKJ-2.2.7-windows-x64.zip` | Extract the entire folder and open `openkj.exe`. |
+| macOS Apple Silicon | `OpenKJ-2.2.7-macos-arm64.dmg` | Open the DMG and drag OpenKJ to Applications. |
+| Linux x86_64 | `OpenKJ-2.2.7-linux-x86_64.flatpak` | Install with Flatpak using the commands below. |
 
 SHA-256 files and `SHA256SUMS` accompany the packages. Build metadata records the
 source commit and Linux runtime/dependency recipe. The macOS app also includes
@@ -18,19 +18,24 @@ dependency notices, Homebrew package metadata and its build environment. The
 Windows ZIP and installed app include dependency versions, license notices and
 a payload hash manifest.
 
-## Changes since 2.2.5
+## Changes since 2.2.6
 
-- Fixed the audio output device lists so available outputs can be selected.
-- Added an option for break music to follow the karaoke audio output while
-  retaining separate output selection when desired.
-- Replaced the existing-singer dropdown in Add Song To Queue with an
-  alphabetical list that wraps after ten singers per column.
-- Singer columns share a width based on the longest name and expand evenly
-  to fill the available space. Wider rotations scroll horizontally.
-- The dialog adapts to the screen width and font size, with Singer Position
-  and Key Change moving between stacked and side-by-side layouts.
-- Improved dialog spacing and selection highlighting. Height now follows
-  the contents automatically; manual resizing is horizontal only.
+- Moved library sorting into the background search worker and cached normalized
+  search text to reduce repeated work in large libraries.
+- Indexed break-music song lookups by path and ID.
+- Moved break-music playlist imports and database scans off the UI thread,
+  with progress reporting and cancellation for scans.
+- Fixed changing the volume slider canceling a pending stop or fade.
+- Deferred table layout updates to improve responsiveness without nested event
+  processing during those updates.
+- Added an OpenKJ logo splash before media initialization, with startup timings
+  in the log to help diagnose slow launches.
+- Reduced Windows packaging to 34 selected GStreamer plugins while retaining
+  CDG, SoundTouch pitch, EQ, native audio outputs, and common media formats.
+- Added isolated Windows bundle playback checks for synthetic MP3, FLAC,
+  Vorbis/Opus Ogg, M4A, MP4, MKV, AVI, MPEG, WMV and WMA samples.
+- Updated deprecated Qt APIs, recursive directory scanning and the logging
+  dependency while preserving saved-data compatibility.
 
 ## Windows
 
@@ -55,7 +60,7 @@ Fedora RPM Fusion packages are not required.
 
 ```bash
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user ./OpenKJ-2.2.6-linux-x86_64.flatpak
+flatpak install --user ./OpenKJ-2.2.7-linux-x86_64.flatpak
 flatpak run org.openkj.OpenKJ//preview
 ```
 
@@ -67,7 +72,7 @@ Filesystem access includes mounted song libraries, subject to user permissions.
 
 ## Testing and limitations
 
-Back up your existing library/settings before installing a prerelease. Native
+Back up your existing library/settings before installing this beta. Native
 Windows testing covered full-library import, playback and singer rotation;
 Linux development testing used Fedora and the packaged Flatpak was tested on
 Bazzite. macOS playback and large-library responsiveness were tested during

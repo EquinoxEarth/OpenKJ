@@ -31,9 +31,9 @@ jobs:
           ref = os.environ['RELEASE_REF']
           if ref.startswith('refs/tags/'):
               tag = ref.removeprefix('refs/tags/')
-              match = re.fullmatch(r'(?:macos-)?v(\d+\.\d+\.\d+)-(?:prerelease|preview)\.\d+', tag)
+              match = re.fullmatch(r'(?:macos-)?v(\d+\.\d+\.\d+)-(?:prerelease|preview|beta)\.\d+', tag)
               if not match:
-                  raise SystemExit('Expected vX.Y.Z-prerelease.N, vX.Y.Z-preview.N, or a macos-prefixed platform tag')
+                  raise SystemExit('Expected vX.Y.Z-beta.N, -prerelease.N, -preview.N, or a macos-prefixed platform tag')
               header = pathlib.Path('src/okjversion.h').read_text()
               version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', header).group(1)
               parts = [re.search(r'OKJ_VERSION_' + part + r' (\d+)', header).group(1)

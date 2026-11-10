@@ -144,14 +144,14 @@ The portable ZIP remains available separately. Neither package is code signed.
 WiX 5.0.2 is pinned before the maintenance-fee terms introduced with WiX 6;
 upgrading the installer tooling requires reviewing its current terms.
 
-## Preview releases
+## Beta and preview releases
 
-For releases covering all platforms, use [coordinated prereleases](RELEASING.md).
+For releases covering all platforms, use [coordinated betas and previews](RELEASING.md).
 The platform-specific tag path below remains available for individual previews.
 
 
 The same workflow builds and publishes GitHub prereleases for platform tags such
-as `windows-v2.2.3-prerelease.1`. The numeric version must match `okjversion.h`
+as `windows-v2.2.7-beta.1`. The numeric version must match `okjversion.h`
 and `WINDOWS_RELEASE_NOTES.md`. Publishing waits for both the portable runtime
 and MSI lifecycle checks, verifies all checksums, then attaches the ZIP, MSI
 and SHA-256 files. It does not overwrite existing assets on reruns. Branch

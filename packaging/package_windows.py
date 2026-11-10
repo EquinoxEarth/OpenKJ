@@ -145,8 +145,11 @@ def stage(build, prefix, destination):
         "https://github.com/EquinoxEarth/OpenKJ/tree/" + output("git", "rev-parse", "HEAD").strip() + "\n"
         "Qt, GStreamer, FFmpeg and SoundTouch remain separate dynamic libraries.\n",
         encoding="utf-8")
+    version_header = (root / "src/okjversion.h").read_text(encoding="utf-8")
+    version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', version_header)[1]
+    channel = re.search(r'OKJ_VERSION_BRANCH "([^"\n]+)"', version_header)[1]
     (destination / "README.txt").write_text(
-        "OpenKJ Windows x64 experimental preview (unsigned)\n\n"
+        f"OpenKJ {version} Windows x64 {channel} (experimental, unsigned)\n\n"
         "Extract the entire ZIP into a writable folder, then open openkj.exe.\n"
         "Keep all DLLs and plugin folders together. MSYS2 is not required.\n"
         "Use your normal Windows user account; administrator rights are not needed.\n"

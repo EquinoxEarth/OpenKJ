@@ -1,4 +1,4 @@
-name: Cross-platform prerelease
+name: Cross-platform release
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v5
       - name: Check release integrity gates
         run: python3 -m unittest discover -s packaging/tests -p 'test_prepare_release.py' -v
-      - name: Validate version and prerelease metadata
+      - name: Validate version and release channel
         env:
           RELEASE_REF: ${{ github.ref }}
         run: |
@@ -29,19 +29,23 @@ jobs:
           version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', header)[1]
           parts = [re.search(r'OKJ_VERSION_' + part + r' (\d+)', header)[1]
                    for part in ('MAJOR', 'MINOR', 'BUILD')]
-          if '.'.join(parts) != version or 'OKJ_VERSION_BRANCH "prerelease"' not in header:
-              raise SystemExit('Source version/prerelease metadata disagree')
+          channel = re.search(r'OKJ_VERSION_BRANCH "([^"\n]+)"', header)[1]
+          if '.'.join(parts) != version or channel not in ('prerelease', 'beta'):
+              raise SystemExit('Source version/release channel metadata disagree')
           ref = os.environ['RELEASE_REF']
           if ref.startswith('refs/tags/'):
-              match = re.fullmatch(r'refs/tags/v(\d+\.\d+\.\d+)-(?:prerelease|preview)\.\d+', ref)
+              match = re.fullmatch(r'refs/tags/v(\d+\.\d+\.\d+)-(prerelease|preview|beta)\.\d+', ref)
               if not match or match[1] != version:
-                  raise SystemExit('Expected v' + version + '-prerelease.N or -preview.N')
+                  raise SystemExit('Expected v' + version + '-beta.N, -prerelease.N or -preview.N')
+              expected_channel = 'beta' if match[2] == 'beta' else 'prerelease'
+              if channel != expected_channel:
+                  raise SystemExit('Release tag and source channel do not match')
           for name in ('RELEASE_NOTES.md', 'WINDOWS_RELEASE_NOTES.md'):
               if not pathlib.Path('packaging', name).read_text().startswith('# OpenKJ ' + version + ' —'):
                   raise SystemExit('Update ' + name)
           release = ET.parse('src/org.openkj.OpenKJ.metainfo.xml').find('./releases/release')
           if release is None or release.get('version') != version or release.get('type') != 'development':
-              raise SystemExit('Update Linux AppStream prerelease metadata')
+              raise SystemExit('Update Linux AppStream development release metadata')
           PY
 
   macos:
@@ -102,7 +106,9 @@ jobs:
           fi
           VERSION="${RELEASE_TAG#v}"
           VERSION="${VERSION%%-*}"
+          TITLE="$VERSION - Cross Platform Preview"
+          if [[ "$RELEASE_TAG" == *-beta.* ]]; then TITLE="$VERSION Beta"; fi
           gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --latest=false \
-            --title "$VERSION - Cross Platform Beta" --notes-file RELEASE_NOTES.md
+            --title "$TITLE" --notes-file RELEASE_NOTES.md
           gh release upload "$RELEASE_TAG" ./*
           gh release edit "$RELEASE_TAG" --draft=false

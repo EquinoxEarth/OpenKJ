@@ -22,7 +22,7 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.commit = 'a' * 40
         self.version = release.re.search(r'OKJ_VERSION_STRING "([^"\n]+)"',
             (Path(__file__).parents[2] / 'src/okjversion.h').read_text())[1]
-        self.tag = f'v{self.version}-prerelease.1'
+        self.tag = f'v{self.version}-beta.1'
         for name in ('macos', 'windows-zip', 'windows-msi', 'linux'):
             (self.inputs / name).mkdir(parents=True)
         self.zip = self.inputs / 'windows-zip/OpenKJ-Windows-x64-preview.zip'
@@ -47,6 +47,8 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.stage()
         self.assertTrue((self.output / f'OpenKJ-{self.version}-windows-x64.zip').exists())
         self.assertTrue((self.output / f'OpenKJ-{self.version}-linux-x86_64.flatpak').exists())
+        info = json.loads((self.output / f'OpenKJ-{self.version}-build-info.json').read_text())
+        self.assertEqual(info['tag'], self.tag)
         for line in (self.output / 'SHA256SUMS').read_text().splitlines():
             expected, name = line.split()
             self.assertEqual(expected, hashlib.sha256((self.output / name).read_bytes()).hexdigest())
@@ -56,6 +58,22 @@ class ReleaseIntegrityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
             self.stage()
         self.assertFalse(self.output.exists())
+
+    def test_legacy_preview_tags_remain_supported(self):
+        for channel in ('prerelease', 'preview'):
+            with self.subTest(channel=channel):
+                self.tag = f'v{self.version}-{channel}.1'
+                self.output = self.root / channel
+                self.stage()
+                self.assertTrue((self.output / 'SHA256SUMS').exists())
+
+    def test_invalid_beta_tags_never_staged(self):
+        for suffix in ('beta', 'beta.x', 'stable.1'):
+            with self.subTest(suffix=suffix):
+                self.tag = f'v{self.version}-{suffix}'
+                with self.assertRaisesRegex(ValueError, 'Expected a beta or preview tag'):
+                    self.stage()
+                self.assertFalse(self.output.exists())
 
     def test_mixed_source_commits_never_staged(self):
         (self.inputs / 'linux/build-manifest.json').write_text(json.dumps({'openkj-source-commit': 'b' * 40}))

@@ -26,12 +26,18 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v5
-      - name: Install Qt 6 build dependencies
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev \
-            qt6-base-dev qt6-svg-dev qt6-multimedia-dev qt6-networkauth-dev \
-            qt6-websockets-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+      # Ubuntu 24.04's Qt 6.4 is older than OpenKJ's minimum Qt 6.8.
+      - name: Install supported Qt 6 SDK
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          modules: 'qtmultimedia qtnetworkauth qtwebsockets'
+          cache: true
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:

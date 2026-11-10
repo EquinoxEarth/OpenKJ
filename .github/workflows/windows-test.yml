@@ -46,6 +46,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gst-plugins-base
             mingw-w64-ucrt-x86_64-gst-plugins-good
             mingw-w64-ucrt-x86_64-gst-plugins-bad
+            mingw-w64-ucrt-x86_64-gst-plugins-ugly
             mingw-w64-ucrt-x86_64-gst-plugins-rs
             mingw-w64-ucrt-x86_64-gst-libav
       - name: Record development environment
@@ -84,6 +85,10 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release -DOPENKJ_BUILD_SMOKE_TESTS=ON
       - name: Build application and runtime checks
         run: cmake --build build-windows-dev --parallel 4
+      - name: Check Windows plugin selection and generate media fixtures
+        run: |
+          python -m unittest discover -s packaging -p 'test_windows_plugins.py' -v
+          python packaging/generate_media_fixtures.py build-windows-dev/media-fixtures
       - name: Check Qt, SQLite, CDG and SoundTouch audio
         run: |
           export QT_DEBUG_PLUGINS=1
@@ -95,7 +100,7 @@ jobs:
         run: python packaging/package_windows.py --prefix /ucrt64
       - name: Check bundled runtime without installed SDK paths
         shell: pwsh
-        run: ./packaging/check_windows_bundle.ps1
+        run: ./packaging/check_windows_bundle.ps1 -MediaDirectory build-windows-dev/media-fixtures
       - name: Archive Windows preview
         shell: pwsh
         run: |

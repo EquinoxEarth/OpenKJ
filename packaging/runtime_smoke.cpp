@@ -1,6 +1,8 @@
 // Isolated build-environment check: never opens the host's settings or library.
 #include <QApplication>
+#include <QCommandLineParser>
 #include <QDebug>
+#include <QDir>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -99,6 +101,10 @@ int main(int argc, char **argv)
         std::fflush(stderr);
     });
     QApplication app(argc, argv);
+    QCommandLineParser arguments;
+    arguments.addHelpOption();
+    arguments.addOption({"media-directory", "Decode every media file in this directory.", "directory"});
+    arguments.process(app);
     stage("ZIP creation and readback");
     if (!checkZip()) {
         qCritical() << "ZIP creation/readback failed";
@@ -131,7 +137,11 @@ int main(int argc, char **argv)
     stage("find media elements");
     for (const auto *name : {"playbin", "pitch", "scaletempo", "equalizer-10bands",
              "audiopanorama", "volume", "audioconvert", "audioresample", "autoaudiosink", "appsink", "cdgparse",
-             "cdgdec", "qtdemux", "avdec_h264"}) {
+             "cdgdec", "qtdemux", "avdec_h264",
+#ifdef Q_OS_WIN
+             "wasapi2sink", "wasapisink", "directsoundsink",
+#endif
+             }) {
         auto *factory = gst_element_factory_find(name);
         if (!factory) {
             qCritical() << "Missing required GStreamer element:" << name;
@@ -218,6 +228,22 @@ int main(int argc, char **argv)
     if (!runPipeline("filesrc location=\"" + path +
                      "\" ! cdgparse ! cdgdec ! videoconvert ! fakesink sync=false"))
         return 1;
+
+    if (arguments.isSet("media-directory")) {
+        stage("decode packaged-format fixtures");
+        const QDir directory(arguments.value("media-directory"));
+        const auto files = directory.entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name);
+        if (!directory.exists() || files.isEmpty()) {
+            qCritical() << "Media fixture directory is missing or empty:" << directory.absolutePath();
+            return 1;
+        }
+        for (const auto &file : files) {
+            qInfo() << "Decode fixture:" << file.fileName();
+            if (!runPipeline("playbin uri=\"" + QString::fromUtf8(localMediaUri(file.absoluteFilePath())) +
+                             "\" audio-sink=\"fakesink sync=false\" video-sink=\"fakesink sync=false\""))
+                return 1;
+        }
+    }
     qInfo() << "PASS: Qt GUI, ZIP round trip, SQLite, local-file URI playback, required media plugins, SoundTouch/EQ audio, output format negotiation, and CDG decoding";
     return 0;
 }

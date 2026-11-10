@@ -12,6 +12,39 @@ import subprocess
 import sys
 
 
+# Explicit runtime set: add plugins here when a playback feature needs them.
+# These are MSYS2 UCRT64 plugin names, without the libgst prefix or .dll suffix.
+GSTREAMER_PLUGINS = (
+    # Playback, local files, type detection and decoded video delivery to Qt.
+    "coreelements", "playback", "typefindfunctions", "app",
+    "audioconvert", "audioresample", "videoconvertscale", "deinterlace",
+    # Preserve the existing SoundTouch pitch, tempo, EQ and volume chain.
+    "soundtouch", "audiofx", "equalizer", "volume", "autodetect",
+    # Native Windows outputs and device enumeration, including older fallbacks.
+    "wasapi2", "wasapi", "directsound",
+    # CDG lyrics and FFmpeg software audio/video decoders.
+    "cdg", "libav",
+    # Containers used by the karaoke and break-music libraries.
+    "isomp4", "matroska", "avi", "mpegpsdemux", "mpegtsdemux", "asf",
+    "wavparse", "ogg",
+    # Audio decoders, compressed stream parsers and MP3 tag handling.
+    "flac", "vorbis", "opus", "mpg123",
+    "audioparsers", "videoparsersbad", "id3demux",
+    # Required by the isolated SoundTouch/EQ runtime diagnostic.
+    "audiotestsrc",
+)
+
+
+def gstreamer_plugins(prefix):
+    directory = prefix / "lib/gstreamer-1.0"
+    plugins = [directory / f"libgst{name}.dll" for name in GSTREAMER_PLUGINS]
+    missing = [plugin.name for plugin in plugins if not plugin.is_file()]
+    if missing:
+        raise RuntimeError(f"Missing required GStreamer plugins in {directory}:\n" +
+                           "\n".join(missing))
+    return plugins
+
+
 def output(*args):
     return subprocess.check_output(args, text=True, encoding="utf-8", errors="replace")
 
@@ -23,6 +56,7 @@ def stage(build, prefix, destination):
         raise RuntimeError(f"Use a fresh staging directory: {destination}")
     if not (build / "openkj.exe").is_file():
         raise RuntimeError(f"Build openkj.exe first: {build}")
+    plugins = gstreamer_plugins(prefix)
     destination.mkdir(parents=True)
     origins = {}
 
@@ -51,11 +85,7 @@ def stage(build, prefix, destination):
     copy(qt_plugins / "platforms/qoffscreen.dll", "platforms/qoffscreen.dll")
     (destination / "qt.conf").write_text("[Paths]\nPrefix=.\nPlugins=.\n", encoding="utf-8")
 
-    # Preserve the installed plugin set rather than silently dropping support
-    # for a format that worked in the development build. Only runtime DLLs.
-    plugins = list((prefix / "lib/gstreamer-1.0").glob("*.dll"))
-    if not plugins:
-        raise RuntimeError("No GStreamer plugins in the selected UCRT64 prefix")
+    # Stage the curated set only; its native DLL dependencies are resolved below.
     for source in plugins:
         copy(source, Path("gstreamer-1.0") / source.name)
     copy(prefix / "libexec/gstreamer-1.0/gst-plugin-scanner.exe", "gst-plugin-scanner.exe")
@@ -126,13 +156,16 @@ def stage(build, prefix, destination):
         encoding="utf-8")
     manifest = {
         "commit": output("git", "rev-parse", "HEAD").strip(),
+        "gstreamer_plugins": [plugin.name for plugin in plugins],
         "files": {p.relative_to(destination).as_posix(): {
             "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
             "origin": origins.get(p.relative_to(destination).as_posix(), "generated or SDK license"),
         } for p in sorted(destination.rglob("*")) if p.is_file()},
     }
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(f"Staged {len(visited)} native binaries and {len(plugins)} GStreamer plugins in {destination}")
+    available = len(list((prefix / "lib/gstreamer-1.0").glob("*.dll")))
+    print(f"Staged {len(visited)} native binaries and {len(plugins)} of {available} "
+          f"installed GStreamer plugins in {destination}")
 
 
 if __name__ == "__main__":

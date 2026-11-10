@@ -27,7 +27,7 @@ pacman -S --needed git \
   mingw-w64-ucrt-x86_64-qt6-websockets mingw-w64-ucrt-x86_64-gstreamer \
   mingw-w64-ucrt-x86_64-gst-plugins-base mingw-w64-ucrt-x86_64-gst-plugins-good \
   mingw-w64-ucrt-x86_64-gst-plugins-bad mingw-w64-ucrt-x86_64-gst-plugins-rs \
-  mingw-w64-ucrt-x86_64-gst-libav
+  mingw-w64-ucrt-x86_64-gst-plugins-ugly mingw-w64-ucrt-x86_64-gst-libav
 
 git clone --branch master https://github.com/EquinoxEarth/OpenKJ.git
 cd OpenKJ
@@ -75,16 +75,31 @@ To stage the same folder locally from UCRT64, install its native Python:
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-python
 python packaging/package_windows.py --prefix /ucrt64
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/check_windows_bundle.ps1
+python packaging/generate_media_fixtures.py build-windows-dev/media-fixtures
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/check_windows_bundle.ps1 -MediaDirectory build-windows-dev/media-fixtures
 ```
 
 Staging requires a fresh `dist/OpenKJ-Windows-x64-preview` destination. It copies
-the deployed Qt plugins and installed GStreamer plugin set, follows PE imports
-recursively, and fails on unresolved dependencies or MSYS runtime binaries.
+the deployed Qt plugins and the explicit `GSTREAMER_PLUGINS` set in
+`package_windows.py`, follows PE imports recursively, and fails on unresolved
+dependencies or MSYS runtime binaries.
 It includes license notices, package versions and a per-file hash manifest.
 CI checks this exact folder using only Windows system paths, a fresh GStreamer
 registry and the bundled plugin scanner, then archives it. The check exercises
 the shared bundle-path configuration used by the application.
+
+The curated set keeps local playback, CDG, SoundTouch/EQ, native Windows audio
+outputs, and the containers/codecs used by the library. ASF parsing for WMV/WMA
+comes from `gst-plugins-ugly`; CDG comes from `gst-plugins-rs`. FFmpeg supplies
+software video decoding. Unrelated network, camera, graphics and effects plugins
+are omitted. Required plugin DLLs must exist or staging fails; their exact names
+are recorded in `manifest.json`. To add format support later, extend the set
+and add a generated fixture in `generate_media_fixtures.py`.
+
+CI generates short synthetic MP3, FLAC, Vorbis/Opus Ogg, AAC/M4A, MP4, MKV, AVI,
+MPEG program/transport stream and WMV/WMA files using the SDK's FFmpeg. The
+bundle must decode all of them with only its own plugins and a fresh registry.
+Fixture generation does not add encoders or sample media to the shipped package.
 
 The automated check uses offscreen Qt and fake audio/video outputs. Repeat
 physical playback, recording and display tests on a Windows PC without MSYS2

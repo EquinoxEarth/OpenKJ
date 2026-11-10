@@ -1,4 +1,7 @@
-param([string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-preview')
+param(
+    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-preview',
+    [string]$MediaDirectory = ''
+)
 $ErrorActionPreference = 'Stop'
 Add-Type @'
 using System.Runtime.InteropServices;
@@ -9,6 +12,15 @@ public static class OpenKJBundleErrorMode {
 '@
 [void][OpenKJBundleErrorMode]::SetErrorMode(0x8003)
 $bundle = (Resolve-Path $BundleDirectory).Path
+$processOptions = @{
+    FilePath = Join-Path $bundle 'openkj-runtime-smoke.exe'
+    PassThru = $true
+    NoNewWindow = $true
+}
+if ($MediaDirectory) {
+    $media = (Resolve-Path $MediaDirectory).Path
+    $processOptions.ArgumentList = @('--media-directory', ('"' + $media + '"'))
+}
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('OpenKJ-bundle-check-' + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
@@ -22,8 +34,8 @@ try {
     $env:GST_REGISTRY_1_0 = Join-Path $temporary 'registry.bin'
     Push-Location $temporary
     try {
-        $process = Start-Process -FilePath (Join-Path $bundle 'openkj-runtime-smoke.exe') -PassThru -NoNewWindow
-        if (-not $process.WaitForExit(60000)) {
+        $process = Start-Process @processOptions
+        if (-not $process.WaitForExit(180000)) {
             $process.Kill()
             throw 'Bundled runtime check timed out'
         }

@@ -2,6 +2,7 @@
 #include "mzarchive.h"
 #include "localmediauri.h"
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
@@ -22,7 +23,11 @@ MediaBackend::MediaBackend(QObject *parent, QString objectName, MediaType type)
     m_logger->info("{} Initializing GStreamer media backend", m_loggingPrefix);
 
     if (!gst_is_initialized()) {
+        QElapsedTimer initializationTimer;
+        initializationTimer.start();
         gst_init(nullptr, nullptr);
+        m_logger->info("{} GStreamer initialization completed in {} ms", m_loggingPrefix,
+                       initializationTimer.elapsed());
     }
 
     setupPipeline();

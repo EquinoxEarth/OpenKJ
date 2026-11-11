@@ -194,6 +194,33 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
         ui->comboBoxCodec->setCurrentIndex(1);
     else
         ui->comboBoxCodec->setCurrentIndex(ui->comboBoxCodec->findText(m_settings.recordingCodec()));
+    ui->comboBoxRecordingSource->addItem(tr("Board / input only"));
+#ifdef Q_OS_MACOS
+    ui->comboBoxRecordingSource->addItem(tr("OpenKJ mix"));
+    ui->comboBoxRecordingSource->setCurrentIndex(m_settings.recordingUsesOpenKjMix() ? 1 : 0);
+#endif
+    ui->spinBoxRecordingMic->setValue(m_settings.recordingMicLevel());
+    ui->spinBoxRecordingMusic->setValue(m_settings.recordingMusicLevel());
+    const auto showMixLevels = [this](int source) {
+        const bool mixing = source == 1;
+        ui->labelRecordingMic->setVisible(mixing);
+        ui->labelRecordingMusic->setVisible(mixing);
+        ui->spinBoxRecordingMic->setVisible(mixing);
+        ui->spinBoxRecordingMusic->setVisible(mixing);
+    };
+    showMixLevels(ui->comboBoxRecordingSource->currentIndex());
+    connect(ui->comboBoxRecordingSource, &QComboBox::currentIndexChanged, this, [this, showMixLevels](int source) {
+        m_settings.setRecordingUsesOpenKjMix(source == 1);
+        showMixLevels(source);
+    });
+    const auto updateMixLevels = [this](int) {
+        const int mic = ui->spinBoxRecordingMic->value();
+        const int music = ui->spinBoxRecordingMusic->value();
+        m_settings.setRecordingMixLevels(mic, music);
+        emit recordingMixLevelsChanged(mic, music);
+    };
+    connect(ui->spinBoxRecordingMic, &QSpinBox::valueChanged, this, updateMixLevels);
+    connect(ui->spinBoxRecordingMusic, &QSpinBox::valueChanged, this, updateMixLevels);
     ui->comboBoxUpdateBranch->addItem("Stable");
     ui->comboBoxUpdateBranch->addItem("Development");
     ui->cbxTheme->addItem("OS Native");

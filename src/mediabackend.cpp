@@ -609,6 +609,14 @@ void MediaBackend::invalidateVideoFrames(bool stopping)
     // A queued delivery can service a newer frame if one arrives first.
 }
 
+GstPad *MediaBackend::recordingMusicPad() const
+{
+    auto *pad = m_panorama ? gst_element_get_static_pad(m_panorama, "src") : nullptr;
+    if (pad && !gst_pad_is_linked(pad))
+        gst_clear_object(&pad);
+    return pad;
+}
+
 void MediaBackend::setVideoOutputWidgets(
     const std::vector<QWidget*>& surfaces)
 {

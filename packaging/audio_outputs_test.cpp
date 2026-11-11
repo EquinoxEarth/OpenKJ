@@ -1,6 +1,10 @@
 #include "mediabackend.h"
 #include "audiofader.h"
 #include "xbrz.h"
+#include "recordingmix.h"
+#include <QtEndian>
+#include <cmath>
+#include <numbers>
 #include <QApplication>
 #include <QDataStream>
 #include <QElapsedTimer>
@@ -327,6 +331,45 @@ static void checkSharedVideoFrames(const QString &audioFilename, const QString &
 
 }
 
+#ifdef Q_OS_MACOS
+static void checkKaraokeMixUsesPreVolumeAudio(const QString &filename, const QString &output)
+{
+    MediaBackend backend(nullptr, "Recording music tap test", MediaBackend::Karaoke);
+    backend.setAudioOutputDevice("Test Speakers");
+    backend.setVolume(0);
+    backend.setMedia(filename);
+    backend.play();
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000, "Mix test track must start");
+
+    auto *pad = backend.recordingMusicPad();
+    require(pad, "Karaoke must expose a pad before the live volume control");
+    const auto releasePad = qScopeGuard([&] { gst_object_unref(pad); });
+    auto *mic = gst_element_factory_make("audiotestsrc", nullptr);
+    require(mic, "Cannot create the test microphone");
+    g_object_set(mic, "is-live", TRUE, "wave", 4, nullptr); // Silence.
+    RecordingMix recording;
+    QSignalSpy errors(&recording, &RecordingMix::error);
+    QSignalSpy finished(&recording, &RecordingMix::finished);
+    require(recording.start(mic, pad, output, RecordingMix::Format::Wav, 0, 80), "Mix recording must start");
+    QTest::qWait(600);
+    backend.rawStop();
+    recording.finish();
+    waitFor([&] { return finished.size() == 1; }, 4000, "Mix recording must finalize after playback stops");
+    require(errors.isEmpty(), "Mix recording must finish without an error");
+    QFile wave(output);
+    require(wave.open(QIODevice::ReadOnly), "Mix recording must produce a WAV file");
+    const auto data = wave.readAll();
+    bool hasMusic = false;
+    for (qsizetype i = 4096; i + 1 < data.size(); i += 2) {
+        if (std::abs(qFromLittleEndian<qint16>(data.constData() + i)) > 1500) {
+            hasMusic = true;
+            break;
+        }
+    }
+    require(hasMusic, "Muted live playback must still supply backing audio to the recording");
+}
+#endif
+
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
@@ -416,12 +459,16 @@ int main(int argc, char **argv)
                  << quint16(2) << quint16(16);
             wave.writeRawData("data", 4);
             wave << quint32(480000);
-            file.write(QByteArray(480000, '\0'));
+            for (int sample = 0; sample < 240000; ++sample)
+                wave << qint16(12000 * std::sin(2.0 * std::numbers::pi * 400.0 * sample / 8000));
         }
         settings.setAudioOutputDevice("Test Speakers");
         settings.setAudioOutputDeviceBm("Test Speakers");
         checkStopAndVolume(filename, MediaBackend::Karaoke);
         checkStopAndVolume(filename, MediaBackend::BackgroundMusic);
+#ifdef Q_OS_MACOS
+        checkKaraokeMixUsesPreVolumeAudio(filename, temporary.filePath("muted live playback.wav"));
+#endif
         const auto cdgFilename = temporary.filePath("shared-video.cdg");
         {
             QFile cdg(cdgFilename);

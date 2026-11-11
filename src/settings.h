@@ -211,6 +211,11 @@ public:
     void setAudioOutputDeviceBm(QString device);
     int audioBackend();
     void setAudioBackend(int index);
+    bool recordingUsesOpenKjMix();
+    void setRecordingUsesOpenKjMix(bool enabled);
+    int recordingMicLevel();
+    int recordingMusicLevel();
+    void setRecordingMixLevels(int mic, int music);
     QString recordingContainer();
     void setRecordingContainer(QString container);
     QString recordingCodec();

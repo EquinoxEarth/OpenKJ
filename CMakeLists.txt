@@ -144,6 +144,7 @@ set(SOURCE_FILES
         src/bmdbdialog.cpp
         src/dlgcustompatterns.cpp
         src/audiorecorder.cpp
+        src/recordingmix.cpp
         src/okjsongbookapi.cpp
         src/dlgdbupdate.cpp
         src/dlgbookcreator.cpp
@@ -210,6 +211,7 @@ set(SOURCE_FILES
         src/bmdbdialog.h
         src/dlgcustompatterns.h
         src/audiorecorder.h
+        src/recordingmix.h
         src/okjsongbookapi.h
         src/dlgdbupdate.h
         src/dlgbookcreator.h
@@ -368,11 +370,16 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
 
     add_executable(openkj-audio-outputs-test
         packaging/audio_outputs_test.cpp
-        src/mediabackend.cpp src/mzarchive.cpp src/audiofader.cpp
+        src/mediabackend.cpp src/mzarchive.cpp src/audiofader.cpp src/recordingmix.cpp
         src/videodisplay.cpp src/xbrz.cpp src/settings.cpp src/simplecrypt.cpp)
     target_link_libraries(openkj-audio-outputs-test PRIVATE ${LIBRARIES} Qt6::Test)
     add_test(NAME audio-outputs COMMAND openkj-audio-outputs-test)
     set_tests_properties(audio-outputs PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-audio-recorder-test
+        packaging/audio_recorder_test.cpp src/audiorecorder.cpp src/recordingmix.cpp src/settings.cpp src/simplecrypt.cpp)
+    target_link_libraries(openkj-audio-recorder-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Multimedia spdlog::spdlog ${GSTREAMER_LIBRARIES})
+    add_test(NAME audio-recorder COMMAND openkj-audio-recorder-test)
+    set_tests_properties(audio-recorder PROPERTIES TIMEOUT 15)
     add_executable(openkj-add-song-dialog-test
         packaging/add_song_dialog_test.cpp src/dlgaddsong.cpp src/dlgaddsong.ui
         src/models/tablemodelrotation.cpp src/models/tablemodelqueuesongs.cpp

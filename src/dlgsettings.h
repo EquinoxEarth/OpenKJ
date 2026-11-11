@@ -73,6 +73,7 @@ public:
     ~DlgSettings() override;
 
 signals:
+    void recordingMixLevelsChanged(int mic, int music);
     void rotationDisplaySettingsChanged();
     void audioUseFaderChanged(bool);
     void audioUseFaderChangedBm(bool);

@@ -135,7 +135,7 @@
                      <property name="bottomMargin">
                       <number>10</number>
                      </property>
-                     <item row="0" column="0">
+                     <item row="1" column="0">
                       <widget class="QLabel" name="label_13">
                        <property name="text">
                         <string>Capture device</string>
@@ -145,7 +145,7 @@
                        </property>
                       </widget>
                      </item>
-                     <item row="0" column="1">
+                     <item row="1" column="1">
                       <widget class="QComboBox" name="comboBoxDevice">
                        <property name="sizePolicy">
                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
@@ -155,7 +155,7 @@
                        </property>
                       </widget>
                      </item>
-                     <item row="1" column="0">
+                     <item row="2" column="0">
                       <widget class="QLabel" name="label_14">
                        <property name="sizePolicy">
                         <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -171,7 +171,7 @@
                        </property>
                       </widget>
                      </item>
-                     <item row="1" column="1">
+                     <item row="2" column="1">
                       <widget class="QComboBox" name="comboBoxCodec">
                        <property name="sizePolicy">
                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
@@ -179,6 +179,43 @@
                          <verstretch>0</verstretch>
                         </sizepolicy>
                        </property>
+                      </widget>
+                     </item>
+                     <item row="0" column="0">
+                      <widget class="QLabel" name="labelRecordingSource">
+                       <property name="text"><string>Recording source</string></property>
+                       <property name="buddy"><cstring>comboBoxRecordingSource</cstring></property>
+                      </widget>
+                     </item>
+                     <item row="0" column="1">
+                      <widget class="QComboBox" name="comboBoxRecordingSource">
+                       <property name="toolTip"><string>OpenKJ mix adds the karaoke backing track directly to the selected microphone. Choose Board / input only for a mixer that already sends both.</string></property>
+                      </widget>
+                     </item>
+                     <item row="3" column="0">
+                      <widget class="QLabel" name="labelRecordingMic">
+                       <property name="text"><string>Mic level</string></property>
+                       <property name="buddy"><cstring>spinBoxRecordingMic</cstring></property>
+                      </widget>
+                     </item>
+                     <item row="3" column="1">
+                      <widget class="QSpinBox" name="spinBoxRecordingMic">
+                       <property name="suffix"><string> %</string></property>
+                       <property name="maximum"><number>100</number></property>
+                       <property name="singleStep"><number>5</number></property>
+                      </widget>
+                     </item>
+                     <item row="4" column="0">
+                      <widget class="QLabel" name="labelRecordingMusic">
+                       <property name="text"><string>Music level</string></property>
+                       <property name="buddy"><cstring>spinBoxRecordingMusic</cstring></property>
+                      </widget>
+                     </item>
+                     <item row="4" column="1">
+                      <widget class="QSpinBox" name="spinBoxRecordingMusic">
+                       <property name="suffix"><string> %</string></property>
+                       <property name="maximum"><number>100</number></property>
+                       <property name="singleStep"><number>5</number></property>
                       </widget>
                      </item>
                     </layout>

@@ -160,7 +160,6 @@ private:
     std::shared_ptr<QTemporaryDir> m_preparedPlaybackDir;
     std::shared_ptr<std::atomic_bool> m_mediaPreparationCancelled;
     void cancelMediaPreparation();
-    void applyKaraokePlaybackSettings();
     struct KaraokePlaybackRequest {
         okj::QueueSong song;
         bool trackSong{true};

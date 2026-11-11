@@ -75,6 +75,8 @@ public:
     void setAccelType(const accel &type=accel::XVideo) {}
     void setAudioOutputDevice(const AudioOutputDevice &device);
     void setAudioOutputDevice(const QString &deviceName);
+    // Returns a referenced pad after the karaoke DSP and before live volume.
+    GstPad *recordingMusicPad() const;
     void setVideoOutputWidgets(const std::vector<QWidget*>& surfaces);
     void setVideoEnabled(const bool &enabled);
     [[nodiscard]] bool isVideoEnabled() const { return m_videoEnabled; }

@@ -1226,6 +1226,32 @@ void Settings::setAudioBackend(int index)
     settings->setValue("audioBackend", index);
 }
 
+bool Settings::recordingUsesOpenKjMix()
+{
+    return settings->value("recordingUsesOpenKjMix", false).toBool();
+}
+
+void Settings::setRecordingUsesOpenKjMix(bool enabled)
+{
+    settings->setValue("recordingUsesOpenKjMix", enabled);
+}
+
+int Settings::recordingMicLevel()
+{
+    return qBound(0, settings->value("recordingMicLevel", 50).toInt(), 100);
+}
+
+int Settings::recordingMusicLevel()
+{
+    return qBound(0, settings->value("recordingMusicLevel", 50).toInt(), 100);
+}
+
+void Settings::setRecordingMixLevels(int mic, int music)
+{
+    settings->setValue("recordingMicLevel", qBound(0, mic, 100));
+    settings->setValue("recordingMusicLevel", qBound(0, music, 100));
+}
+
 QString Settings::recordingContainer()
 {
     return settings->value("recordingContainer", "ogg").toString();

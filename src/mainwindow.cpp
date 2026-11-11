@@ -654,6 +654,7 @@ MainWindow::MainWindow(QWidget *parent) :
                                        m_rotationDisplay->videoDisplay()};
     m_mediaBackendBm.setVideoOutputWidgets({cdgWindow->getVideoDisplayBm(), ui->videoPreviewBm});
     m_mediaBackendKar.setVideoOutputWidgets(videoWidgets);
+    audioRecorder.setMusicPad(m_mediaBackendKar.recordingMusicPad());
     m_settings.setStartupOk(true);
     m_mediaBackendBm.stop(true);
 
@@ -820,7 +821,16 @@ void MainWindow::setupConnections() {
         hasActiveVideoChanged();
     });
     connect(&m_mediaBackendKar, &MediaBackend::pitchChanged, ui->spinBoxKey, &QSpinBox::setValue);
-    connect(&m_mediaBackendKar, &MediaBackend::audioError, this, &MainWindow::audioError);
+    connect(&m_mediaBackendKar, &MediaBackend::audioError, this, [this](const QString &message) {
+        if (m_shuttingDown)
+            return;
+        audioRecorder.stop();
+        audioError(message);
+    });
+    connect(&audioRecorder, &AudioRecorder::recordingError, this, [this](const QString &message) {
+        if (!m_shuttingDown)
+            ui->statusBar->showMessage(tr("Recording failed: %1").arg(message), 15000);
+    });
     connect(&m_mediaBackendKar, &MediaBackend::silenceDetected, this, &MainWindow::silenceDetectedKar);
     connect(&m_mediaBackendBm, &MediaBackend::audioError, this, &MainWindow::audioError);
     connect(&m_mediaBackendBm, &MediaBackend::silenceDetected, this, &MainWindow::silenceDetectedBm);
@@ -1314,15 +1324,6 @@ void MainWindow::cancelMediaPreparation() {
     m_mediaPreparationCancelled.reset();
 }
 
-void MainWindow::applyKaraokePlaybackSettings() {
-    m_mediaBackendKar.setTempo(ui->spinBoxTempo->value());
-    if (m_settings.recordingEnabled()) {
-        m_logger->info("{} Starting recording", m_loggingPrefix);
-        const auto timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd-hhmm");
-        audioRecorder.record(m_curSinger + " - " + m_curArtist + " - " + m_curTitle + " - " + timeStamp);
-    }
-}
-
 void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning)
 {
     if (m_shuttingDown || request.song.path.isEmpty())
@@ -1358,6 +1359,7 @@ void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, Interrup
     }
 
     cancelMediaPreparation();
+    audioRecorder.cancelPendingRecording();
     m_timerKaraokeAA.stop();
     updateAutoplayStatus();
     cdgWindow->showAlert(false);
@@ -1490,7 +1492,7 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, boo
         }
         m_mediaBackendKar.play();
         m_mediaBackendKar.fadeInImmediate();
-        applyKaraokePlaybackSettings();
+        m_mediaBackendKar.setTempo(ui->spinBoxTempo->value());
     });
     watcher->setFuture(QtConcurrent::run([filename, cancelled] {
         if (filename.endsWith(".zip", Qt::CaseInsensitive))
@@ -1519,6 +1521,7 @@ void MainWindow::cancelKaraokePlayback()
 
 MainWindow::~MainWindow() {
     m_shuttingDown = true;
+    audioRecorder.stop();
     bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
     cancelKaraokePlayback();
@@ -1811,6 +1814,7 @@ void MainWindow::actionSettingsTriggered() {
     connect(settingsDialog, &DlgSettings::enforceAspectRatioChanged, &m_mediaBackendKar, &MediaBackend::setEnforceAspectRatio);
     connect(settingsDialog, &DlgSettings::enforceAspectRatioChanged, &m_mediaBackendBm, &MediaBackend::setEnforceAspectRatio);
     connect(settingsDialog, &DlgSettings::karaokeAutoAdvanceChanged, ui->actionAutoplay_mode, &QAction::setChecked);
+    connect(settingsDialog, &DlgSettings::recordingMixLevelsChanged, &audioRecorder, &AudioRecorder::setMixLevels);
     connect(settingsDialog, &DlgSettings::audioUseFaderChanged, &m_mediaBackendKar, &MediaBackend::setUseFader);
     connect(settingsDialog, &DlgSettings::audioSilenceDetectChanged, &m_mediaBackendKar,
             &MediaBackend::setUseSilenceDetection);
@@ -1969,6 +1973,7 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
         return;
     m_rotationDisplay->setCurrentSinger(m_curSinger, state == MediaBackend::PlayingState);
     if (state == MediaBackend::StoppedState) {
+        audioRecorder.stop();
         m_logger->info("{} MainWindow - audio backend state is now STOPPED", m_loggingPrefix);
         // Duration queries can reset the label before a terminal state arrives.
         // Process each real playback stop once; ignore startup/cleanup messages.
@@ -1976,7 +1981,6 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
             return;
         m_karaokePlaybackActive = false;
         m_logger->info("{} KAudio entered StoppedState", m_loggingPrefix);
-        audioRecorder.stop();
         ui->labelArtist->setText("None");
         ui->labelTitle->setText("None");
         ui->labelSinger->setText("None");
@@ -2040,7 +2044,11 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
         audioRecorder.pause();
     }
     if (state == MediaBackend::PlayingState) {
-        m_karaokePlaybackActive = true;
+        const bool resumed = std::exchange(m_karaokePlaybackActive, true);
+        if (resumed)
+            audioRecorder.unpause();
+        else if (!m_pendingKaraokePlayback)
+            audioRecorder.record(m_curSinger, m_curArtist, m_curTitle);
         m_logger->info("{} KAudio entered PlayingState", m_loggingPrefix);
         //m_mediaBackendBm.setVideoEnabled(false);
         ui->pushButtonKeyUp->setEnabled(true);
@@ -3210,6 +3218,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     m_playlistImporter.cancel();
     dbDialog->cancelScan();
     cancelKaraokePlayback();
+    audioRecorder.stop();
     event->accept();
 }
 

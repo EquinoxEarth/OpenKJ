@@ -52,6 +52,7 @@ plugins=(
   libgstisomp4.dylib libgstosxaudio.dylib libgsttypefindfunctions.dylib
   libgstaudioparsers.dylib libgstlibav.dylib libgstvideoparsersbad.dylib
   libgstvideoconvertscale.dylib libgstaudioresample.dylib libgstid3demux.dylib
+  libgstaudiomixer.dylib libgstwavenc.dylib libgstlame.dylib libgstvorbis.dylib libgstogg.dylib
 )
 for plugin in "${plugins[@]}"; do
   [[ -f "$GST_SOURCE/$plugin" ]] || { echo "Missing GStreamer plugin: $plugin" >&2; exit 1; }

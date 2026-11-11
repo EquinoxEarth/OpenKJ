@@ -2,6 +2,7 @@
 #define DATABASEWORKER_H
 
 #include <QObject>
+#include <functional>
 #include <QSqlDatabase>
 #include <QList>
 #include <QString>
@@ -36,8 +37,8 @@ public slots:
     void setQueueSongKey(int singerId, int songId, int key);
     void setQueueSongPlayed(int singerId, int songId, bool played);
     void removeAllQueueSongs(int singerId);
-    void commitRotation(const QList<okj::RotationSinger> &singers);
-    void commitQueue(int singerId, const QList<okj::QueueSong> &songs);
+    void commitRotation(const QList<okj::RotationSinger> &singers, const QList<okj::RotationSinger> &expected);
+    void commitQueue(int singerId, const QList<okj::QueueSong> &songs, const QList<okj::QueueSong> &expected);
 
 signals:
     void rotationLoaded(const QList<okj::RotationSinger> &singers);
@@ -45,9 +46,11 @@ signals:
     void singerAdded(int singerId, const QString &name, int positionHint);
     void rotationUpdated();
     void queueUpdated(int singerId);
+    void writeFailed(int singerId); // -1 means rotation; reload optimistic GUI state.
     void errorOccurred(const QString &errorMsg);
 
 private:
+    bool write(int singerId, const std::function<void()> &operation);
     QString m_dbPath;
     QSqlDatabase m_db;
     Settings m_settings;

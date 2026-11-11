@@ -1378,6 +1378,18 @@ void MainWindow::dbInit(const QDir &okjDataDir) {
     // Connection: Worker events -> Model slots
     connect(m_dbWorker, &DatabaseWorker::singerAdded, &m_rotModel, &TableModelRotation::onSingerAdded);
 
+    connect(m_dbWorker, &DatabaseWorker::writeFailed, this, [this](int singerId) {
+        m_rotModel.loadData();
+        if (singerId < 0 || singerId == m_qModel.getSingerId())
+            m_qModel.loadSinger(m_qModel.getSingerId());
+    });
+    const auto reportDatabaseError = [this](const QString &message) {
+        m_logger->error("Database operation failed: {}", message.toStdString());
+        QMessageBox::warning(this, tr("Database operation failed"), message);
+    };
+    connect(m_dbWorker, &DatabaseWorker::errorOccurred, this, reportDatabaseError);
+    connect(&m_qModel, &TableModelQueueSongs::databaseWriteError, this, reportDatabaseError);
+
     m_dbThread->start();
 }
 

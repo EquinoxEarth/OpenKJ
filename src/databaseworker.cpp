@@ -1,9 +1,71 @@
 #include "databaseworker.h"
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QSqlRecord>
 #include <QDateTime>
 #include <spdlog/spdlog.h>
 #include <chrono>
+#include <QMap>
+#include <QSet>
+#include <stdexcept>
+
+namespace {
+void execute(QSqlQuery &query)
+{
+    if (!query.exec())
+        throw std::runtime_error(query.lastError().text().toStdString());
+}
+void execute(QSqlQuery &query, const QString &sql)
+{
+    if (!query.exec(sql))
+        throw std::runtime_error(query.lastError().text().toStdString());
+}
+using Records = QMap<int, QVariantList>;
+Records records(QSqlDatabase &db, const QString &sql)
+{
+    QSqlQuery query(db);
+    execute(query, sql);
+    Records result;
+    while (query.next()) {
+        QVariantList row;
+        for (int i = 1; i < query.record().count(); ++i)
+            row.append(query.value(i));
+        result.insert(query.value(0).toInt(), row);
+    }
+    if (query.lastError().isValid())
+        throw std::runtime_error(query.lastError().text().toStdString());
+    return result;
+}
+void require(bool condition, const char *message)
+{
+    if (!condition) throw std::runtime_error(message);
+}
+}
+
+// All writes, including snapshot validation, run in one transaction. Never emit
+// success before COMMIT: a failed statement or deferred constraint rolls back.
+bool DatabaseWorker::write(int singerId, const std::function<void()> &operation)
+{
+    if (!m_db.transaction()) {
+        const QString error = m_db.lastError().text();
+        emit writeFailed(singerId);
+        emit errorOccurred(error);
+        return false;
+    }
+    try {
+        operation();
+        if (!m_db.commit())
+            throw std::runtime_error(m_db.lastError().text().toStdString());
+    } catch (const std::exception &error) {
+        const bool rolledBack = m_db.rollback();
+        const QString message = QString::fromUtf8(error.what()) +
+            (rolledBack ? QString() : QString("; rollback failed: ") + m_db.lastError().text());
+        emit writeFailed(singerId);
+        emit errorOccurred(message);
+        return false;
+    }
+    return true;
+}
 
 DatabaseWorker::DatabaseWorker(const QString &dbPath, QObject *parent)
     : QObject(parent), m_dbPath(dbPath)
@@ -157,56 +219,59 @@ void DatabaseWorker::loadQueue(int singerId, quint64 requestId)
 
 void DatabaseWorker::addSinger(const QString &name, int positionHint, bool makeRegular)
 {
-    QSqlQuery query(m_db);
-    int addPos = 0;
-    query.exec("SELECT COUNT(singerid) FROM rotationsingers");
-    if (query.next()) {
-        addPos = query.value(0).toInt();
-    }
+    int singerId = -1;
+    if (!write(-1, [&] {
+        QSqlQuery query(m_db);
+        int addPos = 0;
+        execute(query, "SELECT COUNT(singerid) FROM rotationsingers");
+        if (query.next()) {
+            addPos = query.value(0).toInt();
+        }
     
-    QDateTime curTs = QDateTime::currentDateTime();
-    query.prepare("INSERT INTO rotationsingers (name, position, regular, regularid, addts) "
-                  "VALUES (:name, :pos, :regular, -1, :addts)");
-    query.bindValue(":name", name);
-    query.bindValue(":pos", addPos);
-    query.bindValue(":regular", makeRegular);
-    query.bindValue(":addts", curTs);
-    if (!query.exec()) {
-        emit errorOccurred(query.lastError().text());
-        return;
-    }
-    int singerId = query.lastInsertId().toInt();
+        QDateTime curTs = QDateTime::currentDateTime();
+        query.prepare("INSERT INTO rotationsingers (name, position, regular, regularid, addts) "
+                      "VALUES (:name, :pos, :regular, -1, :addts)");
+        query.bindValue(":name", name);
+        query.bindValue(":pos", addPos);
+        query.bindValue(":regular", makeRegular);
+        query.bindValue(":addts", curTs);
+        execute(query);
+        singerId = query.lastInsertId().toInt();
     
+    })) return;
     emit singerAdded(singerId, name, positionHint);
     loadRotation();
 }
 
 void DatabaseWorker::addSingerWithSong(const QString &name, int positionHint, int songId, int keyChange, bool makeRegular)
 {
-    QSqlQuery query(m_db);
-    int addPos = 0;
-    query.exec("SELECT COUNT(singerid) FROM rotationsingers");
-    if (query.next()) {
-        addPos = query.value(0).toInt();
-    }
+    int singerId = -1;
+    if (!write(-1, [&] {
+        QSqlQuery query(m_db);
+        int addPos = 0;
+        execute(query, "SELECT COUNT(singerid) FROM rotationsingers");
+        if (query.next()) {
+            addPos = query.value(0).toInt();
+        }
     
-    QDateTime curTs = QDateTime::currentDateTime();
-    query.prepare("INSERT INTO rotationsingers (name, position, regular, regularid, addts) "
-                  "VALUES (:name, :pos, :regular, -1, :addts)");
-    query.bindValue(":name", name);
-    query.bindValue(":pos", addPos);
-    query.bindValue(":regular", makeRegular);
-    query.bindValue(":addts", curTs);
-    query.exec();
-    int singerId = query.lastInsertId().toInt();
+        QDateTime curTs = QDateTime::currentDateTime();
+        query.prepare("INSERT INTO rotationsingers (name, position, regular, regularid, addts) "
+                      "VALUES (:name, :pos, :regular, -1, :addts)");
+        query.bindValue(":name", name);
+        query.bindValue(":pos", addPos);
+        query.bindValue(":regular", makeRegular);
+        query.bindValue(":addts", curTs);
+        execute(query);
+        singerId = query.lastInsertId().toInt();
     
-    query.prepare("INSERT INTO queuesongs (singer, song, artist, title, discid, path, keychg, played, position) "
-                  "VALUES (:singerId, :songId, :songId, :songId, :songId, :songId, :key, 0, 0)");
-    query.bindValue(":singerId", singerId);
-    query.bindValue(":songId", songId);
-    query.bindValue(":key", keyChange);
-    query.exec();
+        query.prepare("INSERT INTO queuesongs (singer, song, artist, title, discid, path, keychg, played, position) "
+                      "VALUES (:singerId, :songId, :songId, :songId, :songId, :songId, :key, 0, 0)");
+        query.bindValue(":singerId", singerId);
+        query.bindValue(":songId", songId);
+        query.bindValue(":key", keyChange);
+        execute(query);
     
+    })) return;
     emit singerAdded(singerId, name, positionHint);
     emit queueUpdated(singerId);
     loadRotation();
@@ -220,11 +285,13 @@ void DatabaseWorker::moveSinger(int oldPosition, int newPosition)
 
 void DatabaseWorker::renameSinger(int singerId, const QString &newName)
 {
-    QSqlQuery query(m_db);
-    query.prepare("UPDATE rotationsingers SET name = :name WHERE singerid = :singerid");
-    query.bindValue(":name", newName);
-    query.bindValue(":singerid", singerId);
-    query.exec();
+    if (!write(singerId, [&] {
+        QSqlQuery query(m_db);
+        query.prepare("UPDATE rotationsingers SET name = :name WHERE singerid = :singerid");
+        query.bindValue(":name", newName);
+        query.bindValue(":singerid", singerId);
+        execute(query);
+    })) return;
     loadRotation();
 }
 
@@ -235,40 +302,41 @@ void DatabaseWorker::deleteSinger(int singerId)
 
 void DatabaseWorker::setSingerRegular(int singerId, bool isRegular)
 {
-    QSqlQuery query(m_db);
-    query.prepare("UPDATE rotationsingers SET regular = :regular WHERE singerid = :singerid");
-    query.bindValue(":regular", isRegular);
-    query.bindValue(":singerid", singerId);
-    query.exec();
+    if (!write(singerId, [&] {
+        QSqlQuery query(m_db);
+        query.prepare("UPDATE rotationsingers SET regular = :regular WHERE singerid = :singerid");
+        query.bindValue(":regular", isRegular);
+        query.bindValue(":singerid", singerId);
+        execute(query);
+    })) return;
     loadRotation();
 }
 
 void DatabaseWorker::clearRotation()
 {
-    QSqlQuery query(m_db);
-    query.exec("BEGIN TRANSACTION");
-    query.exec("DELETE FROM queuesongs");
-    query.exec("DELETE FROM rotationsingers");
-    query.exec("COMMIT");
+    if (!write(-1, [&] {
+        QSqlQuery query(m_db);
+        execute(query, "DELETE FROM queuesongs");
+        execute(query, "DELETE FROM rotationsingers");
+    })) return;
     loadRotation();
 }
 
 void DatabaseWorker::addSongToQueue(int singerId, int songId, int keyChange)
 {
-    // Use the destination queue's persisted order, independent of which singer
-    // is currently displayed. Compute the append position in the same statement.
-    QSqlQuery query(m_db);
-    query.prepare("INSERT INTO queuesongs (singer, song, artist, title, discid, path, keychg, played, position) "
-                  "SELECT :singerId, :songId, :songId, :songId, :songId, :songId, :key, 0, "
-                  "COALESCE(MAX(position), -1) + 1 FROM queuesongs WHERE singer = :singerId");
-    query.bindValue(":singerId", singerId);
-    query.bindValue(":songId", songId);
-    query.bindValue(":key", keyChange);
-    if (!query.exec()) {
-        emit errorOccurred(query.lastError().text());
-        return;
-    }
+    if (!write(singerId, [&] {
+        // Use the destination queue's persisted order, independent of which singer
+        // is currently displayed. Compute the append position in the same statement.
+        QSqlQuery query(m_db);
+        query.prepare("INSERT INTO queuesongs (singer, song, artist, title, discid, path, keychg, played, position) "
+                      "SELECT :singerId, :songId, :songId, :songId, :songId, :songId, :key, 0, "
+                      "COALESCE(MAX(position), -1) + 1 FROM queuesongs WHERE singer = :singerId");
+        query.bindValue(":singerId", singerId);
+        query.bindValue(":songId", songId);
+        query.bindValue(":key", keyChange);
+        execute(query);
     
+    })) return;
     emit queueUpdated(singerId);
     loadRotation();
 }
@@ -285,81 +353,118 @@ void DatabaseWorker::deleteQueueSong(int singerId, int queueSongId)
 
 void DatabaseWorker::setQueueSongKey(int singerId, int songId, int key)
 {
-    QSqlQuery query(m_db);
-    query.prepare("UPDATE queuesongs SET keychg = :key WHERE qsongid = :id AND singer = :singerId");
-    query.bindValue(":singerId", singerId);
-    query.bindValue(":id", songId);
-    query.bindValue(":key", key);
-    query.exec();
+    if (!write(singerId, [&] {
+        QSqlQuery query(m_db);
+        query.prepare("UPDATE queuesongs SET keychg = :key WHERE qsongid = :id AND singer = :singerId");
+        query.bindValue(":singerId", singerId);
+        query.bindValue(":id", songId);
+        query.bindValue(":key", key);
+        execute(query);
     
+    })) return;
     emit queueUpdated(singerId);
     loadRotation();
 }
 
 void DatabaseWorker::setQueueSongPlayed(int singerId, int songId, bool played)
 {
-    QSqlQuery query(m_db);
-    query.prepare("UPDATE queuesongs SET played = :played WHERE qsongid = :id AND singer = :singerId");
-    query.bindValue(":singerId", singerId);
-    query.bindValue(":id", songId);
-    query.bindValue(":played", played);
-    query.exec();
+    if (!write(singerId, [&] {
+        QSqlQuery query(m_db);
+        query.prepare("UPDATE queuesongs SET played = :played WHERE qsongid = :id AND singer = :singerId");
+        query.bindValue(":singerId", singerId);
+        query.bindValue(":id", songId);
+        query.bindValue(":played", played);
+        execute(query);
     
+    })) return;
     emit queueUpdated(singerId);
     loadRotation();
 }
 
 void DatabaseWorker::removeAllQueueSongs(int singerId)
 {
-    QSqlQuery query(m_db);
-    query.prepare("DELETE FROM queuesongs WHERE singer = :singerId");
-    query.bindValue(":singerId", singerId);
-    query.exec();
+    if (!write(singerId, [&] {
+        QSqlQuery query(m_db);
+        query.prepare("DELETE FROM queuesongs WHERE singer = :singerId");
+        query.bindValue(":singerId", singerId);
+        execute(query);
     
+    })) return;
     emit queueUpdated(singerId);
     loadRotation();
 }
 
-void DatabaseWorker::commitRotation(const QList<okj::RotationSinger> &singers)
+void DatabaseWorker::commitRotation(const QList<okj::RotationSinger> &singers,
+                                    const QList<okj::RotationSinger> &expected)
 {
-    QSqlQuery query(m_db);
-    query.exec("BEGIN TRANSACTION");
-    query.exec("DELETE FROM rotationsingers");
-    query.prepare("INSERT INTO rotationsingers (singerid, name, position, regular, regularid, addts) "
-                  "VALUES (:singerid, :name, :pos, :regular, -1, :addts)");
-    for (const auto &singer : singers) {
-        query.bindValue(":singerid", singer.id);
-        query.bindValue(":name", singer.name);
-        query.bindValue(":pos", singer.position);
-        query.bindValue(":regular", singer.regular);
-        query.bindValue(":addts", singer.addTs);
-        query.exec();
-    }
-    query.exec("COMMIT");
+    if (!write(-1, [&] {
+        Records baseline;
+        for (const auto &s : expected)
+            baseline.insert(s.id, {s.name, s.position, int(s.regular), s.addTs.toString(Qt::ISODateWithMs)});
+        auto current = records(m_db, "SELECT singerid, name, position, regular, addts FROM rotationsingers");
+        // Normalize timestamps through the same conversion as loadRotation().
+        for (auto &row : current) {
+            row[1] = row[1].toInt();
+            row[2] = row[2].toInt();
+            row[3] = row[3].toDateTime().toString(Qt::ISODateWithMs);
+        }
+        require(current == baseline, "Rotation changed while editing. Reloaded the saved rotation; please retry.");
+        QSet<int> retained;
+        QSqlQuery query(m_db);
+        for (const auto &s : singers) {
+            require(baseline.contains(s.id) && !retained.contains(s.id), "Invalid rotation snapshot");
+            retained.insert(s.id);
+            query.prepare("UPDATE rotationsingers SET position = :pos WHERE singerid = :id");
+            query.bindValue(":pos", s.position);
+            query.bindValue(":id", s.id);
+            execute(query);
+        }
+        for (const auto &s : expected) {
+            if (retained.contains(s.id)) continue;
+            query.prepare("DELETE FROM queuesongs WHERE singer = :id");
+            query.bindValue(":id", s.id);
+            execute(query);
+            query.prepare("DELETE FROM rotationsingers WHERE singerid = :id");
+            query.bindValue(":id", s.id);
+            execute(query);
+        }
+    })) return;
     loadRotation();
 }
 
-void DatabaseWorker::commitQueue(int singerId, const QList<okj::QueueSong> &songs)
+void DatabaseWorker::commitQueue(int singerId, const QList<okj::QueueSong> &songs,
+                                 const QList<okj::QueueSong> &expected)
 {
-    QSqlQuery query(m_db);
-    query.exec("BEGIN TRANSACTION");
-    query.prepare("DELETE FROM queuesongs WHERE singer = :singerId");
-    query.bindValue(":singerId", singerId);
-    query.exec();
-    
-    query.prepare("INSERT INTO queuesongs (qsongid, singer, song, artist, title, discid, path, keychg, played, position) "
-                  "VALUES (:id, :singerId, :songId, :songId, :songId, :songId, :songId, :key, :played, :position)");
-    for (const auto &song : songs) {
-        query.bindValue(":id", song.id);
-        query.bindValue(":singerId", song.singerId);
-        query.bindValue(":songId", song.dbSongId);
-        query.bindValue(":key", song.keyChange);
-        query.bindValue(":played", song.played);
-        query.bindValue(":position", song.position);
-        query.exec();
-    }
-    query.exec("COMMIT");
-    
+    if (!write(singerId, [&] {
+        Records baseline;
+        for (const auto &song : expected) {
+            require(song.singerId == singerId, "Invalid queue owner");
+            baseline.insert(song.id, {song.dbSongId, int(song.played), song.keyChange, song.position});
+        }
+        auto current = records(m_db, QString("SELECT qsongid, song, played, keychg, position FROM queuesongs WHERE singer = %1").arg(singerId));
+        for (auto &row : current)
+            for (auto &value : row) value = value.toInt();
+        require(current == baseline, "Queue changed while editing. Reloaded the saved queue; please retry.");
+        QSet<int> retained;
+        QSqlQuery query(m_db);
+        for (const auto &song : songs) {
+            require(song.singerId == singerId && baseline.contains(song.id) && !retained.contains(song.id), "Invalid queue snapshot");
+            retained.insert(song.id);
+            // Other fields have targeted setters; rebuilding must never replace them.
+            query.prepare("UPDATE queuesongs SET position = :pos WHERE qsongid = :id AND singer = :singer");
+            query.bindValue(":pos", song.position);
+            query.bindValue(":id", song.id);
+            query.bindValue(":singer", singerId);
+            execute(query);
+        }
+        for (const auto &song : expected) {
+            if (retained.contains(song.id)) continue;
+            query.prepare("DELETE FROM queuesongs WHERE qsongid = :id AND singer = :singer");
+            query.bindValue(":id", song.id);
+            query.bindValue(":singer", singerId);
+            execute(query);
+        }
+    })) return;
     emit queueUpdated(singerId);
     loadRotation();
 }

@@ -140,6 +140,7 @@ void TableModelQueueSongs::loadSinger(const int singerId) {
     ++m_queueRequestId;
     m_queueLoaded = false;
     m_songs.clear();
+    m_expectedState.clear();
     endResetModel();
     if (singerId >= 0)
         emit requestLoadQueue(singerId, m_queueRequestId);
@@ -151,6 +152,7 @@ void TableModelQueueSongs::onQueueLoaded(int singerId, quint64 requestId, const 
     if (std::any_of(songs.begin(), songs.end(), [singerId](const auto &song) { return song.singerId != singerId; }))
         return;
     beginResetModel();
+    m_expectedState = songs;
     m_songs.assign(songs.begin(), songs.end());
     m_queueLoaded = true;
     endResetModel();
@@ -230,7 +232,11 @@ int TableModelQueueSongs::add(const int songId) {
     query.bindValue(":key", 0);
     query.bindValue(":played", false);
     query.bindValue(":position", (int) m_songs.size());
-    query.exec();
+    if (!query.exec()) {
+        m_logger->error("{} Queue insertion failed: {}", m_loggingPrefix, query.lastError().text().toStdString());
+        emit databaseWriteError(query.lastError().text());
+        return -1;
+    }
     auto queueSongId = query.lastInsertId().toInt();
     emit layoutAboutToBeChanged();
     m_songs.emplace_back(okj::QueueSong{
@@ -246,6 +252,7 @@ int TableModelQueueSongs::add(const int songId) {
             ksong.duration,
             ksong.path
     });
+    m_expectedState.append(m_songs.back());
     emit layoutChanged();
     emit queueModified(m_curSingerId);
     return queueSongId;
@@ -254,7 +261,8 @@ int TableModelQueueSongs::add(const int songId) {
 void TableModelQueueSongs::insert(const int songId, const int position) {
     if (!isQueueReady())
         return;
-    add(songId);
+    if (add(songId) < 0)
+        return;
     move(static_cast<int>(m_songs.size()) - 1, position);
 }
 
@@ -283,6 +291,8 @@ void TableModelQueueSongs::setKey(const int songId, const int semitones) {
     });
     if (it == m_songs.end())
         return;
+    for (auto &song : m_expectedState)
+        if (song.id == songId) song.keyChange = semitones;
     it->keyChange = semitones;
     emit dataChanged(this->index(it->position, COL_KEY), this->index(it->position, COL_KEY),
                      QVector<int>{Qt::DisplayRole});
@@ -303,6 +313,8 @@ void TableModelQueueSongs::setPlayedForSinger(int singerId, int songId, bool pla
         return (song.id == songId);
     });
     if (singerId == m_curSingerId && isQueueReady() && it != m_songs.end()) {
+        for (auto &song : m_expectedState)
+            if (song.id == songId) song.played = played;
         it->played = played;
         emit dataChanged(this->index(it->position, 0), this->index(it->position, columnCount() - 1),
                          QVector<int>{Qt::FontRole, Qt::BackgroundRole, Qt::ForegroundRole});
@@ -321,6 +333,7 @@ void TableModelQueueSongs::removeAll() {
     m_songs.shrink_to_fit();
     emit layoutChanged();
     emit queueModified(m_curSingerId);
+    m_expectedState.clear();
     emit requestRemoveAllQueueSongs(m_curSingerId);
 }
 
@@ -331,7 +344,9 @@ void TableModelQueueSongs::commitChanges() {
     for (const auto &song : m_songs) {
         list.append(song);
     }
-    emit requestCommitQueue(m_curSingerId, list);
+    const auto expected = m_expectedState;
+    m_expectedState = list;
+    emit requestCommitQueue(m_curSingerId, list, expected);
 }
 
 void TableModelQueueSongs::songAddSlot(int songId, int singerId, int keyChg) {

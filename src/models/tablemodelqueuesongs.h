@@ -75,6 +75,8 @@ private:
     bool m_queueLoaded{false};
     TableModelKaraokeSongs &m_karaokeSongsModel;
     std::vector<okj::QueueSong> m_songs;
+    // Expected state after previously issued writes; refreshed by a database load.
+    QList<okj::QueueSong> m_expectedState;
     Settings m_settings;
     QFont m_itemFont;
     QFont m_itemFontStrikeout;
@@ -90,13 +92,14 @@ private:
 
 
 signals:
+    void databaseWriteError(const QString &message);
     void queueModified(int singerId);
     void songDroppedWithoutSinger();
     void filesDroppedOnSinger(QList<QUrl> urls, int singerId, int position);
     void qSongsMoved(int startRow, int startCol, int endRow, int endCol);
 
     void requestLoadQueue(int singerId, quint64 requestId);
-    void requestCommitQueue(int singerId, const QList<okj::QueueSong> &songs);
+    void requestCommitQueue(int singerId, const QList<okj::QueueSong> &songs, const QList<okj::QueueSong> &expected);
     void requestSetQueueSongKey(int singerId, int qSongId, int semitones);
     void requestSetQueueSongPlayed(int singerId, int qSongId, bool played);
     void requestRemoveAllQueueSongs(int singerId);

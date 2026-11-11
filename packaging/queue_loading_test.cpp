@@ -1,6 +1,7 @@
 // Delayed real SQLite replies, isolated from the host's library and settings.
 #include "databaseworker.h"
 #include "models/tablemodelqueuesongs.h"
+#include "models/tablemodelrotation.h"
 
 #include <QApplication>
 #include <QItemSelectionModel>
@@ -263,6 +264,173 @@ private slots:
         QCOMPARE(value(QString("SELECT singer FROM queuesongs WHERE qsongid = %1").arg(added)).toInt(), 2);
         QCOMPARE(value(QString("SELECT keychg FROM queuesongs WHERE qsongid = %1").arg(added)).toInt(), -1);
     }
+    void staleRotationCannotEraseDelayedSingerAddition()
+    {
+        TableModelRotation rotation;
+        QList<QList<okj::RotationSinger>> rotations;
+        connect(worker.get(), &DatabaseWorker::rotationLoaded, this,
+                [&](const QList<okj::RotationSinger> &singers) { rotations.append(singers); });
+        connect(&rotation, &TableModelRotation::requestCommitRotation, worker.get(), &DatabaseWorker::commitRotation);
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        worker->loadRotation();
+        rotation.onRotationLoaded(rotations.last());
+        worker->addSinger("Delayed", TableModelRotation::ADD_BOTTOM, false);
+        // The GUI still shows A/B/Empty, because the add reply has not arrived.
+        rotation.singerMove(1, 0);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(value("SELECT COUNT(*) FROM rotationsingers").toInt(), 4);
+        QCOMPARE(value("SELECT position FROM rotationsingers WHERE singerid = 1").toInt(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM rotationsingers WHERE name = 'Delayed'").toInt(), 1);
+        rotation.onRotationLoaded(rotations.last());
+        rotation.singerMove(1, 0);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(value("SELECT position FROM rotationsingers WHERE singerid = 2").toInt(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM rotationsingers").toInt(), 4);
+        disconnect(worker.get(), nullptr, this, nullptr);
+    }
+
+    void rotationFailureRollsBackAndPreservesMetadata()
+    {
+        TableModelRotation rotation;
+        connect(worker.get(), &DatabaseWorker::rotationLoaded, &rotation, &TableModelRotation::onRotationLoaded);
+        connect(&rotation, &TableModelRotation::requestCommitRotation, worker.get(), &DatabaseWorker::commitRotation);
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        QSignalSpy loaded(worker.get(), &DatabaseWorker::rotationLoaded);
+        exec("UPDATE rotationsingers SET regularid = 42 WHERE singerid = 1");
+        worker->loadRotation();
+        exec("CREATE TRIGGER fail_second_position BEFORE UPDATE OF position ON rotationsingers "
+             "WHEN OLD.singerid = 1 BEGIN SELECT RAISE(ABORT, 'injected rotation write failure'); END");
+        loaded.clear();
+        rotation.singerMove(1, 0); // First UPDATE succeeds; second must roll everything back.
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(loaded.size(), 0);
+        QCOMPARE(value("SELECT position FROM rotationsingers WHERE singerid = 2").toInt(), 1);
+        QCOMPARE(value("SELECT position FROM rotationsingers WHERE singerid = 1").toInt(), 0);
+        exec("DROP TRIGGER fail_second_position");
+        worker->loadRotation();
+        rotation.singerMove(1, 0);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(value("SELECT regularid FROM rotationsingers WHERE singerid = 1").toInt(), 42);
+        // Deleting a singer and its queue is atomic too.
+        exec("CREATE TRIGGER fail_singer_delete BEFORE DELETE ON rotationsingers "
+             "BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END");
+        loaded.clear();
+        rotation.singerDelete(2);
+        QCOMPARE(errors.size(), 2);
+        QCOMPARE(loaded.size(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE singer = 2").toInt(), 2);
+        QCOMPARE(value("SELECT COUNT(*) FROM rotationsingers").toInt(), 3);
+        exec("DROP TRIGGER fail_singer_delete");
+        worker->loadRotation();
+        rotation.singerDelete(2);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE singer = 2").toInt(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE singer = 1").toInt(), 1);
+    }
+
+    void staleQueueCannotEraseWorkerAppendOrPlayedChange()
+    {
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        QSignalSpy updated(worker.get(), &DatabaseWorker::queueUpdated);
+        queue->loadSinger(2);
+        deliver(0);
+        worker->addSongToQueue(2, 1, 3);
+        updated.clear();
+        queue->move(1, 0);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(updated.size(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE singer = 2").toInt(), 3);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 21").toInt(), 0);
+        queue->loadSinger(2);
+        deliver(1);
+        worker->setQueueSongPlayed(2, 21, true);
+        updated.clear();
+        queue->remove(22);
+        QCOMPARE(errors.size(), 2);
+        QCOMPARE(updated.size(), 0);
+        QCOMPARE(value("SELECT played FROM queuesongs WHERE qsongid = 21").toInt(), 1);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE qsongid = 22").toInt(), 1);
+    }
+
+    void queueStatementAndCommitFailuresRollBack()
+    {
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        QSignalSpy updated(worker.get(), &DatabaseWorker::queueUpdated);
+        queue->loadSinger(2);
+        deliver(0);
+        exec("CREATE TRIGGER fail_queue_update BEFORE UPDATE OF position ON queuesongs "
+             "WHEN OLD.qsongid = 21 BEGIN SELECT RAISE(ABORT, 'injected queue failure'); END");
+        queue->move(1, 0);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(updated.size(), 0);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 22").toInt(), 1);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 21").toInt(), 0);
+        exec("DROP TRIGGER fail_queue_update");
+        // A deferred foreign key fails at COMMIT after all UPDATEs have succeeded.
+        auto background = QSqlDatabase::database("openkj_background");
+        QSqlQuery pragma(background);
+        QVERIFY(pragma.exec("PRAGMA foreign_keys = ON"));
+        exec("CREATE TABLE parent (id INTEGER PRIMARY KEY)");
+        exec("CREATE TABLE child (id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)");
+        exec("CREATE TRIGGER fail_commit AFTER UPDATE OF position ON queuesongs "
+             "BEGIN INSERT INTO child VALUES (999); END");
+        queue->loadSinger(2);
+        deliver(1);
+        queue->move(1, 0);
+        QCOMPARE(errors.size(), 2);
+        QCOMPARE(updated.size(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM child").toInt(), 0);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 21").toInt(), 0);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 22").toInt(), 1);
+        exec("DROP TRIGGER fail_commit");
+        queue->loadSinger(2);
+        deliver(2);
+        queue->move(1, 0);
+        QCOMPARE(errors.size(), 2);
+        QCOMPARE(updated.size(), 1);
+        // Consecutive model commits use the expected result of the previous write.
+        queue->move(0, 1);
+        QCOMPARE(errors.size(), 2);
+        QCOMPARE(updated.size(), 2);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 21").toInt(), 0);
+    }
+
+    void compoundWritesAndFailedBeginDoNotReportSuccess()
+    {
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        QSignalSpy added(worker.get(), &DatabaseWorker::singerAdded);
+        QSignalSpy updated(worker.get(), &DatabaseWorker::queueUpdated);
+        QSignalSpy loaded(worker.get(), &DatabaseWorker::rotationLoaded);
+        exec("CREATE TRIGGER fail_queue_insert BEFORE INSERT ON queuesongs "
+             "BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END");
+        worker->addSingerWithSong("Failed singer", 0, 1, 0);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(added.size(), 0);
+        QCOMPARE(updated.size(), 0);
+        QCOMPARE(loaded.size(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM rotationsingers").toInt(), 3);
+        QVERIFY(library->refreshSong(1));
+        queue->loadSinger(2);
+        deliver(0);
+        QSignalSpy modelErrors(queue.get(), &TableModelQueueSongs::databaseWriteError);
+        QCOMPARE(queue->add(1), -1);
+        QCOMPARE(modelErrors.size(), 1);
+        QCOMPARE(queue->rowCount(), 2);
+        exec("DROP TRIGGER fail_queue_insert");
+        exec("CREATE TRIGGER fail_rotation_clear BEFORE DELETE ON rotationsingers "
+             "BEGIN SELECT RAISE(ABORT, 'injected clear failure'); END");
+        worker->clearRotation();
+        QCOMPARE(errors.size(), 2);
+        QCOMPARE(loaded.size(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs").toInt(), 3);
+        auto background = QSqlDatabase::database("openkj_background");
+        QVERIFY(background.transaction());
+        worker->addSinger("Failed begin", 0, false);
+        QCOMPARE(errors.size(), 3);
+        QCOMPARE(added.size(), 0);
+        QCOMPARE(loaded.size(), 0);
+        QVERIFY(background.rollback());
+    }
+
 };
 
 QTEST_MAIN(QueueLoadingTest)

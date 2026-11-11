@@ -103,6 +103,8 @@ private:
     QImage m_iconYellowCircle;
     int m_curFontHeight{0};
     int m_remainSecs{0};
+    // Expected state after previously issued writes; refreshed by a database load.
+    QList<okj::RotationSinger> m_expectedState;
     Settings m_settings;
     [[nodiscard]] QVariant getTooltipData(const QModelIndex &index) const;
     [[nodiscard]] QVariant getDisplayData(const QModelIndex &index) const;
@@ -123,7 +125,7 @@ signals:
     void newSingerAdded(int position);
 
     void requestLoadRotation();
-    void requestCommitRotation(const QList<okj::RotationSinger> &singers);
+    void requestCommitRotation(const QList<okj::RotationSinger> &singers, const QList<okj::RotationSinger> &expected);
     void requestAddSinger(const QString &name, int positionHint, bool makeRegular);
     void requestAddSingerWithSong(const QString &name, int positionHint, int songId, int keyChange, bool makeRegular);
     void requestRenameSinger(int singerId, const QString &newName);

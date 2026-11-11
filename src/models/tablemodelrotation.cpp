@@ -198,11 +198,14 @@ void TableModelRotation::commitChanges() {
     for (const auto &singer : m_singers) {
         list.append(singer);
     }
-    emit requestCommitRotation(list);
+    const auto expected = m_expectedState;
+    m_expectedState = list;
+    emit requestCommitRotation(list, expected);
 }
 
 void TableModelRotation::onRotationLoaded(const QList<okj::RotationSinger> &singers) {
     emit layoutAboutToBeChanged();
+    m_expectedState = singers;
     m_singers.clear();
     for (const auto &singer : singers) {
         m_singers.push_back(singer);
@@ -297,6 +300,8 @@ void TableModelRotation::singerSetName(const int singerId, const QString &newNam
         m_logger->critical("{} Unable to find singer!!!", m_loggingPrefix);
         return;
     }
+    for (auto &singer : m_expectedState)
+        if (singer.id == singerId) singer.name = newName;
     it->name = newName;
     emit dataChanged(this->index(it->position, COL_NAME), this->index(it->position, COL_NAME),
                      QVector<int>{Qt::DisplayRole});
@@ -342,6 +347,8 @@ void TableModelRotation::singerSetRegular(const int singerId, const bool isRegul
         return (singerId == singer.id);
     });
     if (it != m_singers.end()) {
+        for (auto &singer : m_expectedState)
+            if (singer.id == singerId) singer.regular = isRegular;
         it->regular = isRegular;
         emit dataChanged(this->index(it->position, COL_REGULAR), this->index(it->position, COL_REGULAR),
                          QVector<int>{Qt::DisplayRole});
@@ -399,6 +406,7 @@ void TableModelRotation::clearRotation() {
     m_logger->debug("{} Clearing rotation", m_loggingPrefix);
     emit layoutAboutToBeChanged();
     m_singers.clear();
+    m_expectedState.clear();
     m_settings.setCurrentRotationPosition(-1);
     m_currentSingerId = -1;
     emit layoutChanged();

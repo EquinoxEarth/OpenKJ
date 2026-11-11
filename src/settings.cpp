@@ -21,6 +21,7 @@
 #include "settings.h"
 #include <QCoreApplication>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QStandardPaths>
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -397,14 +398,19 @@ void Settings::setShowCdgWindow(bool show)
 
 void Settings::setCdgWindowFullscreenMonitor(int monitor)
 {
+    if (monitor < 0 || monitor >= QGuiApplication::screens().size())
+        return;
     settings->setValue("cdgWindowFullScreenMonitor", monitor);
 }
 
 int Settings::cdgWindowFullScreenMonitor()
 {
-    //We default to the highest mointor present, by default, rather than the primary display.  Seems to make more sense
-    //and will help prevent people from popping up a full screen window in front of the main window and getting confused.
-    return settings->value("cdgWindowFullScreenMonitor", QGuiApplication::screens().count() - 1).toInt();
+    // Prefer the last connected display, or -1 when no screens are available.
+    const int defaultMonitor = static_cast<int>(QGuiApplication::screens().size()) - 1;
+    bool valid = false;
+    const int monitor = settings->value("cdgWindowFullScreenMonitor", defaultMonitor).toInt(&valid);
+    // Recheck on each read because the display configuration may have changed.
+    return valid && monitor >= 0 && monitor <= defaultMonitor ? monitor : defaultMonitor;
 }
 
 void Settings::saveWindowState(QWidget *window)

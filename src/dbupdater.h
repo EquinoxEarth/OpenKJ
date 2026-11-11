@@ -5,16 +5,49 @@
 #include <QStringList>
 #include <QtSql>
 #include "src/models/tablemodelkaraokesourcedirs.h"
-#include "settings.h"
 #include <array>
+#include <atomic>
+#include <QElapsedTimer>
+#include <QFuture>
+#include <QMutex>
+#include <memory>
 
 
 class DbUpdater : public QObject
 {
     Q_OBJECT
 
-private:
+public:
+    struct MissingFile {
+        int id;
+        QString path;
+    };
 
+    struct Progress {
+        QString status;
+        int value{0};
+        int maximum{0};
+    };
+
+    struct ScanState {
+        std::atomic_bool cancelled{false};
+        QMutex mutex;
+        Progress progress;
+    };
+
+    struct ImportSettings {
+        bool lazyDurations;
+        bool skipValidation;
+    };
+
+    struct ScanResult {
+        bool success{false};
+        bool cancelled{false};
+        QStringList errors;
+        QList<MissingFile> missing;
+    };
+
+private:
     struct DbSongRecord {
        int id{-1};
        bool isDropped{false};
@@ -55,10 +88,9 @@ private:
         bool IsValid{false};
         QString CurrentFile;
         explicit DiskEnumerator(DbUpdater& parent) : m_parent(parent) { reset(); }
-        void findKaraokeFilesOnDisk();
+        bool findKaraokeFilesOnDisk();
         void readNextDiskFile();
         void reset() { m_i_kar = -1; m_i_aud = 0; IsValid = false; }
-        int count() { return m_karaokeFilesOnDisk.length(); }
     };
 
     class DbEnumerator
@@ -66,26 +98,37 @@ private:
     private:
         DbUpdater& m_parent;
         QSqlQuery m_dbSongs;
-        int m_count{0};
 
     public:
         bool IsValid = false;
         DbSongRecord CurrentRecord;
-        explicit DbEnumerator(DbUpdater& parent) : m_parent(parent) {}
+        explicit DbEnumerator(DbUpdater& parent) : m_parent(parent), m_dbSongs(parent.m_db) {}
         bool prepareQuery(bool limitToPaths);
         void readNextRecord();
-        [[nodiscard]] int count() const { return m_count; }
+        void finish() { m_dbSongs.finish(); }
     };
 
-    Settings m_settings;
+    struct ImportRecord {
+        QString path, filename, artist, title, discId, search;
+        int duration;
+    };
+
+    QSqlDatabase m_db;
+    const std::atomic_bool *m_cancelled;
+    ImportSettings m_importSettings;
     QStringList m_paths;
     QStringList m_errors;
-    QVector<int> m_missingFilesSongIds;
+    QList<MissingFile> m_missingFiles;
     QElapsedTimer m_guiUpdateTimer;
 
     void setPaths(const QList<QString> &paths);
-    void fixMissingFiles(QVector<DbSongRecord> &filesMissingOnDisk, QStringList &newFilesOnDisk);
-    bool shouldUpdateGui();
+    bool sourcesAvailable();
+    bool prepareImports(const QStringList &files, QList<ImportRecord> &imports);
+    bool writeImports(const QList<ImportRecord> &imports, const QSet<QString> &moved);
+    bool fixMissingFiles(QVector<DbSongRecord> &missing, const QStringList &newFiles, QSet<QString> &moved);
+    bool reportSqlError(const QSqlError &error);
+    bool cancelled() const { return m_cancelled && m_cancelled->load(); }
+    bool progressDue();
 
 public:
 
@@ -94,21 +137,27 @@ public:
         None                          = 0x0,
         FixMovedFiles                 = 0x01,
         FixMovedFilesSearchInWholeDB  = FixMovedFiles | 0x02,
-        PrepareForRemovalOfMissing    = 0x04
+        PrepareForRemovalOfMissing    = 0x04,
+        SkipUnavailableSources        = 0x08
     };
     Q_DECLARE_FLAGS(ProcessingOptions, ProcessingOption)
 
+    static QFuture<ScanResult> scanAsync(const QString &databasePath, const QStringList &paths,
+                                         ProcessingOptions options, std::shared_ptr<ScanState> state);
+    static QFuture<ScanResult> removeMissingAsync(const QString &databasePath, const QStringList &paths,
+                                                  const QList<MissingFile> &files, std::shared_ptr<ScanState> state);
     explicit DbUpdater(QObject *parent = nullptr);
+    DbUpdater(const QSqlDatabase &db, const std::atomic_bool *cancelled, ImportSettings settings);
 
     QStringList getErrors();
     bool process(const QList<QString> &paths, ProcessingOptions options);
-    void addFilesToDatabase(const QList<QString> &files);
+    bool addFilesToDatabase(const QList<QString> &files);
     int missingFilesCount();
-    void removeMissingFilesFromDatabase();
+    bool removeMissingFilesFromDatabase();
+    bool removeMissingFilesFromDatabase(const QList<MissingFile> &files, const QStringList &paths);
+    const QList<MissingFile> &missingFiles() const { return m_missingFiles; }
 
 signals:
-    void errorsGenerated(QStringList);
-    void progressMessage(const QString &msg);
     void stateChanged(QString state);
     void progressChanged(int progress, int max);
 

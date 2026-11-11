@@ -30,6 +30,8 @@
 #include "models/tablemodelkaraokesongs.h"
 #include "directorymonitor.h"
 #include "settings.h"
+#include "dbupdater.h"
+#include <QFutureWatcher>
 
 namespace Ui {
 class DlgDatabase;
@@ -48,7 +50,25 @@ private:
     Settings m_settings;
     DirectoryMonitor *m_directoryMonitor {nullptr};
 
+    QFutureWatcher<DbUpdater::ScanResult> m_scanWatcher;
+    std::shared_ptr<DbUpdater::ScanState> m_scanState;
+    QTimer m_scanProgressTimer;
+    QPushButton *m_cancelScanButton;
+    QSet<QString> m_pendingWatchPaths;
+    QStringList m_scanPaths;
+    QStringList m_scanWarnings;
+    bool m_manualScan{false};
+    bool m_scanAllPaths{false};
+    bool m_removingMissing{false};
+
     void scan(bool scanAllPaths);
+    void startScan(const QStringList &paths, DbUpdater::ProcessingOptions options, bool manual);
+    void scanPendingWatchPaths();
+    void showScanProgress();
+    void updateScanProgress();
+    void scanFinished();
+    void finishScan(const DbUpdater::ScanResult &result);
+    void confirmMissingFiles(const QList<DbUpdater::MissingFile> &files);
     void updateButtonsState();
 
 public:
@@ -64,6 +84,7 @@ signals:
 
 public slots:
     void singleSongAdd(const QString &path);
+    void cancelScan();
 
 private slots:
     void on_buttonUpdateAll_clicked();
@@ -72,7 +93,6 @@ private slots:
     void on_buttonDelete_clicked();
     void on_buttonUpdate_clicked();
     void on_btnClearDatabase_clicked();
-    static void showDbUpdateErrors(const QStringList& errors);
     void on_btnCustomPatterns_clicked();
     void on_btnExport_clicked();
     void on_foldersSelectionChanged(const QItemSelection &selected, const QItemSelection &deselected);

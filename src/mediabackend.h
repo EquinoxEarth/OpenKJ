@@ -87,6 +87,7 @@ public:
     qint64 position();
     qint64 duration();
     State state();
+    bool isPlaybackStopped() const { return m_state == StoppedState && !m_cdgStateBusy; }
     QStringList getOutputDevices();
     
     static QString msToMMSS(const qint64 &msec)
@@ -224,6 +225,7 @@ private:
     QFutureWatcher<CdgStateResult> m_cdgStateWatcher{this};
     std::shared_ptr<std::atomic<quint64>> m_cdgStateRevision = std::make_shared<std::atomic<quint64>>(0);
     bool m_cdgStateBusy{false};
+    bool m_stopCompletionPending{false};
     qint64 m_stateChangePosition{0}, m_stateChangeDuration{0};
     std::deque<std::function<void()>> m_deferredControls;
     bool deferControl(std::function<void()> control);
@@ -267,6 +269,7 @@ signals:
     void mutedChanged(const bool muted);
     void positionChanged(const qint64 position);
     void stateChanged(const State state);
+    void stopCompleted();
     void hasActiveVideoChanged(const bool hasVideo);
     void volumeChanged(const int vol);
     void silenceDetected();

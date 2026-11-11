@@ -2,7 +2,7 @@
 #include "karaokefilepatternresolver.h"
 #include <QSqlQuery>
 
-KaraokeFilePatternResolver::KaraokeFilePatternResolver()
+KaraokeFilePatternResolver::KaraokeFilePatternResolver(const QSqlDatabase &db) : m_db(db)
 {
 }
 
@@ -18,7 +18,7 @@ void KaraokeFilePatternResolver::InitializeData()
         FROM sourceDirs
         LEFT JOIN custompatterns ON sourceDirs.custompattern == custompatterns.patternid
         ORDER BY sourceDirs.path
-    ));
+    ), m_db);
 
     while (query.next()) {
         auto pattern = static_cast<SourceDir::NamingPattern>(query.value(1).toInt());

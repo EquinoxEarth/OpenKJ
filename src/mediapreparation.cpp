@@ -1,5 +1,6 @@
 #include "mediapreparation.h"
 #include "mzarchive.h"
+#include "okjutil.h"
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -36,6 +37,36 @@ PreparedKaraokeMedia prepareKaraokeZip(const QString &filename,
         result.directory.reset();
         result.audioFile.clear();
         result.cdgFile.clear();
+    }
+    result.elapsedMs = timer.elapsed();
+    return result;
+}
+
+PreparedKaraokeMedia prepareKaraokePair(const QString &filename,
+                                        const std::shared_ptr<std::atomic_bool> &cancelled)
+{
+    PreparedKaraokeMedia result;
+    QElapsedTimer timer;
+    timer.start();
+    if (cancelled->load())
+        return result;
+
+    const QFileInfo cdg(filename);
+    if (!cdg.isFile() || !cdg.isReadable()) {
+        result.error = QStringLiteral("CDG file missing or unreadable.");
+    } else if (cdg.size() == 0) {
+        result.error = QStringLiteral("CDG file contains no data.");
+    } else {
+        const auto audioPath = findMatchingAudioFile(filename);
+        const QFileInfo audio(audioPath);
+        if (!audio.isFile() || !audio.isReadable())
+            result.error = QStringLiteral("Audio file missing or unreadable.");
+        else if (audio.size() == 0)
+            result.error = QStringLiteral("Audio file contains no data.");
+        else {
+            result.cdgFile = filename;
+            result.audioFile = audioPath;
+        }
     }
     result.elapsedMs = timer.elapsed();
     return result;

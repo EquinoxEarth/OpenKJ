@@ -25,7 +25,6 @@
 #include <QInputDialog>
 #include <QSqlQuery>
 #include <QMessageBox>
-#include "dbupdater.h"
 #include <QStandardPaths>
 
 DlgDatabase::DlgDatabase(TableModelKaraokeSongs &dbModel, QWidget *parent) :
@@ -43,15 +42,32 @@ DlgDatabase::DlgDatabase(TableModelKaraokeSongs &dbModel, QWidget *parent) :
     updateButtonsState();
     customPatternsDlg = new DlgCustomPatterns(this);
     dbUpdateDlg = new DlgDbUpdate(this);
+    dbUpdateDlg->setWindowModality(Qt::NonModal);
+    m_cancelScanButton = new QPushButton(tr("Cancel Update"), dbUpdateDlg);
+    dbUpdateDlg->layout()->addWidget(m_cancelScanButton);
+    connect(m_cancelScanButton, &QPushButton::clicked, this, &DlgDatabase::cancelScan);
+    connect(dbUpdateDlg, &QDialog::rejected, this, &DlgDatabase::cancelScan);
+    connect(this, &QDialog::rejected, this, [this] {
+        if (m_manualScan)
+            cancelScan();
+    });
+    connect(&m_scanWatcher, &QFutureWatcher<DbUpdater::ScanResult>::finished, this, &DlgDatabase::scanFinished);
+    m_scanProgressTimer.setInterval(200);
+    connect(&m_scanProgressTimer, &QTimer::timeout, this, &DlgDatabase::updateScanProgress);
 
     if (m_settings.dbDirectoryWatchEnabled()) {
         m_directoryMonitor = new DirectoryMonitor(this, sourcedirmodel->getSourceDirs());
-        connect(m_directoryMonitor, &DirectoryMonitor::databaseUpdateComplete, this, &DlgDatabase::databaseUpdateComplete);
+        connect(m_directoryMonitor, &DirectoryMonitor::scanRequested, this, [this](const QStringList &paths) {
+            for (const auto &path : paths)
+                m_pendingWatchPaths.insert(path);
+            scanPendingWatchPaths();
+        });
     }
 }
 
 DlgDatabase::~DlgDatabase()
 {
+    cancelScan();
     delete m_directoryMonitor;
     delete sourcedirmodel;
     delete ui;
@@ -61,7 +77,10 @@ void DlgDatabase::singleSongAdd(const QString& path)
 {
     qInfo() << "singleSongAdd(" << path << ") called";
     DbUpdater updater;
-    updater.addFilesToDatabase(QStringList() << path);
+    if (!updater.addFilesToDatabase({path})) {
+        qWarning() << "Could not add song to library:" << updater.getErrors();
+        return;
+    }
     QSqlQuery query;
     query.prepare("SELECT songid FROM dbsongs WHERE path=:path");
     query.bindValue(":path", path);
@@ -129,6 +148,8 @@ void DlgDatabase::on_buttonNew_clicked()
 
 void DlgDatabase::on_buttonClose_clicked()
 {
+    if (m_manualScan)
+        cancelScan();
     m_settings.saveColumnWidths(ui->tableViewFolders);
     ui->tableViewFolders->clearSelection();
     hide();
@@ -156,6 +177,8 @@ void DlgDatabase::on_buttonUpdateAll_clicked()
 
 void DlgDatabase::scan(bool scanAllPaths)
 {
+    if (m_scanState)
+        return;
     QStringList paths;
     DbUpdater::ProcessingOptions processingOptions = DbUpdater::ProcessingOption::PrepareForRemovalOfMissing;
 
@@ -175,46 +198,138 @@ void DlgDatabase::scan(bool scanAllPaths)
     if (paths.isEmpty())
         return;
 
-    dbUpdateDlg->reset();
-    DbUpdater updater;
-    connect(&updater, &DbUpdater::progressMessage, dbUpdateDlg, &DlgDbUpdate::addLogMsg);
-    connect(&updater, &DbUpdater::stateChanged, dbUpdateDlg, &DlgDbUpdate::changeStatusTxt);
-    connect(&updater, &DbUpdater::progressChanged, dbUpdateDlg, &DlgDbUpdate::changeProgress);
-    dbUpdateDlg->show();
-    QApplication::processEvents();
+    m_scanAllPaths = scanAllPaths;
+    startScan(paths, processingOptions, true);
+}
 
-    if (!updater.process(paths, processingOptions)) {
-        dbUpdateDlg->hide();
-        showDbUpdateErrors(updater.getErrors());
+void DlgDatabase::scanPendingWatchPaths()
+{
+    if (m_scanState || m_pendingWatchPaths.isEmpty())
+        return;
+    const auto paths = m_pendingWatchPaths.values();
+    m_pendingWatchPaths.clear();
+    startScan(paths, DbUpdater::FixMovedFiles | DbUpdater::SkipUnavailableSources, false);
+}
+
+void DlgDatabase::startScan(const QStringList &paths, DbUpdater::ProcessingOptions options, bool manual)
+{
+    m_scanPaths = paths;
+    m_scanWarnings.clear();
+    m_manualScan = manual;
+    m_removingMissing = false;
+    m_scanState = std::make_shared<DbUpdater::ScanState>();
+    updateButtonsState();
+    if (manual)
+        showScanProgress();
+    m_scanWatcher.setFuture(DbUpdater::scanAsync(QSqlDatabase::database().databaseName(), paths, options, m_scanState));
+}
+
+void DlgDatabase::showScanProgress()
+{
+    dbUpdateDlg->reset();
+    dbUpdateDlg->changeStatusTxt(tr("Starting database update…"));
+    dbUpdateDlg->changeProgress(0, 0);
+    m_cancelScanButton->setEnabled(true);
+    dbUpdateDlg->show();
+    m_scanProgressTimer.start();
+}
+
+void DlgDatabase::cancelScan()
+{
+    if (!m_scanState)
+        return;
+    m_scanState->cancelled.store(true);
+    m_cancelScanButton->setEnabled(false);
+    dbUpdateDlg->changeStatusTxt(tr("Cancelling database update…"));
+}
+
+void DlgDatabase::updateScanProgress()
+{
+    if (!m_scanState || m_scanState->cancelled.load())
+        return;
+    DbUpdater::Progress progress;
+    {
+        QMutexLocker lock(&m_scanState->mutex);
+        progress = m_scanState->progress;
+    }
+    if (!progress.status.isEmpty()) {
+        dbUpdateDlg->changeStatusTxt(progress.status);
+        dbUpdateDlg->changeProgress(progress.value, progress.maximum);
+    }
+}
+
+void DlgDatabase::scanFinished()
+{
+    const auto result = m_scanWatcher.result();
+    m_scanProgressTimer.stop();
+    dbUpdateDlg->hide();
+
+    if (m_manualScan && result.success && !result.missing.isEmpty() && !m_scanState->cancelled.load()) {
+        m_scanWarnings = result.errors;
+        confirmMissingFiles(result.missing);
         return;
     }
+    finishScan(result);
+}
 
-    showDbUpdateErrors(updater.getErrors());
-
-    if (updater.missingFilesCount() > 0) {
-        QString text = "There are %1 file(s) in the database that are no longer present on disk. Do you want to remove them from the database?";
-        if (!scanAllPaths) {
-            text += "\n\nIf the files have been been moved to another path in the database, "
-                    "select 'No' and then 'Update all' to detect the new location and update the database.";
+void DlgDatabase::confirmMissingFiles(const QList<DbUpdater::MissingFile> &files)
+{
+    auto *dialog = new QMessageBox(QMessageBox::Question, tr("Database update"),
+                                   tr("Remove missing files from database?"),
+                                   QMessageBox::Yes | QMessageBox::No, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setDefaultButton(QMessageBox::No);
+    QString text = tr("%1 file(s) in the database were missing during the scan. Do you want to remove them?").arg(files.size());
+    if (!m_scanAllPaths)
+        text += tr("\n\nChoose No and run Update All to check whether the files moved to another source folder.");
+    dialog->setInformativeText(text);
+    if (!m_scanWarnings.isEmpty())
+        dialog->setDetailedText(m_scanWarnings.join("\n"));
+    connect(dialog, &QMessageBox::finished, this, [this, files](int answer) {
+        if (answer != QMessageBox::Yes || m_scanState->cancelled.load()) {
+            finishScan({.success = true});
+            return;
         }
+        m_removingMissing = true;
+        m_scanState = std::make_shared<DbUpdater::ScanState>();
+        showScanProgress();
+        m_scanWatcher.setFuture(DbUpdater::removeMissingAsync(QSqlDatabase::database().databaseName(),
+                                                              m_scanPaths, files, m_scanState));
+    });
+    dialog->open();
+}
 
-        QMessageBox msgBox;
-        msgBox.setText(tr("Remove missing files from database?"));
-        msgBox.setInformativeText(tr(qPrintable(text)).arg(updater.missingFilesCount()));
-        msgBox.setIcon(QMessageBox::Question);
-        msgBox.addButton(QMessageBox::No);
-        QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-        msgBox.exec();
-        if (msgBox.clickedButton() == yesButton) {
-            updater.removeMissingFilesFromDatabase();
+void DlgDatabase::finishScan(const DbUpdater::ScanResult &result)
+{
+    if (result.success || m_removingMissing)
+        emit databaseUpdateComplete();
+
+    const QStringList errors = m_scanWarnings + result.errors;
+    if (m_manualScan && isVisible()) {
+        QString title = tr("Update Failed");
+        QString summary = tr("Could not complete the database update.");
+        if (result.cancelled) {
+            title = tr("Update Cancelled");
+            summary = m_removingMissing ? tr("The library scan finished. Removal of missing files was cancelled.")
+                                        : tr("The library scan was cancelled.");
+        } else if (result.success) {
+            title = tr("Update Complete");
+            summary = errors.isEmpty() ? tr("Database update complete.")
+                                       : tr("Database update complete. Some files were skipped.");
         }
+        auto *dialog = new QMessageBox(result.success || result.cancelled ? QMessageBox::Information : QMessageBox::Warning,
+                                       title, summary, QMessageBox::Ok, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        if (!errors.isEmpty())
+            dialog->setDetailedText(errors.join("\n"));
+        dialog->open();
+    } else if (!errors.isEmpty()) {
+        qWarning() << "Karaoke library scan:" << errors;
     }
 
-    // Refresh once, after any requested removal of missing files.
-    dbUpdateDlg->changeStatusTxt(tr("Refreshing library..."));
-    emit databaseUpdateComplete();
-    dbUpdateDlg->hide();
-    QMessageBox::information(this, tr("Update Complete"), tr("Database update complete."));
+    m_scanState.reset();
+    updateButtonsState();
+    scanPendingWatchPaths();
 }
 
 void DlgDatabase::on_btnClearDatabase_clicked()
@@ -235,20 +350,6 @@ void DlgDatabase::on_btnClearDatabase_clicked()
         query.exec("DELETE FROM rotationsingers");
         emit databaseCleared();
         QMessageBox::information(this, tr("Database cleared"), tr("Song database, regular singers, and all rotation data has been cleared."));
-    }
-}
-
-void DlgDatabase::showDbUpdateErrors(const QStringList& errors)
-{
-    if (errors.count() > 0)
-    {
-        QMessageBox msgBox;
-        msgBox.setText(tr("Some files were skipped due to problems"));
-        msgBox.setDetailedText(errors.join("\n"));
-        auto horizontalSpacer = new QSpacerItem(600, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
-        auto layout = (QGridLayout*)msgBox.layout();
-        layout->addItem(horizontalSpacer, layout->rowCount(), 0, 1, layout->columnCount());
-        msgBox.exec();
     }
 }
 
@@ -298,6 +399,7 @@ void DlgDatabase::on_foldersSelectionChanged(const QItemSelection &selected, con
 
 void DlgDatabase::updateButtonsState()
 {
+    ui->groupBox->setEnabled(!m_scanState);
     bool hasSelectedRow = ui->tableViewFolders->selectionModel()->selectedRows().count() > 0;
     ui->buttonUpdate->setEnabled(hasSelectedRow);
     ui->buttonDelete->setEnabled(hasSelectedRow);

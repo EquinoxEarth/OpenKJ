@@ -315,6 +315,16 @@ static void checkSharedVideoFrames(const QString &audioFilename, const QString &
     require(frames.size() == beforeTrackChange && !singer.hasActiveVideo() && !preview.hasActiveVideo() &&
                 !rotation.hasActiveVideo(), "A track change must discard pending frames from the previous track");
 
+    // Stop before the CDG preroll worker finishes. The state notification can
+    // arrive early, but another track must wait for native cleanup.
+    backend.setMediaCdg(cdgFilename, audioFilename);
+    QSignalSpy stops(&backend, &MediaBackend::stopCompleted);
+    backend.play();
+    backend.rawStop();
+    require(stops.isEmpty() && !backend.isPlaybackStopped(), "Stop completion must wait for native CDG cleanup");
+    waitFor([&] { return stops.size() == 1 && backend.isPlaybackStopped(); }, 3000,
+            "CDG cancellation must emit exactly one completion when the backend is ready");
+
 }
 
 int main(int argc, char **argv)

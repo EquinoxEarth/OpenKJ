@@ -3,6 +3,7 @@
 
 #include "src/models/tablemodelkaraokesourcedirs.h"
 #include "custompattern.h"
+#include <QSqlDatabase>
 
 class KaraokeFilePatternResolver
 {
@@ -15,7 +16,8 @@ public:
         CustomPattern customPattern;
     };
 
-    explicit KaraokeFilePatternResolver();
+    KaraokeFilePatternResolver() = default;
+    explicit KaraokeFilePatternResolver(const QSqlDatabase &db);
 
     const KaraokeFilePattern& getPattern(const QString &filename);
 
@@ -23,6 +25,7 @@ public:
 
 private:
 
+    QSqlDatabase m_db;
     QMap<QString, KaraokeFilePattern> m_path_pattern_map;
     bool m_initialized {false};
 

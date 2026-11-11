@@ -14,7 +14,6 @@ class DirectoryMonitor : public QObject
 
 public:
     explicit DirectoryMonitor(QObject *parent, QStringList pathsToWatch);
-    ~DirectoryMonitor() override;
 
 private:
     QFutureWatcher<QStringList> m_pathsEnumeratedWatcher;
@@ -23,13 +22,13 @@ private:
     QSet<QString> m_pathsWithChangedFiles;
     QTimer m_scanTimer;
 
-    QStringList enumeratePathsAsync(QStringList paths);
+    static QStringList enumeratePathsAsync(const QStringList &paths);
     void directoriesEnumerated();
     void directoryChanged(const QString& dirPath);
     void scanPaths();
 
 signals:
-    void databaseUpdateComplete();
+    void scanRequested(const QStringList &paths);
 
 };
 

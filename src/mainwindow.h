@@ -46,8 +46,11 @@
 
 #include <spdlog/async_logger.h>
 #include <memory>
+#include <optional>
 #include <random>
 #include <chrono>
+
+class QMessageBox;
 
 namespace Ui {
     class MainWindow;
@@ -67,7 +70,6 @@ private:
     bool m_shuttingDown{false};
     bool m_kAASkip{false};
     bool m_karaokePlaybackActive{false};
-    bool m_k2kTransition{false};
     bool m_kHasActiveVideo{false};
     bool m_bmHasActiveVideo{false};
     bool m_kNeedAutoSize{false};
@@ -82,7 +84,6 @@ private:
     QString m_curArtist;
     QString m_curTitle;
     QString m_kAANextSongPath;
-    MediaBackend::State m_lastAudioState{MediaBackend::StoppedState};
     SfxEntry m_lastRtClickedSfxBtn;
     QSqlDatabase m_database;
     TableModelKaraokeSongs m_karaokeSongsModel;
@@ -159,8 +160,26 @@ private:
     std::shared_ptr<QTemporaryDir> m_preparedPlaybackDir;
     std::shared_ptr<std::atomic_bool> m_mediaPreparationCancelled;
     void cancelMediaPreparation();
-    void prepareKaraokePlayback(const QString &filename, bool k2k);
     void applyKaraokePlaybackSettings();
+    struct KaraokePlaybackRequest {
+        okj::QueueSong song;
+        bool trackSong{true};
+        bool selectSinger{false};
+        bool forceCrossfade{false};
+    };
+    enum class InterruptionWarning { Never, Playing, PlayingOrPaused };
+    QPointer<QMessageBox> m_karaokeInterruptionPrompt;
+    std::optional<KaraokePlaybackRequest> m_pendingKaraokePlayback;
+    bool m_pendingKaraokeCrossfade{false};
+    bool m_karaokeStopReady{false};
+
+    void requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning);
+    void requestRotationSong(const okj::RotationSinger &singer, InterruptionWarning warning, bool selectSinger);
+    void startKaraokePlayback(const KaraokePlaybackRequest &request, bool crossfade);
+    void continueKaraokePlayback();
+    bool applyKaraokeSelection(const KaraokePlaybackRequest &request);
+    void cancelKaraokePlayback();
+    void stopKaraokePlayback();
     std::shared_ptr<SongShop> m_songShop;
     std::unique_ptr<UpdateChecker> m_updateChecker;
     OKJSongbookAPI m_songbookApi;

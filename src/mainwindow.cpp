@@ -130,65 +130,14 @@ void MainWindow::setupShortcuts() {
 
     m_scutKPlayNextUnsung.setKey(m_settings.loadShortcutKeySequence("kPlayNextUnsung"));
     m_scutKPlayNextUnsung.setContext(Qt::ApplicationShortcut);
-    connect(&m_scutKPlayNextUnsung, &QShortcut::activated, [&]() {
-        if (auto state = m_mediaBackendKar.state(); state == MediaBackend::PlayingState ||
-                                                    state == MediaBackend::PausedState) {
-            if (m_settings.showSongInterruptionWarning()) {
-                QMessageBox msgBox(this);
-                auto *cb = new QCheckBox("Show this warning in the future");
-                cb->setChecked(m_settings.showSongInterruptionWarning());
-                msgBox.setIcon(QMessageBox::Warning);
-                msgBox.setText("Interrupt currently playing karaoke song?");
-                msgBox.setInformativeText(
-                        "There is currently a karaoke song playing.  If you continue, the current song will be stopped.  Are you sure?");
-                QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-                msgBox.addButton(QMessageBox::Cancel);
-                msgBox.setCheckBox(cb);
-                connect(cb, &QCheckBox::toggled, &m_settings, &Settings::setShowSongInterruptionWarning);
-                msgBox.exec();
-                if (msgBox.clickedButton() != yesButton) {
-                    return;
-                }
-            }
-            m_mediaBackendKar.stop();
-        }
-        const auto nextSinger = m_rotModel.nextSinger();
-        const auto nextSongPath = nextSinger.nextSongPath();
-        if (!nextSinger.isValid()) {
-            QMessageBox::information(this, "Unable to play next",
-                                     "Sorry, no unsung karaoke songs are currently in any singer's queue");
+    connect(&m_scutKPlayNextUnsung, &QShortcut::activated, this, [this] {
+        const auto singer = m_rotModel.nextSinger();
+        if (!singer.isValid()) {
+            QMessageBox::information(this, tr("Unable to play next"),
+                                     tr("Sorry, no unsung karaoke songs are currently in any singer's queue"));
             return;
         }
-        m_curSinger = nextSinger.name;
-        m_curArtist = nextSinger.nextSongArtist();
-        m_curTitle = nextSinger.nextSongTitle();
-
-        if (m_settings.treatAllSingersAsRegs() || nextSinger.regular) {
-            m_historySongsModel.saveSong(
-                    nextSinger.name,
-                    nextSongPath,
-                    m_curArtist,
-                    m_curTitle,
-                    nextSinger.nextSongSongId(),
-                    nextSinger.nextSongKeyChg()
-            );
-        }
-        m_karaokeSongsModel.updateSongHistory(m_karaokeSongsModel.getIdForPath(nextSongPath));
-        play(nextSongPath);
-        m_mediaBackendKar.setPitchShift(nextSinger.nextSongKeyChg());
-        m_qModel.setPlayedForSinger(nextSinger.id, nextSinger.nextSongQueueId());
-        m_rotModel.setCurrentSinger(nextSinger.id);
-        m_rotDelegate.setCurrentSinger(nextSinger.id);
-        if (m_settings.rotationAltSortOrder()) {
-            auto curSingerPos = nextSinger.position;
-            if (curSingerPos != 0)
-                m_rotModel.singerMove(curSingerPos, 0);
-        }
-        ui->labelArtist->setText(m_curArtist);
-        ui->labelTitle->setText(m_curTitle);
-        ui->labelSinger->setText(nextSinger.name);
-        ui->tableViewRotation->clearSelection();
-        ui->tableViewRotation->selectRow(m_rotModel.getSinger(m_rotModel.currentSinger()).position);
+        requestRotationSong(singer, InterruptionWarning::PlayingOrPaused, true);
     });
 
     m_scutAddSinger.setKey(m_settings.loadShortcutKeySequence("addSinger"));
@@ -316,17 +265,7 @@ void MainWindow::setupShortcuts() {
 
     m_scutKStop.setKey(m_settings.loadShortcutKeySequence("kStop"));
     m_scutKStop.setContext(Qt::ApplicationShortcut);
-    connect(&m_scutKStop, &QShortcut::activated, [&]() {
-        if (m_mediaPreparationCancelled)
-            buttonStopClicked();
-        else {
-            m_kAASkip = true;
-            m_timerKaraokeAA.stop();
-            updateAutoplayStatus();
-            cdgWindow->showAlert(false);
-            m_mediaBackendKar.stop();
-        }
-    });
+    connect(&m_scutKStop, &QShortcut::activated, this, &MainWindow::stopKaraokePlayback);
 
     m_scutKVolDn.setKey(m_settings.loadShortcutKeySequence("kVolDn"));
     m_scutKVolDn.setContext(Qt::ApplicationShortcut);
@@ -870,6 +809,12 @@ void MainWindow::setupConnections() {
     connect(&m_mediaBackendKar, &MediaBackend::positionChanged, this, &MainWindow::karaokeMediaBackend_positionChanged);
     connect(&m_mediaBackendKar, &MediaBackend::durationChanged, this, &MainWindow::karaokeMediaBackend_durationChanged);
     connect(&m_mediaBackendKar, &MediaBackend::stateChanged, this, &MainWindow::karaokeMediaBackend_stateChanged);
+    connect(&m_mediaBackendKar, &MediaBackend::stopCompleted, this, [this] {
+        if (m_shuttingDown || !m_pendingKaraokePlayback || m_karaokeStopReady)
+            return;
+        m_karaokeStopReady = true;
+        QMetaObject::invokeMethod(this, &MainWindow::continueKaraokePlayback, Qt::QueuedConnection);
+    });
     connect(&m_mediaBackendKar, &MediaBackend::hasActiveVideoChanged, [&](const bool &isActive) {
         m_kHasActiveVideo = isActive;
         hasActiveVideoChanged();
@@ -1378,38 +1323,166 @@ void MainWindow::applyKaraokePlaybackSettings() {
     }
 }
 
-void MainWindow::prepareKaraokePlayback(const QString &filename, bool k2k) {
-    // Complete the previous song's stop before callers update singer/title/key.
-    // A late fade completion must not reset the new song while its media loads.
-    m_mediaBackendKar.stop(true);
+void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning)
+{
+    if (m_shuttingDown || request.song.path.isEmpty())
+        return;
+
+    if (m_karaokeInterruptionPrompt)
+        m_karaokeInterruptionPrompt->close();
+    const auto state = m_mediaBackendKar.state();
+    const bool warn = warning != InterruptionWarning::Never &&
+                      (state == MediaBackend::PlayingState ||
+                       (warning == InterruptionWarning::PlayingOrPaused && state == MediaBackend::PausedState));
+    if (!m_pendingKaraokePlayback && warn && m_settings.showSongInterruptionWarning()) {
+        auto *dialog = new QMessageBox(QMessageBox::Warning, tr("Interrupt karaoke"),
+                                       tr("Interrupt the current karaoke song?"),
+                                       QMessageBox::Yes | QMessageBox::Cancel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setDefaultButton(QMessageBox::Cancel);
+        dialog->setInformativeText(tr("If you continue, the current song will be stopped."));
+        auto *checkbox = new QCheckBox(tr("Show this warning in the future"));
+        checkbox->setChecked(true);
+        dialog->setCheckBox(checkbox);
+        connect(checkbox, &QCheckBox::toggled, &m_settings, &Settings::setShowSongInterruptionWarning);
+        connect(dialog, &QMessageBox::finished, this, [this, dialog, request](int answer) {
+            if (m_karaokeInterruptionPrompt != dialog)
+                return;
+            m_karaokeInterruptionPrompt.clear();
+            if (answer == QMessageBox::Yes)
+                requestKaraokePlayback(request, InterruptionWarning::Never);
+        });
+        m_karaokeInterruptionPrompt = dialog;
+        dialog->open();
+        return;
+    }
+
+    cancelMediaPreparation();
     m_timerKaraokeAA.stop();
     updateAutoplayStatus();
     cdgWindow->showAlert(false);
-    const bool isZip = filename.endsWith(".zip", Qt::CaseInsensitive);
+    if (m_pendingKaraokePlayback) {
+        m_pendingKaraokePlayback = std::move(request);
+    } else if (m_mediaBackendKar.isPlaybackStopped()) {
+        startKaraokePlayback(request, request.forceCrossfade);
+    } else {
+        m_pendingKaraokePlayback = std::move(request);
+        m_pendingKaraokeCrossfade = m_mediaBackendKar.state() == MediaBackend::PlayingState;
+        // Store the request before Stop, which may complete synchronously.
+        m_mediaBackendKar.stop();
+    }
+}
+
+void MainWindow::continueKaraokePlayback()
+{
+    if (!m_karaokeStopReady || !m_pendingKaraokePlayback || m_shuttingDown)
+        return;
+
+    m_karaokeStopReady = false;
+    auto request = std::exchange(m_pendingKaraokePlayback, std::nullopt);
+    const bool crossfade = std::exchange(m_pendingKaraokeCrossfade, false) || request->forceCrossfade;
+    if (m_settings.rotationAltSortOrder()) {
+        const auto completed = m_rotModel.getSinger(m_rotModel.currentSinger());
+        if (completed.isValid())
+            m_rotModel.singerMove(completed.position, static_cast<int>(m_rotModel.singerCount() - 1));
+        m_rotModel.setCurrentSinger(-1);
+        m_rotDelegate.setCurrentSinger(-1);
+        m_rotModel.setCurRemainSecs(0);
+    }
+    startKaraokePlayback(*request, crossfade);
+}
+
+void MainWindow::requestRotationSong(const okj::RotationSinger &singer, InterruptionWarning warning, bool selectSinger)
+{
+    const auto path = singer.nextSongPath();
+    requestKaraokePlayback({
+        .song = {.id = singer.nextSongQueueId(), .singerId = singer.id,
+                 .dbSongId = m_karaokeSongsModel.getIdForPath(path), .keyChange = singer.nextSongKeyChg(),
+                 .artist = singer.nextSongArtist(), .title = singer.nextSongTitle(),
+                 .songId = singer.nextSongSongId(), .path = path},
+        .selectSinger = selectSinger
+    }, warning);
+}
+
+bool MainWindow::applyKaraokeSelection(const KaraokePlaybackRequest &request)
+{
+    if (!request.trackSong)
+        return true;
+
+    const auto &song = request.song;
+    const auto singer = m_rotModel.getSinger(song.singerId);
+    if (song.id > 0 && !singer.isValid())
+        return false;
+    int key = song.keyChange;
+    if (song.id > 0) {
+        // The queue could change during the fade or while the file is prepared.
+        QSqlQuery query;
+        query.prepare("SELECT dbsongs.path, queuesongs.keychg FROM queuesongs "
+                      "JOIN dbsongs ON dbsongs.songid = queuesongs.song "
+                      "WHERE queuesongs.qsongid = ? AND queuesongs.singer = ?");
+        query.addBindValue(song.id);
+        query.addBindValue(song.singerId);
+        if (!query.exec() || !query.next() || query.value(0).toString() != song.path)
+            return false;
+        key = query.value(1).toInt();
+    }
+
+    m_curSinger = singer.name;
+    m_curArtist = song.artist;
+    m_curTitle = song.title;
+    ui->labelSinger->setText(m_curSinger);
+    ui->labelArtist->setText(m_curArtist);
+    ui->labelTitle->setText(m_curTitle);
+    m_karaokeSongsModel.updateSongHistory(song.dbSongId);
+    if (m_settings.treatAllSingersAsRegs() || singer.regular)
+        m_historySongsModel.saveSong(m_curSinger, song.path, m_curArtist, m_curTitle, song.songId, key);
+    m_mediaBackendKar.setPitchShift(key);
+    if (song.id > 0)
+        m_qModel.setPlayedForSinger(song.singerId, song.id);
+    m_rotModel.setCurrentSinger(singer.id);
+    m_rotDelegate.setCurrentSinger(singer.id);
+    if (singer.isValid()) {
+        if (m_settings.rotationAltSortOrder() && singer.position != 0)
+            m_rotModel.singerMove(singer.position, 0);
+        if (request.selectSinger) {
+            ui->tableViewRotation->clearSelection();
+            ui->tableViewRotation->selectRow(m_rotModel.getSinger(singer.id).position);
+        }
+    }
+    return true;
+}
+
+void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, bool crossfade)
+{
+    m_kAASkip = false;
+    const auto filename = request.song.path;
     const auto cancelled = std::make_shared<std::atomic_bool>(false);
     m_mediaPreparationCancelled = cancelled;
     auto *watcher = new QFutureWatcher<PreparedKaraokeMedia>(this);
     connect(watcher, &QFutureWatcher<PreparedKaraokeMedia>::finished, this,
-            [this, watcher, cancelled, k2k, isZip] {
+            [this, watcher, cancelled, request, crossfade] {
         const auto prepared = watcher->result();
         watcher->deleteLater();
-        // A newer track or Stop invalidates even a result already queued for delivery.
         if (cancelled->load() || m_shuttingDown)
             return;
         m_mediaPreparationCancelled.reset();
-        m_logger->info("{} {} preparation in background took {}ms", m_loggingPrefix, isZip ? "ZIP" : "Video", prepared.elapsedMs);
+        m_logger->info("{} Karaoke media preparation took {}ms", m_loggingPrefix, prepared.elapsedMs);
         if (!prepared.error.isEmpty()) {
+            restoreBreakMusicVolume();
             m_timerTest.stop();
             QMessageBox::warning(this, tr("Bad karaoke file"), prepared.error, QMessageBox::Ok);
             return;
         }
-        // Retain the worker's files while a deferred backend source change uses them.
+        if (!applyKaraokeSelection(request)) {
+            restoreBreakMusicVolume();
+            return;
+        }
         m_preparedPlaybackDir = prepared.directory;
-        if (isZip)
+        if (!prepared.cdgFile.isEmpty())
             m_mediaBackendKar.setMediaCdg(prepared.cdgFile, prepared.audioFile);
         else
             m_mediaBackendKar.setMedia(prepared.audioFile);
-        if (!k2k) {
+        if (!crossfade) {
             if (m_settings.bmKCrossFade())
                 m_mediaBackendBm.fadeOut(false);
             else
@@ -1419,109 +1492,36 @@ void MainWindow::prepareKaraokePlayback(const QString &filename, bool k2k) {
         m_mediaBackendKar.fadeInImmediate();
         applyKaraokePlaybackSettings();
     });
-    // The worker captures no window, backend, widget, or shared archive object.
-    watcher->setFuture(QtConcurrent::run([filename, cancelled, isZip] {
-        return isZip ? prepareKaraokeZip(filename, cancelled) : prepareKaraokeVideo(filename, cancelled);
+    watcher->setFuture(QtConcurrent::run([filename, cancelled] {
+        if (filename.endsWith(".zip", Qt::CaseInsensitive))
+            return prepareKaraokeZip(filename, cancelled);
+        if (filename.endsWith(".cdg", Qt::CaseInsensitive))
+            return prepareKaraokePair(filename, cancelled);
+        return prepareKaraokeVideo(filename, cancelled);
     }));
 }
 
-void MainWindow::play(const QString &karaokeFilePath, const bool &k2k) {
-    cancelMediaPreparation();
-    QElapsedTimer startupStage;
-    startupStage.start();
-    const auto logStage = [this, &startupStage](const char *stage) {
-        const auto elapsed = startupStage.restart();
-        if (elapsed >= 50)
-            m_logger->warn("{} Song startup on UI thread: {} took {}ms", m_loggingPrefix, stage, elapsed);
-    };
-    m_mediaTempDir = std::make_unique<QTemporaryDir>();
-    if (m_mediaBackendKar.state() != MediaBackend::PausedState) {
-        m_logger->info("{} Playing file: {}", m_loggingPrefix, karaokeFilePath.toStdString());
-        if (m_mediaBackendKar.state() == MediaBackend::PlayingState) {
-            if (m_settings.karaokeAutoAdvance()) {
-                m_kAASkip = true;
-                cdgWindow->showAlert(false);
-            }
-            m_mediaBackendKar.stop();
-            if (m_k2kTransition && m_settings.rotationAltSortOrder())
-                m_rotModel.singerMove(0, static_cast<int>(m_rotModel.singerCount() - 1));
-            ui->spinBoxTempo->setValue(100);
-        }
-        logStage("previous track cleanup");
-        if (karaokeFilePath.endsWith(".zip", Qt::CaseInsensitive)) {
-            prepareKaraokePlayback(karaokeFilePath, k2k);
-            m_k2kTransition = false;
-            if (m_settings.karaokeAutoAdvance())
-                m_kAASkip = false;
-            return;
-        } else if (karaokeFilePath.endsWith(".cdg", Qt::CaseInsensitive)) {
-            QString cdgTmpFile = "tmp.cdg";
-            QString audTmpFile = "tmp.mp3";
-            QFile cdgFile(karaokeFilePath);
-            if (!cdgFile.exists()) {
-                m_timerTest.stop();
-                QMessageBox::warning(this, tr("Bad karaoke file"), tr("CDG file missing."), QMessageBox::Ok);
-                return;
-            } else if (cdgFile.size() == 0) {
-                m_timerTest.stop();
-                QMessageBox::warning(this, tr("Bad karaoke file"), tr("CDG file contains no data"), QMessageBox::Ok);
-                return;
-            }
-            QString audioFilename = findMatchingAudioFile(karaokeFilePath);
-            if (audioFilename == "") {
-                m_timerTest.stop();
-                QMessageBox::warning(this, tr("Bad karaoke file"), tr("Audio file missing."), QMessageBox::Ok);
-                return;
-            }
-            QFile audioFile(audioFilename);
-            if (audioFile.size() == 0) {
-                m_timerTest.stop();
-                QMessageBox::warning(this, tr("Bad karaoke file"), tr("Audio file contains no data"), QMessageBox::Ok);
-                return;
-            }
-            cdgFile.copy(m_mediaTempDir->path() + QDir::separator() + cdgTmpFile);
-            QFile::copy(audioFilename, m_mediaTempDir->path() + QDir::separator() + audTmpFile);
-            logStage("CDG and audio file preparation");
-            m_mediaBackendKar.setMediaCdg(m_mediaTempDir->path() + QDir::separator() + cdgTmpFile,
-                                          m_mediaTempDir->path() + QDir::separator() + audTmpFile);
-            logStage("CDG backend preparation");
-            if (!k2k) {
-                if (m_settings.bmKCrossFade())
-                    m_mediaBackendBm.fadeOut(false);
-                else
-                    m_mediaBackendBm.fadeOutImmediate();
-            }
-            QApplication::setOverrideCursor(Qt::WaitCursor);
-            m_mediaBackendKar.play();
-            QApplication::restoreOverrideCursor();
-            m_mediaBackendKar.fadeInImmediate();
-        } else {
-            prepareKaraokePlayback(karaokeFilePath, k2k);
-            m_k2kTransition = false;
-            if (m_settings.karaokeAutoAdvance())
-                m_kAASkip = false;
-            return;
-        }
-        logStage("playback request and break music transition");
-        applyKaraokePlaybackSettings();
+void MainWindow::play(const QString &karaokeFilePath, const bool &k2k)
+{
+    requestKaraokePlayback({.song = {.path = karaokeFilePath}, .trackSong = false, .forceCrossfade = k2k},
+                           InterruptionWarning::Never);
+}
 
-    } else if (m_mediaBackendKar.state() == MediaBackend::PausedState) {
-        if (m_settings.recordingEnabled())
-            audioRecorder.unpause();
-        m_mediaBackendKar.play();
-        m_mediaBackendKar.fadeIn(false);
-    }
-    logStage("playback settings and recording");
-    m_k2kTransition = false;
-    if (m_settings.karaokeAutoAdvance())
-        m_kAASkip = false;
+void MainWindow::cancelKaraokePlayback()
+{
+    if (m_karaokeInterruptionPrompt)
+        m_karaokeInterruptionPrompt->close();
+    m_pendingKaraokePlayback.reset();
+    m_pendingKaraokeCrossfade = false;
+    m_karaokeStopReady = false;
+    cancelMediaPreparation();
 }
 
 MainWindow::~MainWindow() {
     m_shuttingDown = true;
     bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
-    cancelMediaPreparation();
+    cancelKaraokePlayback();
     if (m_dbThread) {
         m_dbThread->quit();
         m_dbThread->wait();
@@ -1604,13 +1604,6 @@ void MainWindow::databaseCleared() {
 }
 
 void MainWindow::buttonStopClicked() {
-    const bool wasPreparing = bool(m_mediaPreparationCancelled);
-    cancelMediaPreparation();
-    if (wasPreparing) {
-        ui->labelArtist->setText("None");
-        ui->labelTitle->setText("None");
-        ui->labelSinger->setText("None");
-    }
     if (m_mediaBackendKar.state() == MediaBackend::PlayingState) {
         if (m_settings.showSongPauseStopWarning()) {
             QMessageBox msgBox(this);
@@ -1630,6 +1623,18 @@ void MainWindow::buttonStopClicked() {
             }
         }
     }
+    stopKaraokePlayback();
+}
+
+void MainWindow::stopKaraokePlayback()
+{
+    const bool wasPreparing = bool(m_mediaPreparationCancelled);
+    cancelKaraokePlayback();
+    if (wasPreparing || !m_karaokePlaybackActive) {
+        ui->labelArtist->setText("None");
+        ui->labelTitle->setText("None");
+        ui->labelSinger->setText("None");
+    }
     m_kAASkip = true;
     m_timerKaraokeAA.stop();
     updateAutoplayStatus();
@@ -1645,6 +1650,8 @@ void MainWindow::buttonStopClicked() {
 }
 
 void MainWindow::buttonPauseClicked() {
+    if (m_pendingKaraokePlayback)
+        return;
     if (m_mediaBackendKar.state() == MediaBackend::PausedState) {
         m_mediaBackendKar.play();
     } else if (m_mediaBackendKar.state() == MediaBackend::PlayingState) {
@@ -1693,69 +1700,10 @@ void MainWindow::tableViewDbDoubleClicked(const QModelIndex &index) {
     }
 }
 
-void MainWindow::tableViewRotationDoubleClicked(const QModelIndex &index) {
-    if (index.column() <= 3) {
-        m_k2kTransition = false;
-        int singerId = index.data(Qt::UserRole).toInt();
-        QString nextSongPath = m_rotModel.getSinger(singerId).nextSongPath();
-        if (nextSongPath != "") {
-            if ((m_mediaBackendKar.state() == MediaBackend::PlayingState) && (m_settings.showSongInterruptionWarning())) {
-                QMessageBox msgBox(this);
-                auto *cb = new QCheckBox("Show this warning in the future");
-                cb->setChecked(m_settings.showSongInterruptionWarning());
-                msgBox.setIcon(QMessageBox::Warning);
-                msgBox.setText("Interrupt currently playing karaoke song?");
-                msgBox.setInformativeText(
-                        "There is currently a karaoke song playing.  If you continue, the current song will be stopped.  Are you sure?");
-                QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-                msgBox.addButton(QMessageBox::Cancel);
-                msgBox.setCheckBox(cb);
-                connect(cb, &QCheckBox::toggled, &m_settings, &Settings::setShowSongInterruptionWarning);
-                msgBox.exec();
-                if (msgBox.clickedButton() != yesButton) {
-                    return;
-                }
-                m_k2kTransition = true;
-            }
-            if (m_mediaBackendKar.state() == MediaBackend::PausedState) {
-                if (m_settings.karaokeAutoAdvance()) {
-                    m_kAASkip = true;
-                    cdgWindow->showAlert(false);
-                }
-                audioRecorder.stop();
-                m_mediaBackendKar.stop(true);
-            }
-            //           play(nextSongPath);
-            //           kAudioBackend.setPitchShift(m_rotModel.nextSongKeyChg(singerId));
-            auto &singer = m_rotModel.getSinger(singerId);
-            m_curSinger = singer.name;
-            m_curArtist = singer.nextSongArtist();
-            m_curTitle = singer.nextSongTitle();
-            QString curSongId = singer.nextSongSongId();
-            int curKeyChange = singer.nextSongKeyChg();
-
-            m_karaokeSongsModel.updateSongHistory(m_karaokeSongsModel.getIdForPath(nextSongPath));
-            play(nextSongPath, m_k2kTransition);
-            ui->labelArtist->setText(m_curArtist);
-            ui->labelTitle->setText(m_curTitle);
-            ui->labelSinger->setText(m_curSinger);
-            if (m_settings.treatAllSingersAsRegs() || m_rotModel.getSinger(singerId).regular)
-                m_historySongsModel.saveSong(m_curSinger, nextSongPath, m_curArtist, m_curTitle, curSongId,
-                                             curKeyChange);
-            m_mediaBackendKar.setPitchShift(curKeyChange);
-            m_qModel.setPlayedForSinger(singer.id, singer.nextSongQueueId());
-            m_rotDelegate.setCurrentSinger(singerId);
-            m_rotModel.setCurrentSinger(singerId);
-            if (m_settings.rotationAltSortOrder()) {
-                auto curSingerPos = m_rotModel.getSinger(singerId).position;
-                if (curSingerPos != 0) {
-                    m_rotModel.singerMove(curSingerPos, 0);
-                    ui->tableViewRotation->clearSelection();
-                    ui->tableViewRotation->selectRow(0);
-                }
-            }
-        }
-    }
+void MainWindow::tableViewRotationDoubleClicked(const QModelIndex &index)
+{
+    if (index.isValid() && index.column() <= 3)
+        requestRotationSong(m_rotModel.getSinger(index.data(Qt::UserRole).toInt()), InterruptionWarning::Playing, true);
 }
 
 void MainWindow::tableViewRotationClicked(const QModelIndex &index) {
@@ -1821,68 +1769,11 @@ void MainWindow::tableViewRotationClicked(const QModelIndex &index) {
     }
 }
 
-void MainWindow::tableViewQueueDoubleClicked(const QModelIndex &index) {
-    if (!index.isValid())
-        return;
-    auto song = qvariant_cast<okj::QueueSong>(index.data(Qt::UserRole));
-    auto singer = m_rotModel.getSinger(song.singerId);
-    m_k2kTransition = false;
-    if (m_mediaBackendKar.state() == MediaBackend::PlayingState) {
-        if (m_settings.showSongInterruptionWarning()) {
-            QMessageBox msgBox(this);
-            auto *cb = new QCheckBox("Show this warning in the future");
-            cb->setChecked(m_settings.showSongInterruptionWarning());
-            msgBox.setIcon(QMessageBox::Warning);
-            msgBox.setText("Interrupt currently playing karaoke song?");
-            msgBox.setInformativeText(
-                    "There is currently a karaoke song playing.  If you continue, the current song will be stopped.  Are you sure?");
-            QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-            msgBox.addButton(QMessageBox::Cancel);
-            msgBox.setCheckBox(cb);
-            connect(cb, &QCheckBox::toggled, &m_settings, &Settings::setShowSongInterruptionWarning);
-            msgBox.exec();
-            if (msgBox.clickedButton() != yesButton) {
-                return;
-            }
-        }
-        m_k2kTransition = true;
-        m_mediaBackendKar.stop();
-        while (m_mediaBackendKar.state() == MediaBackend::PlayingState)
-            QApplication::processEvents();
-        if (m_settings.rotationAltSortOrder())
-            m_rotModel.singerMove(0, static_cast<int>(m_rotModel.singerCount() -1), true);
-    }
-    else if (m_mediaBackendKar.state() == MediaBackend::PausedState) {
-        if (m_settings.karaokeAutoAdvance()) {
-            m_kAASkip = true;
-            cdgWindow->showAlert(false);
-        }
-        audioRecorder.stop();
-        m_mediaBackendKar.stop(true);
-    }
-    m_curSinger = singer.name;
-    m_curArtist = song.artist;
-    m_curTitle = song.title;
-    ui->labelSinger->setText(singer.name);
-    ui->labelArtist->setText(song.artist);
-    ui->labelTitle->setText(song.title);
-    m_karaokeSongsModel.updateSongHistory(song.dbSongId);
-    play(song.path, m_k2kTransition);
-    if (m_settings.treatAllSingersAsRegs() || singer.regular)
-        m_historySongsModel.saveSong(singer.name, song.path, song.artist, song.title, song.songId, song.keyChange);
-    m_mediaBackendKar.setPitchShift(song.keyChange);
-    m_qModel.setPlayedForSinger(song.singerId, song.id);
-    m_rotModel.setCurrentSinger(singer.id);
-    m_rotDelegate.setCurrentSinger(singer.id);
-    if (m_settings.rotationAltSortOrder()) {
-        // Need a new copy of the singer since the rotation has changed since we last grabbed them
-        singer = m_rotModel.getSinger(singer.id);
-        if (singer.position != 0) {
-            m_rotModel.singerMove(singer.position, 0);
-            ui->tableViewRotation->clearSelection();
-            ui->tableViewRotation->selectRow(0);
-        }
-    }
+void MainWindow::tableViewQueueDoubleClicked(const QModelIndex &index)
+{
+    if (index.isValid())
+        requestKaraokePlayback({.song = qvariant_cast<okj::QueueSong>(index.data(Qt::UserRole)), .selectSinger = true},
+                               InterruptionWarning::Playing);
 }
 
 void MainWindow::actionExportRegularsTriggered() {
@@ -2099,9 +1990,8 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
         ui->pushButtonKeyUp->setEnabled(false);
         ui->pushButtonTempoDn->setEnabled(false);
         ui->pushButtonTempoUp->setEnabled(false);
-        if (state == m_lastAudioState || m_k2kTransition)
+        if (m_pendingKaraokePlayback)
             return;
-        m_lastAudioState = state;
         restoreBreakMusicVolume();
         if (m_settings.rotationAltSortOrder()) {
             const auto completedSinger = m_rotModel.getSinger(m_rotModel.currentSinger());
@@ -2142,7 +2032,8 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
 //        ipcClient->send_MessageToServer(KhIPCClient::CMD_FADE_IN);
         //m_mediaBackendBm.setVideoEnabled(true);
         m_mediaBackendKar.stop(true);
-        restoreBreakMusicVolume();
+        if (!m_pendingKaraokePlayback)
+            restoreBreakMusicVolume();
     }
     if (state == MediaBackend::PausedState) {
         m_logger->info("{} KAudio entered PausedState", m_loggingPrefix);
@@ -2151,7 +2042,6 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
     if (state == MediaBackend::PlayingState) {
         m_karaokePlaybackActive = true;
         m_logger->info("{} KAudio entered PlayingState", m_loggingPrefix);
-        m_lastAudioState = state;
         //m_mediaBackendBm.setVideoEnabled(false);
         ui->pushButtonKeyUp->setEnabled(true);
         ui->pushButtonKeyDn->setEnabled(true);
@@ -2308,7 +2198,8 @@ void MainWindow::rotationDataChanged() {
 void MainWindow::silenceDetectedKar() {
     m_logger->info("{} Karaoke music silence detected", m_loggingPrefix);
     m_mediaBackendKar.rawStop();
-    restoreBreakMusicVolume();
+    if (!m_pendingKaraokePlayback)
+        restoreBreakMusicVolume();
 }
 
 void MainWindow::silenceDetectedBm() {
@@ -2730,41 +2621,7 @@ void MainWindow::karaokeAATimerTimeout() {
         m_logger->info("{} KaraokeAA - Countdown cancelled", m_loggingPrefix);
         m_kAASkip = false;
     } else {
-        // Starting media emits callbacks that can modify the rotation; retain
-        // the selected song's details throughout this transition.
-        const auto singer = m_rotModel.nextSinger();
-        if (!singer.isValid()) {
-            m_logger->info("{} KaraokeAA - Selected singer no longer has an upcoming song", m_loggingPrefix);
-            return;
-        }
-        m_kAANextSinger = singer.id;
-        m_kAANextSongPath = singer.nextSongPath();
-        m_curSinger = singer.name;
-        m_curArtist = singer.nextSongArtist();
-        m_curTitle = singer.nextSongTitle();
-        ui->labelArtist->setText(m_curArtist);
-        ui->labelTitle->setText(m_curTitle);
-        ui->labelSinger->setText(m_curSinger);
-        if (m_settings.treatAllSingersAsRegs() || singer.regular) {
-            m_historySongsModel.saveSong(
-                    m_curSinger,
-                    m_kAANextSongPath,
-                    m_curArtist,
-                    m_curTitle,
-                    singer.nextSongSongId(),
-                    singer.nextSongKeyChg()
-            );
-        }
-        m_karaokeSongsModel.updateSongHistory(m_karaokeSongsModel.getIdForPath(m_kAANextSongPath));
-        play(m_kAANextSongPath);
-        m_mediaBackendKar.setPitchShift(singer.nextSongKeyChg());
-        m_qModel.setPlayedForSinger(singer.id, singer.nextSongQueueId());
-        m_rotModel.setCurrentSinger(singer.id);
-        m_rotDelegate.setCurrentSinger(singer.id);
-        if (m_settings.rotationAltSortOrder()) {
-            if (singer.position != 0)
-                m_rotModel.singerMove(singer.position, 0);
-        }
+        requestRotationSong(m_rotModel.nextSinger(), InterruptionWarning::Never, false);
     }
 }
 
@@ -3351,6 +3208,8 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     requestsDialog->setVisible(false);
     bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
+    dbDialog->cancelScan();
+    cancelKaraokePlayback();
     event->accept();
 }
 
@@ -4457,62 +4316,21 @@ void MainWindow::actionDocumentation() {
     QDesktopServices::openUrl(QUrl("https://docs.openkj.org"));
 }
 
-void MainWindow::buttonHistoryPlayClicked() {
-    auto selRows = ui->tableViewHistory->selectionModel()->selectedRows();
-    if (selRows.empty())
+void MainWindow::buttonHistoryPlayClicked()
+{
+    const auto rows = ui->tableViewHistory->selectionModel()->selectedRows();
+    if (rows.isEmpty())
         return;
-    auto index = selRows.at(0);
-    m_k2kTransition = false;
-    if (m_mediaBackendKar.state() == MediaBackend::PlayingState) {
-        if (m_settings.showSongInterruptionWarning()) {
-            QMessageBox msgBox(this);
-            auto *cb = new QCheckBox("Show this warning in the future");
-            cb->setChecked(m_settings.showSongInterruptionWarning());
-            msgBox.setIcon(QMessageBox::Warning);
-            msgBox.setText("Interrupt currently playing karaoke song?");
-            msgBox.setInformativeText(
-                    "There is currently a karaoke song playing.  If you continue, the current song will be stopped.  Are you sure?");
-            QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-            msgBox.addButton(QMessageBox::Cancel);
-            msgBox.setCheckBox(cb);
-            connect(cb, &QCheckBox::toggled, &m_settings, &Settings::setShowSongInterruptionWarning);
-            msgBox.exec();
-            if (msgBox.clickedButton() != yesButton) {
-                return;
-            }
-        }
-        m_k2kTransition = true;
-    }
-    if (m_mediaBackendKar.state() == MediaBackend::PausedState) {
-        if (m_settings.karaokeAutoAdvance()) {
-            m_kAASkip = true;
-            cdgWindow->showAlert(false);
-        }
-        audioRecorder.stop();
-        m_mediaBackendKar.stop(true);
-    }
-    int curSingerId = m_rotModel.getSingerByName(m_historySongsModel.currentSingerName()).id;
-    m_curSinger = m_rotModel.getSinger(curSingerId).name;
-    m_curArtist = index.sibling(index.row(), 3).data().toString();
-    m_curTitle = index.sibling(index.row(), 4).data().toString();
-    QString curSongId = index.sibling(index.row(), 5).data().toString();
-    QString filePath = index.sibling(index.row(), 2).data().toString();
-    int curKeyChange = index.sibling(index.row(), 6).data().toInt();
-    ui->labelSinger->setText(m_curSinger);
-    ui->labelArtist->setText(m_curArtist);
-    ui->labelTitle->setText(m_curTitle);
-    m_karaokeSongsModel.updateSongHistory(m_karaokeSongsModel.getIdForPath(filePath));
-    play(filePath, m_k2kTransition);
-    if (m_settings.treatAllSingersAsRegs() || m_rotModel.getSinger(curSingerId).regular)
-        m_historySongsModel.saveSong(m_curSinger, filePath, m_curArtist, m_curTitle, curSongId, curKeyChange);
-    m_mediaBackendKar.setPitchShift(curKeyChange);
-    m_rotModel.setCurrentSinger(curSingerId);
-    m_rotDelegate.setCurrentSinger(curSingerId);
-    if (m_settings.rotationAltSortOrder()) {
-        auto curSingerPos = m_rotModel.getSinger(curSingerId).position;
-        if (curSingerPos != 0)
-            m_rotModel.singerMove(curSingerPos, 0);
-    }
+    const auto index = rows.first();
+    const auto path = index.siblingAtColumn(TableModelHistorySongs::PATH).data().toString();
+    const auto singer = m_rotModel.getSingerByName(m_historySongsModel.currentSingerName());
+    requestKaraokePlayback({
+        .song = {.id = -1, .singerId = singer.id, .dbSongId = m_karaokeSongsModel.getIdForPath(path),
+                 .keyChange = index.siblingAtColumn(TableModelHistorySongs::KEY_CHANGE).data().toInt(),
+                 .artist = index.siblingAtColumn(TableModelHistorySongs::ARTIST).data().toString(),
+                 .title = index.siblingAtColumn(TableModelHistorySongs::TITLE).data().toString(),
+                 .songId = index.siblingAtColumn(TableModelHistorySongs::SONGID).data().toString(), .path = path}
+    }, InterruptionWarning::Playing);
 }
 
 void MainWindow::buttonHistoryToQueueClicked() {

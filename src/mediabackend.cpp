@@ -71,6 +71,8 @@ MediaBackend::MediaBackend(QObject *parent, QString objectName, MediaType type)
                                m_loggingPrefix, m_cdgStartTimer.elapsed(), m_cdgRunningTime / GST_MSECOND);
             }
         }
+        if (std::exchange(m_stopCompletionPending, false))
+            emit stopCompleted();
         auto controls = std::move(m_deferredControls);
         m_deferredControls.clear();
         for (auto &control : controls)
@@ -1549,8 +1551,11 @@ void MediaBackend::rawStop() {
     m_lastCdgCorrectionMs = -1;
     if (stopTimer.elapsed() >= 50)
         m_logger->warn("{} Playback cleanup on UI thread took {}ms", m_loggingPrefix, stopTimer.elapsed());
-    // Consumers may start another track synchronously. Complete cleanup first.
+    // A cancelled CDG state request finishes native cleanup in its worker.
+    m_stopCompletionPending = m_cdgStateBusy;
     emit stateChanged(m_state);
+    if (!m_stopCompletionPending)
+        emit stopCompleted();
 }
 
 void MediaBackend::setPitchShift(const int &pitchShift) {

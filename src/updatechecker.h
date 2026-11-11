@@ -3,39 +3,23 @@
 
 #include <QNetworkAccessManager>
 #include <QObject>
-#include "okjversion.h"
 #include "settings.h"
 
 class UpdateChecker : public QObject
 {
     Q_OBJECT
-private:
-    QNetworkAccessManager *manager;
-    QString currentVer;
-    QString availVersion;
-    QString OS;
-    QString channel;
-    Settings m_settings;
 
 public:
-    explicit UpdateChecker(QObject *parent = 0);
+    explicit UpdateChecker(QObject *parent = nullptr, QNetworkAccessManager *network = nullptr);
     void checkForUpdates();
 
-    QString getOS() const;
-    void setOS(const QString &value);
-
-    QString getChannel() const;
-    void setChannel(const QString &value);
-
 signals:
-    void newVersionAvailable(QString version);
+    void newVersionAvailable(const QString &version, const QUrl &releasePage, bool preview);
 
-public slots:
-
-private slots:
-    void onNetworkReply(QNetworkReply* reply);
-    void aOnNetworkReply(QNetworkReply* reply);
-    void downloadInstaller();
+private:
+    QNetworkAccessManager *m_network;
+    Settings m_settings;
+    bool m_checking{false};
 };
 
 #endif // UPDATECHECKER_H

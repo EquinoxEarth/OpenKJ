@@ -24,7 +24,7 @@ public:
     QString audioExtension();
     bool extractAudio(const QString& destPath, const QString& destFile, const std::atomic_bool *cancelled = nullptr);
     bool extractCdg(const QString& destPath, const QString& destFile, const std::atomic_bool *cancelled = nullptr);
-    bool isValidKaraokeFile();
+    bool isValidKaraokeFile(bool logErrors = true);
     QString getLastError();
 
 private:

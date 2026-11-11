@@ -1,136 +1,111 @@
 #include "updatechecker.h"
-#include <QApplication>
+#include "networkrequests.h"
+#include "okjversion.h"
+
 #include <QDebug>
-#include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
-#include <QNetworkReply>
-#include <QSysInfo>
+#include <QRegularExpression>
+#include <QVersionNumber>
 
+namespace {
+const QString releasePageBase = QStringLiteral("https://github.com/EquinoxEarth/OpenKJ/releases/tag/");
+const QString releaseApi = QStringLiteral("https://api.github.com/repos/EquinoxEarth/OpenKJ/releases?per_page=50");
 
-QString UpdateChecker::getOS() const
+QString platformAssetSuffix()
 {
-    return OS;
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64)
+    return QStringLiteral("macos-arm64.dmg");
+#elif defined(Q_OS_WIN) && defined(Q_PROCESSOR_X86_64)
+    return QStringLiteral("windows-x64.msi");
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
+    return QStringLiteral("linux-x86_64.flatpak");
+#else
+    return {};
+#endif
 }
 
-void UpdateChecker::setOS(const QString &value)
+bool hasInstaller(const QJsonObject &release, const QString &filename)
 {
-    OS = value;
+    for (const auto &asset : release.value("assets").toArray()) {
+        const auto object = asset.toObject();
+        if (object.value("name").toString() == filename && object.value("state").toString() == "uploaded" &&
+            object.value("size").toDouble() > 0)
+            return true;
+    }
+    return false;
 }
 
-QString UpdateChecker::getChannel() const
+struct Release {
+    QVersionNumber version;
+    QString tag;
+    int revision{0};
+    bool preview{false};
+};
+
+Release availableUpdate(const QJsonArray &releases, bool allowPreviews, const QString &assetSuffix)
 {
-    return channel;
+    static const QRegularExpression versionTag(QStringLiteral(
+        R"(\A(?:(?:macos|windows|linux)-)?v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))(?:-(?:beta|preview|prerelease)\.(0|[1-9][0-9]*))?\z)"));
+    const QVersionNumber installed(OKJ_VERSION_MAJOR, OKJ_VERSION_MINOR, OKJ_VERSION_BUILD);
+    Release best;
+    for (const auto &entry : releases) {
+        const auto release = entry.toObject();
+        const auto draft = release.value("draft");
+        const auto prerelease = release.value("prerelease");
+        if (!draft.isBool() || draft.toBool() || !prerelease.isBool() ||
+            (!allowPreviews && prerelease.toBool()))
+            continue;
+
+        const auto tag = release.value("tag_name").toString();
+        const auto match = versionTag.match(tag);
+        if (!match.hasMatch())
+            continue;
+        const auto versionString = match.captured(1);
+        qsizetype suffix = 0;
+        const auto version = QVersionNumber::fromString(versionString, &suffix);
+        if (suffix != versionString.size() || version.segmentCount() != 3 || version <= installed)
+            continue;
+        bool revisionValid = true;
+        const int revision = match.capturedLength(2) ? match.captured(2).toInt(&revisionValid) : 0;
+        if (!revisionValid || !hasInstaller(release, QStringLiteral("OpenKJ-%1-%2").arg(versionString, assetSuffix)))
+            continue;
+
+        if (version > best.version || (version == best.version &&
+            (best.preview != prerelease.toBool() ? best.preview : revision > best.revision))) {
+            best = {version, tag, revision, prerelease.toBool()};
+        }
+    }
+    return best;
+}
 }
 
-void UpdateChecker::setChannel(const QString &value)
+UpdateChecker::UpdateChecker(QObject *parent, QNetworkAccessManager *network)
+    : QObject(parent), m_network(network ? network : new QNetworkAccessManager(this))
 {
-    channel = value;
-}
-
-UpdateChecker::UpdateChecker(QObject *parent) : QObject(parent)
-{
-    OS = "unknown";
-    channel = "stable";
-    manager = new QNetworkAccessManager(this);
-    currentVer = OKJ_VERSION_STRING;
-#ifdef Q_OS_WIN32
-    OS = "Win32";
-#endif
-#ifdef Q_OS_WIN64
-    OS = "Win64";
-#endif
-#ifdef Q_OS_MACOS
-    OS = "MacOS";
-#endif
-#ifdef Q_OS_LINUX
-    OS = "Linux";
-#endif
-
-if (m_settings.updatesBranch() == 0)
-    channel = "stable";
-else
-    channel = "unstable";
-//    connect(manager, SIGNAL(finished(QNetworkReply*)), this, SLOT(onNetworkReply(QNetworkReply*)));
 }
 
 void UpdateChecker::checkForUpdates()
 {
-    if (!m_settings.checkUpdates())
+    const auto assetSuffix = platformAssetSuffix();
+    if (m_checking || !m_settings.checkUpdates() || assetSuffix.isEmpty())
         return;
-    qInfo() << "Requesting current version info for branch: " << channel;
-    connect(manager, &QNetworkAccessManager::finished, this, &UpdateChecker::onNetworkReply);
-    [[maybe_unused]]QNetworkReply *reply = manager->get(QNetworkRequest(QUrl("http://openkj.org/downloads/" + OS + "-" + channel + "-curversion.txt")));
-//    while (!reply->isFinished())
-//        QApplication::processEvents();
-//    qInfo() << "Request completed";
-}
 
-void UpdateChecker::onNetworkReply(QNetworkReply *reply)
-{
-    qInfo() << "Received network reply";
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        qInfo() << reply->errorString();
-        //output some meaningful error msg
-        return;
-    }
-    availVersion = QString(reply->readAll());
-    availVersion = availVersion.trimmed();
-    QStringList curVersionParts = currentVer.split(".");
-    QStringList availVersionParts = availVersion.split(".");
-    if (availVersionParts.size() != 3 || curVersionParts.size() != 3)
-    {
-        qInfo() << "Got invalid version info from server";
-        return;
-    }
-    int availMajor = availVersionParts.at(0).toInt();
-    int availMinor = availVersionParts.at(1).toInt();
-    int availRevis = availVersionParts.at(2).toInt();
-    int curMajor = OKJ_VERSION_MAJOR;
-    int curMinor = OKJ_VERSION_MINOR;
-    int curRevis = OKJ_VERSION_BUILD;
-    if (availMajor > curMajor)
-        emit newVersionAvailable(availVersion);
-    else if (availMajor == curMajor && availMinor > curMinor)
-        emit newVersionAvailable(availVersion);
-    else if (availMajor == curMajor && availMinor == curMinor && availRevis > curRevis)
-        emit newVersionAvailable(availVersion);
-    qInfo() << "Received version: " << availVersion << " Current version: " << currentVer;
-    reply->deleteLater();
-    disconnect(manager, &QNetworkAccessManager::finished, this, &UpdateChecker::onNetworkReply);
-
-    connect(manager, &QNetworkAccessManager::finished, this, &UpdateChecker::aOnNetworkReply);
-    QJsonObject jsonObject;
-    jsonObject.insert("uuid", m_settings.uuid());
-    jsonObject.insert("branch", OKJ_VERSION_BRANCH);
-    jsonObject.insert("version", currentVer);
-    jsonObject.insert("os", QSysInfo::kernelType());
-    jsonObject.insert("osversion", QSysInfo::prettyProductName());
-    jsonObject.insert("arch", QSysInfo::currentCpuArchitecture());
-    QJsonDocument jsonDocument;
-    jsonDocument.setObject(jsonObject);
-    QNetworkRequest request(QUrl("http://openkj.org/appanalytics"));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    reply = manager->post(request, jsonDocument.toJson());
-
-}
-
-void UpdateChecker::aOnNetworkReply(QNetworkReply *reply)
-{
-    qInfo() << reply->readAll();
-    reply->deleteLater();
-}
-
-void UpdateChecker::downloadInstaller()
-{
-    QString url;
-    if (channel == "unstable")
-    {
-        if (OS == "Win64")
-            url = "https://storage.googleapis.com/openkj-windows-builds-master/OpenKJ-" + availVersion + "-64bit-setup.exe";
-        if (OS == "Win32")
-            url = "https://storage.googleapis.com/openkj-windows-builds-master/OpenKJ-" + availVersion + "-32bit-setup.exe";
-        if (OS == "MacOS")
-            url = "https://storage.googleapis.com/openkj-openkj-release/OpenKJ-" + availVersion + "-unstable-osx-installer.dmg";
-    }
+    m_checking = true;
+    auto request = okj::httpsRequest(QUrl(releaseApi));
+    request.setRawHeader("Accept", "application/vnd.github+json");
+    request.setRawHeader("User-Agent", "OpenKJ/" OKJ_VERSION_STRING);
+    auto *reply = m_network->get(request);
+    okj::readJsonReply(reply, this, 8 * 1024 * 1024, [this, assetSuffix](const QJsonDocument &response) {
+        m_checking = false;
+        if (!response.isArray()) {
+            qWarning("Could not check the OpenKJ GitHub releases for updates.");
+            return;
+        }
+        if (!m_settings.checkUpdates())
+            return;
+        const auto update = availableUpdate(response.array(), m_settings.updatesBranch() != 0, assetSuffix);
+        if (!update.tag.isEmpty())
+            emit newVersionAvailable(update.version.toString(), QUrl(releasePageBase + update.tag), update.preview);
+    });
 }

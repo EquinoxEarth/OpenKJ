@@ -1,4 +1,5 @@
 #include <qglobal.h>
+#include "okjversion.h"
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QMessageBox>
@@ -628,7 +629,6 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->tableViewBmDb->setColumnHidden(TableModelBreakSongs::COL_ID, true);
     ui->tableViewBmPlaylist->setColumnHidden(TableModelPlaylistSongs::COL_POSITION, true);
     m_updateChecker = std::make_unique<UpdateChecker>(this);
-    m_updateChecker->checkForUpdates();
     m_timerButtonFlash.start(1000);
     m_logger->info("{} Initial UI setup complete", m_loggingPrefix);
     appFontChanged(m_settings.applicationFont());
@@ -873,6 +873,7 @@ void MainWindow::setupConnections() {
     connect(ui->splitter_3, &QSplitter::splitterMoved, [&]() { autosizeViews(); });
     connect(ui->splitterBm, &QSplitter::splitterMoved, [&]() { autosizeBmViews(); });
     connect(m_updateChecker.get(), &UpdateChecker::newVersionAvailable, this, &MainWindow::newVersionAvailable);
+    m_updateChecker->checkForUpdates();
     connect(&m_timerButtonFlash, &QTimer::timeout, this, &MainWindow::timerButtonFlashTimeout);
     connect(&m_timerButtonFlash, &QTimer::timeout, this, &MainWindow::updateAutoplayStatus);
     connect(&m_timerButtonFlash, &QTimer::timeout, this, &MainWindow::updateDatabaseStatus);
@@ -3229,24 +3230,19 @@ void MainWindow::songDropNoSingerSel() {
     msgBox.exec();
 }
 
-void MainWindow::newVersionAvailable(const QString &version) {
-    QMessageBox msgBox;
-    msgBox.setTextFormat(Qt::RichText);
-    msgBox.setText("New version of OpenKJ is available: " + version);
-    msgBox.setIcon(QMessageBox::Information);
-    if (m_updateChecker->getOS() == "Linux") {
-        msgBox.setInformativeText(
-                "To install the update, please use your distribution's package manager or download and build the current source.");
-    }
-    if (m_updateChecker->getOS() == "Win32" || m_updateChecker->getOS() == "Win64") {
-        msgBox.setInformativeText(
-                "You can download the new version at <a href=https://openkj.org/software>https://openkj.org/software</a>");
-    }
-    if (m_updateChecker->getOS() == "MacOS") {
-        msgBox.setInformativeText(
-                "You can download the new version at <a href=https://openkj.org/software>https://openkj.org/software</a>");
-    }
-    msgBox.exec();
+void MainWindow::newVersionAvailable(const QString &version, const QUrl &releasePage, bool preview)
+{
+    auto *notice = new QMessageBox(QMessageBox::Information, tr("OpenKJ update"),
+                                   preview ? tr("OpenKJ %1 preview is available.").arg(version)
+                                           : tr("OpenKJ %1 is available.").arg(version),
+                                   QMessageBox::Close, this);
+    notice->setAttribute(Qt::WA_DeleteOnClose);
+    notice->setWindowModality(Qt::NonModal);
+    auto *viewRelease = notice->addButton(tr("View release"), QMessageBox::ActionRole);
+    connect(viewRelease, &QPushButton::clicked, notice, [releasePage] {
+        QDesktopServices::openUrl(releasePage);
+    });
+    notice->show();
 }
 
 void MainWindow::filesDroppedOnQueue(const QList<QUrl> &urls, const int &singerId, const int &position) {

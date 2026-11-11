@@ -22,6 +22,10 @@ void DlgPurchaseProgress::setText(QString message)
 
 void DlgPurchaseProgress::setProgress(qint64 current, qint64 total)
 {
-    ui->progressBar->setMaximum(total / 1000);
-    ui->progressBar->setValue(current / 1000);
+    if (total <= 0) {
+        ui->progressBar->setRange(0, 0);
+        return;
+    }
+    ui->progressBar->setRange(0, 100);
+    ui->progressBar->setValue(qBound(0.0, current / double(total) * 100.0, 100.0));
 }

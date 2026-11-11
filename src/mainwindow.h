@@ -286,7 +286,7 @@ private slots:
     static void audioError(const QString &msg);
     void autosizeRotationCols();
     static void songDropNoSingerSel();
-    void newVersionAvailable(const QString &version);
+    void newVersionAvailable(const QString &version, const QUrl &releasePage, bool preview);
     void filesDroppedOnQueue(const QList<QUrl> &urls, const int &singerId, const int &position);
     void appFontChanged(const QFont &font);
     void tabWidgetCurrentChanged(const int &index);

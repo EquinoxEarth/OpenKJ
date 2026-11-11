@@ -162,31 +162,35 @@ bool MzArchive::extractCdg(const QString& destPath, const QString& destFile, con
     return extracted;
 }
 
-bool MzArchive::isValidKaraokeFile()
+bool MzArchive::isValidKaraokeFile(bool logErrors)
 {
-    if (!findEntries())
+    if (!findEntries(logErrors))
     {
         if (!m_cdgFound)
         {
-            m_logger->warn("{} Missing cdg file! - {}", m_loggingPrefix, archiveFile);
+            if (logErrors)
+                m_logger->warn("{} Missing cdg file! - {}", m_loggingPrefix, archiveFile);
             lastError = "CDG not found in zip file";
         }
         if (!m_audioFound)
         {
-            m_logger->warn("{} Missing audio file! - {}", m_loggingPrefix, archiveFile);
+            if (logErrors)
+                m_logger->warn("{} Missing audio file! - {}", m_loggingPrefix, archiveFile);
             lastError = "Audio file not found in zip file";
         }
         return false;
     }
     if (m_audioSize <= 0)
     {
-        m_logger->warn("{} Zero byte audio file! - {}", m_loggingPrefix, archiveFile);
+        if (logErrors)
+            m_logger->warn("{} Zero byte audio file! - {}", m_loggingPrefix, archiveFile);
         lastError = "Zero byte audio file";
         return false;
     }
     if (m_cdgSize <= 0)
     {
-        m_logger->warn("{} Zero byte cdg file! - {}", m_loggingPrefix, archiveFile);
+        if (logErrors)
+            m_logger->warn("{} Zero byte cdg file! - {}", m_loggingPrefix, archiveFile);
         lastError = "Zero byte CDG file";
         return false;
     }

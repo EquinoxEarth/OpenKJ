@@ -7,6 +7,7 @@
 #include "settings.h"
 
 
+#include <QDir>
 #include <QRegularExpressionValidator>
 #include <QRegularExpression>
 
@@ -21,14 +22,14 @@ DlgSongShopPurchase::DlgSongShopPurchase(std::shared_ptr<SongShop> songShop, QWi
     ui->lineEditCCM->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9]*"), this));
     ui->lineEditCCY->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9]*"), this));
     ui->lineEditCCV->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9]*"), this));
-    knLoginTest = false;
     ui->cbxSaveAccount->setChecked(m_settings.saveKNAccount());
     ui->cbxSaveCard->setChecked(m_settings.saveCC());
     authenticated = false;
     setupDone = true;
     connect(shop.get(), &SongShop::paymentProcessingFailed, this, &DlgSongShopPurchase::paymentProcessingFailed);
     connect(shop.get(), &SongShop::karaokeSongDownloaded, this, &DlgSongShopPurchase::purchaseSuccess);
-    msgBoxInfo = new DlgPurchaseProgress;
+    connect(shop.get(), &SongShop::downloadFailed, this, &DlgSongShopPurchase::downloadFailed);
+    msgBoxInfo = new DlgPurchaseProgress(this);
     msgBoxInfo->setModal(false);
     connect(shop.get(), &SongShop::downloadProgress, this, &DlgSongShopPurchase::downloadProgress);
     connect(shop.get(), &SongShop::knLoginSuccess, this, &DlgSongShopPurchase::knLoginSuccess);
@@ -100,52 +101,62 @@ void DlgSongShopPurchase::doAuth()
     }
 }
 
+void DlgSongShopPurchase::setOperation(Operation operation)
+{
+    m_operation = operation;
+    const bool enabled = !isBusy();
+    ui->groupBox->setEnabled(enabled);
+    ui->groupBox_2->setEnabled(enabled);
+    ui->btnPurchase->setEnabled(enabled);
+    if (enabled)
+        msgBoxInfo->hide();
+}
+
 void DlgSongShopPurchase::on_pushButtonTestLogin_clicked()
 {
-    knLoginTest = true;
+    if (isBusy())
+        return;
+    setOperation(Operation::TestLogin);
     shop->knLogin(ui->lineEditKNUser->text(), ui->lineEditKNPass->text());
 }
 
 void DlgSongShopPurchase::knLoginSuccess()
 {
-    if (knLoginTest)
-    {
-        QMessageBox msgBox;
-        msgBox.setWindowTitle("Login successful!");
-        msgBox.setText("Your login to Karoake.NET was successful.");
-        msgBox.exec();
-        knLoginTest = false;
-
+    if (m_operation == Operation::TestLogin) {
+        setOperation(Operation::Idle);
+        QMessageBox::information(this, tr("Login successful"), tr("You are logged in to PartyTyme."));
+    } else if (m_operation == Operation::PurchaseLogin) {
+        setOperation(Operation::Purchase);
+        msgBoxInfo->setText(tr("Purchasing song…"));
+        shop->knPurchase(songId, artist, title, ui->lineEditCCN->text(), ui->lineEditCCM->text(),
+                         ui->lineEditCCY->text(), ui->lineEditCCV->text());
     }
 }
 
-void DlgSongShopPurchase::knLoginFailure()
+void DlgSongShopPurchase::knLoginFailure(const QString &message)
 {
-    msgBoxInfo->hide();
-    QMessageBox msgBox;
-    msgBox.setWindowTitle("Login failed!");
-    msgBox.setText("PartyTyme login failed, incorrect username or password.");
-    msgBox.exec();
-    knLoginTest = false;
+    setOperation(Operation::Idle);
+    QMessageBox::warning(this, tr("Login failed"), message);
     authenticated = false;
 }
 
-void DlgSongShopPurchase::paymentProcessingFailed()
+void DlgSongShopPurchase::paymentProcessingFailed(const QString &message)
 {
-    msgBoxInfo->hide();
-    QMessageBox msgBox;
-    msgBox.setWindowTitle("Payment failed!");
-    msgBox.setText("Payment processing failed. Please verify your credit card details or try another card.");
-    msgBox.exec();
+    setOperation(Operation::Idle);
+    QMessageBox::warning(this, tr("Purchase error"), message);
 }
 
-void DlgSongShopPurchase::purchaseSuccess()
+void DlgSongShopPurchase::downloadFailed(const QString &message)
 {
-    msgBoxInfo->hide();
-    QMessageBox msgBox;
-    msgBox.setWindowTitle("Purchase succeeded!");
-    msgBox.setText("Your purchased track has been downloaded and added to your database.");
-    msgBox.exec();
+    setOperation(Operation::Idle);
+    QMessageBox::warning(this, tr("Purchase completed, download failed"), message);
+}
+
+void DlgSongShopPurchase::purchaseSuccess(const QString &path)
+{
+    setOperation(Operation::Idle);
+    QMessageBox::information(this, tr("Song downloaded"),
+                             tr("Your purchased track was saved to %1.").arg(QDir::toNativeSeparators(path)));
     close();
 }
 
@@ -156,23 +167,13 @@ void DlgSongShopPurchase::on_pushButtonCancel_clicked()
 
 void DlgSongShopPurchase::on_btnPurchase_clicked()
 {
-    msgBoxInfo->setWindowTitle("Purchasing Song");
-    msgBoxInfo->show();
-//    if (!m_songShop->loggedIn())
-//    {
-        msgBoxInfo->setText("Logging you in to Karoake.NET...");
-        shop->knLogin(ui->lineEditKNUser->text(), ui->lineEditKNPass->text());
-        while (!shop->loggedIn() && !shop->loginError())
-            QApplication::processEvents();
-//    }
-    if (shop->loginError())
-    {
-        msgBoxInfo->hide();
+    if (isBusy())
         return;
-    }
-    msgBoxInfo->setText("Purchasing song...");
-    shop->setDlSongInfo(artist, title, songId);
-    shop->knPurchase(songId, ui->lineEditCCN->text(), ui->lineEditCCM->text(), ui->lineEditCCY->text(), ui->lineEditCCV->text());
+    setOperation(Operation::PurchaseLogin);
+    msgBoxInfo->setWindowTitle(tr("Purchasing song"));
+    msgBoxInfo->setText(tr("Logging in to PartyTyme…"));
+    msgBoxInfo->show();
+    shop->knLogin(ui->lineEditKNUser->text(), ui->lineEditKNPass->text());
 }
 
 void DlgSongShopPurchase::on_cbxSaveAccount_stateChanged(int arg1)
@@ -374,6 +375,6 @@ void DlgSongShopPurchase::on_lineEditCCN_editingFinished()
 
 void DlgSongShopPurchase::downloadProgress(qint64 received, qint64 total)
 {
-    msgBoxInfo->setText("Downloading song...");
+    msgBoxInfo->setText(tr("Downloading song…"));
     msgBoxInfo->setProgress(received, total);
 }

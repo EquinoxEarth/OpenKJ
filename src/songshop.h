@@ -2,15 +2,9 @@
 #define SONGSHOP_H
 
 #include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QObject>
-#include <QUrl>
 #include "settings.h"
-#include <spdlog/spdlog.h>
-#include <spdlog/async_logger.h>
-#include "logging.h"
-
-std::ostream& operator<<(std::ostream& os, const QString& s);
+#include <spdlog/logger.h>
 
 class ShopSong
 {
@@ -25,54 +19,43 @@ public:
     bool operator == (const ShopSong r) const;
 };
 
-
-typedef QList<ShopSong> ShopSongs;
-
-
+using ShopSongs = QList<ShopSong>;
 
 class SongShop : public QObject
 {
     Q_OBJECT
+
 public:
-    explicit SongShop(QObject *parent = 0);
+    explicit SongShop(QObject *parent = nullptr, QNetworkAccessManager *network = nullptr);
     void updateCache();
     ShopSongs getSongs();
-    void knLogin(QString userName, QString password);
-    void knPurchase(QString songId, QString ccNumber, QString ccM, QString ccY, QString ccCVV);
-    bool loggedIn();
-    bool loginError() { return knLoginError; }
-    void setDlSongInfo(QString artist, QString title, QString songId);
-
-private:
-    std::string m_loggingPrefix{"[SongShop]"};
-    std::shared_ptr<spdlog::logger> m_logger;
-    QNetworkAccessManager *manager;
-    bool connectionReset;
-    bool songsLoaded;
-    ShopSongs songs;
-    QString knSessionId;
-    bool knLoginError;
-    void downloadFile(const QString &url, const QString &destFn);
-    QString dlArtist;
-    QString dlTitle;
-    QString dlSongId;
-    Settings m_settings;
+    void knLogin(const QString &userName, const QString &password);
+    void knPurchase(const QString &songId, const QString &artist, const QString &title,
+                    const QString &ccNumber, const QString &ccM, const QString &ccY, const QString &ccCVV);
 
 signals:
     void songUpdateStarted();
     void songsUpdated();
     void knLoginSuccess();
-    void knLoginFailure();
-    void karaokeSongDownloaded(QString path);
-    void paymentProcessingFailed();
+    void knLoginFailure(const QString &message);
+    void karaokeSongDownloaded(const QString &path);
+    void paymentProcessingFailed(const QString &message);
+    void downloadFailed(const QString &message);
     void downloadProgress(qint64 received, qint64 total);
 
-public slots:
+private:
+    std::shared_ptr<spdlog::logger> m_logger;
+    QNetworkAccessManager *m_network;
+    bool m_catalogLoading{false};
+    bool m_catalogLoaded{false};
+    bool m_loginPending{false};
+    bool m_purchasePending{false};
+    ShopSongs m_songs;
+    QString m_session;
+    Settings m_settings;
 
-private slots:
-    void onSslErrors(QNetworkReply * reply, QList<QSslError> errors);
-    void onNetworkReply(QNetworkReply* reply);
-    void onDownloadProgress(qint64 received, qint64 total);
+    void downloadFile(const QUrl &url, const QString &filename, bool zip);
+    void completeDownload(const QString &path, const QString &error);
 };
 
 #endif // SONGSHOP_H

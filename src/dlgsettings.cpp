@@ -221,8 +221,8 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     };
     connect(ui->spinBoxRecordingMic, &QSpinBox::valueChanged, this, updateMixLevels);
     connect(ui->spinBoxRecordingMusic, &QSpinBox::valueChanged, this, updateMixLevels);
-    ui->comboBoxUpdateBranch->addItem("Stable");
-    ui->comboBoxUpdateBranch->addItem("Development");
+    ui->comboBoxUpdateBranch->addItem(tr("Regular releases"));
+    ui->comboBoxUpdateBranch->addItem(tr("Include previews"));
     ui->cbxTheme->addItem("OS Native");
     ui->cbxTheme->addItem("Fusion Dark");
     ui->cbxTheme->addItem("Fusion Light");

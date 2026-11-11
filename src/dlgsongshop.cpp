@@ -43,6 +43,10 @@ void DlgSongShop::on_lineEditSearch_textChanged(const QString &arg1)
 
 void DlgSongShop::on_btnPurchase_clicked()
 {
+    if (dlgPurchase->isBusy()) {
+        dlgPurchase->show();
+        return;
+    }
     if (ui->tableViewSongs->selectionModel()->selectedIndexes().size() < 1)
         return;
     QModelIndex idx = ui->tableViewSongs->selectionModel()->selectedIndexes().at(0);

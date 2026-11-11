@@ -24,13 +24,15 @@ public:
     void setSongId(QString songId);
     void setPrice(QString price);
     void doAuth();
+    bool isBusy() const { return m_operation != Operation::Idle; }
 
 private slots:
     void on_pushButtonTestLogin_clicked();
     void knLoginSuccess();
-    void knLoginFailure();
-    void paymentProcessingFailed();
-    void purchaseSuccess();
+    void knLoginFailure(const QString &message);
+    void paymentProcessingFailed(const QString &message);
+    void purchaseSuccess(const QString &path);
+    void downloadFailed(const QString &message);
 
     void on_pushButtonCancel_clicked();
 
@@ -63,7 +65,9 @@ private:
     QString artist;
     QString title;
     std::shared_ptr<SongShop> shop;
-    bool knLoginTest;
+    enum class Operation { Idle, TestLogin, PurchaseLogin, Purchase };
+    Operation m_operation{Operation::Idle};
+    void setOperation(Operation operation);
     bool authenticated;
     QString password;
     bool setupDone;

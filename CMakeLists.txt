@@ -291,6 +291,10 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-logging-test PRIVATE Qt6::Core spdlog::spdlog)
     add_test(NAME logging COMMAND openkj-logging-test)
     set_tests_properties(logging PROPERTIES TIMEOUT 10)
+    add_executable(openkj-run-guard-test packaging/run_guard_test.cpp src/runguard/runguard.cpp)
+    target_link_libraries(openkj-run-guard-test PRIVATE Qt6::Core)
+    add_test(NAME run-guard COMMAND openkj-run-guard-test)
+    set_tests_properties(run-guard PROPERTIES TIMEOUT 20)
     add_executable(openkj-library-sort-test
         packaging/library_sort_test.cpp src/models/tablemodelkaraokesongs.cpp
         src/okjtypes.cpp src/settings.cpp src/simplecrypt.cpp src/resources.qrc)

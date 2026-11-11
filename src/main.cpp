@@ -275,12 +275,14 @@ int main(int argc, char *argv[]) {
 
     // RunGuard seems to be broken by flatpak, ignore it if running in a flatpak sandbox
     logger->info("App dir path {}", QCoreApplication::applicationDirPath().toStdString());
+    // Keep protection through the event loop and main-window teardown.
+    std::unique_ptr<RunGuard> guard;
     if (QCoreApplication::applicationDirPath() == "/app/bin") {
         logger->info("RunGuard disabled due to flatpak sandbox");
     } else {
         logger->debug("Checking for other instances");
-        RunGuard guard("SharedMemorySingleInstanceProtectorOpenKJ");
-        if (!guard.tryToRun()) {
+        guard = std::make_unique<RunGuard>("SharedMemorySingleInstanceProtectorOpenKJ");
+        if (!guard->tryToRun()) {
             QMessageBox msgBox;
             msgBox.setText("OpenKJ is already running!");
             msgBox.setInformativeText(

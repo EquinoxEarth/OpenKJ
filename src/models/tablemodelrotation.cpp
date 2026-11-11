@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 #include "logging.h"
 #include <chrono>
+#include <algorithm>
 
 std::ostream& operator<<(std::ostream& os, const QString& s);
 
@@ -663,6 +664,29 @@ const okj::RotationSinger &TableModelRotation::getSingerByName(const QString &na
     if (it == m_singers.end())
         return InvalidSinger;
     return *it;
+}
+
+QStringList TableModelRotation::upcomingSingerNames(int limit, bool includeEmpty) const
+{
+    QStringList names;
+    const int count = static_cast<int>(m_singers.size());
+    if (count == 0 || limit <= 0)
+        return names;
+
+    const auto current = std::find_if(m_singers.begin(), m_singers.end(), [this](const auto &singer) {
+        return singer.id == m_currentSingerId;
+    });
+    const int start = current == m_singers.end() ? 0
+        : (static_cast<int>(std::distance(m_singers.begin(), current)) + 1) % count;
+    names.reserve(qMin(limit, count));
+    // Follow playback order for one complete rotation, without repeating names.
+    // The current singer can appear at the end if another turn is queued.
+    for (int step = 0; step < count && names.size() < limit; ++step) {
+        const auto &singer = m_singers[(start + step) % count];
+        if (singer.isValid() && (includeEmpty || !singer.nextSongPath().isEmpty()))
+            names.append(singer.name);
+    }
+    return names;
 }
 
 size_t TableModelRotation::singerCount() {

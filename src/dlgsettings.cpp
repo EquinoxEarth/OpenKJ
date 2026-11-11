@@ -36,6 +36,11 @@
 #include <QTimer>
 #include <QScreen>
 #include <QSignalBlocker>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QScrollArea>
+#include <QSpinBox>
+#include <QVBoxLayout>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
@@ -222,6 +227,7 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     ui->checkBoxEnforceAspectRatio->setChecked(m_settings.enforceAspectRatio());
     ui->checkBoxTreatAllSingersAsRegs->setChecked(m_settings.treatAllSingersAsRegs());
     ui->cbxCrossFade->setChecked(m_settings.bmKCrossFade());
+    setupRotationDisplayPage();
     adjustSize();
     tickerFontChanged();
     tickerBgColorChanged();
@@ -282,6 +288,113 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     connect(ui->cbxRotShowNextSong, &QCheckBox::toggled, this, &DlgSettings::rotationShowNextSongChanged);
     setupHotkeysForm();
     m_pageSetupDone = true;
+}
+
+void DlgSettings::setupRotationDisplayPage()
+{
+    auto *page = new QWidget;
+    page->setObjectName("rotationDisplaySettingsPage");
+    auto *layout = new QVBoxLayout(page);
+    auto *help = new QLabel(tr("Use the Rotation Window button in the main window to show upcoming singers. "
+                              "Move it to your preferred screen, then double-click or press F11 for fullscreen. "
+                              "Escape leaves fullscreen."), page);
+    help->setWordWrap(true);
+    layout->addWidget(help);
+    auto *listGroup = new QGroupBox(tr("Upcoming singers"), page);
+    auto *listLayout = new QFormLayout(listGroup);
+    auto *count = new QSpinBox(listGroup);
+    count->setObjectName("spinBoxRotationDisplaySingers");
+    count->setRange(1, 20);
+    count->setValue(m_settings.rotationDisplaySingerCount());
+    count->setToolTip(tr("Maximum names shown after filtering. Each singer appears at most once."));
+    listLayout->addRow(tr("Number of singers to show"), count);
+    connect(count, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+        m_settings.setRotationDisplaySingerCount(value);
+        emit rotationDisplaySettingsChanged();
+    });
+    auto *empty = new QCheckBox(tr("Show empty singers on rotation display"), listGroup);
+    empty->setObjectName("checkBoxRotationDisplayEmptySingers");
+    empty->setChecked(m_settings.rotationDisplayShowEmptySingers());
+    listLayout->addRow(empty);
+    connect(empty, &QCheckBox::toggled, this, [this](bool checked) {
+        m_settings.setRotationDisplayShowEmptySingers(checked);
+        emit rotationDisplaySettingsChanged();
+    });
+    layout->addWidget(listGroup);
+    auto *videoGroup = new QGroupBox(tr("Karaoke display"), page);
+    auto *videoLayout = new QFormLayout(videoGroup);
+    auto *showVideo = new QCheckBox(tr("Show CDG/video on rotation display"), videoGroup);
+    showVideo->setObjectName("checkBoxRotationDisplayVideo");
+    showVideo->setChecked(m_settings.rotationDisplayVideoEnabled());
+    showVideo->setToolTip(tr("Shows the same karaoke lyrics or video as the singer window."));
+    videoLayout->addRow(showVideo);
+    auto *videoPosition = new QComboBox(videoGroup);
+    videoPosition->setObjectName("comboBoxRotationDisplayVideoPosition");
+    videoPosition->addItems({tr("Left of singer list"), tr("Right of singer list")});
+    videoPosition->setCurrentIndex(m_settings.rotationDisplayVideoOnLeft() ? 0 : 1);
+    videoPosition->setEnabled(showVideo->isChecked());
+    videoLayout->addRow(tr("CDG/video position"), videoPosition);
+    connect(showVideo, &QCheckBox::toggled, this, [this, videoPosition](bool checked) {
+        m_settings.setRotationDisplayVideoEnabled(checked);
+        videoPosition->setEnabled(checked);
+        emit rotationDisplaySettingsChanged();
+    });
+    connect(videoPosition, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+        m_settings.setRotationDisplayVideoOnLeft(index == 0);
+        emit rotationDisplaySettingsChanged();
+    });
+    layout->addWidget(videoGroup);
+    auto *appearance = new QGroupBox(tr("Appearance"), page);
+    auto *appearanceLayout = new QFormLayout(appearance);
+    auto *heading = new QCheckBox(tr("Show ‘Up Next’ heading"), appearance);
+    heading->setObjectName("checkBoxRotationDisplayHeading");
+    heading->setChecked(m_settings.rotationDisplayShowHeading());
+    appearanceLayout->addRow(heading);
+    connect(heading, &QCheckBox::toggled, this, [this](bool checked) {
+        m_settings.setRotationDisplayShowHeading(checked);
+        emit rotationDisplaySettingsChanged();
+    });
+    auto *fontButton = new QPushButton(m_settings.rotationDisplayFont().family(), appearance);
+    appearanceLayout->addRow(tr("Font (scales down to fit)"), fontButton);
+    connect(fontButton, &QPushButton::clicked, this, [this, fontButton] {
+        bool accepted = false;
+        const auto font = QFontDialog::getFont(&accepted, m_settings.rotationDisplayFont(), this);
+        if (accepted) {
+            m_settings.setRotationDisplayFont(font);
+            fontButton->setText(font.family());
+            emit rotationDisplaySettingsChanged();
+        }
+    });
+    for (bool background : {false, true}) {
+        auto *button = new QPushButton(appearance);
+        const auto updateButton = [button](const QColor &color) {
+            QPixmap swatch(20, 20);
+            swatch.fill(color);
+            button->setIcon(QIcon(swatch));
+            button->setText(color.name());
+        };
+        updateButton(background ? m_settings.rotationDisplayBackgroundColor() : m_settings.rotationDisplayTextColor());
+        appearanceLayout->addRow(background ? tr("Background colour") : tr("Text colour"), button);
+        connect(button, &QPushButton::clicked, this, [this, background, updateButton] {
+            const auto current = background ? m_settings.rotationDisplayBackgroundColor() : m_settings.rotationDisplayTextColor();
+            const auto color = QColorDialog::getColor(current, this);
+            if (!color.isValid())
+                return;
+            if (background)
+                m_settings.setRotationDisplayBackgroundColor(color);
+            else
+                m_settings.setRotationDisplayTextColor(color);
+            updateButton(color);
+            emit rotationDisplaySettingsChanged();
+        });
+    }
+    layout->addWidget(appearance);
+    layout->addStretch();
+    auto *scroll = new QScrollArea(ui->tabWidgetMain);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(page);
+    ui->tabWidgetMain->addTab(scroll, tr("Rotation Display"));
 }
 
 DlgSettings::~DlgSettings() {

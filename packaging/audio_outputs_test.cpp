@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QSlider>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -135,6 +136,52 @@ static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType 
     }
 }
 
+static void checkSharedVideoFrames(const QString &audioFilename, const QString &cdgFilename)
+{
+    VideoDisplay singer, preview, rotation;
+    for (auto *view : {&singer, &preview, &rotation})
+        view->resize(300, 216);
+    MediaBackend backend(nullptr, "Shared karaoke video test", MediaBackend::Karaoke);
+    backend.setAudioOutputDevice("Test Speakers");
+    backend.setUseFader(false);
+    backend.setUseSilenceDetection(false);
+    backend.setVideoOutputWidgets({&singer, &preview, &rotation});
+    QSignalSpy frames(&backend, &MediaBackend::frameReady);
+    backend.setMediaCdg(cdgFilename, audioFilename);
+    backend.play();
+    waitFor([&] {
+        return frames.size() >= 3 && singer.hasActiveVideo() && preview.hasActiveVideo() && rotation.hasActiveVideo();
+    }, 5000, "All three outputs must receive decoded CDG frames, including hidden views");
+    const auto matchingFrames = [&] {
+        const auto image = singer.grab().toImage();
+        return image == preview.grab().toImage() && image == rotation.grab().toImage();
+    };
+    backend.pause();
+    waitFor([&] { return backend.state() == MediaBackend::PausedState; }, 2000, "CDG playback must pause");
+    QTest::qWait(100);
+    require(matchingFrames(), "Paused CDG frames must match on all outputs");
+    const auto pausedImage = rotation.grab().toImage();
+    rotation.show();
+    QTest::qWait(40);
+    require(rotation.grab().toImage() == pausedImage, "Enabling a hidden view while paused must retain the current frame");
+    const auto beforeSeek = frames.size();
+    backend.setPosition(1500);
+    backend.play();
+    waitFor([&] { return frames.size() > beforeSeek && backend.position() >= 1400; }, 5000,
+            "Playback must resume with decoded frames after seeking");
+    backend.pause();
+    QTest::qWait(100);
+    require(matchingFrames(), "CDG outputs must still match after a seek");
+    // A frame queued just before Stop must not resurrect any of the views.
+    QImage lateFrame(300, 216, QImage::Format_RGB888);
+    lateFrame.fill(Qt::red);
+    backend.frameReady(lateFrame, frames.last().at(1).toULongLong());
+    backend.rawStop();
+    QTest::qWait(40);
+    require(!singer.hasActiveVideo() && !preview.hasActiveVideo() && !rotation.hasActiveVideo(),
+            "Stop must clear all outputs and reject late queued frames");
+}
+
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
@@ -227,7 +274,19 @@ int main(int argc, char **argv)
         settings.setAudioOutputDeviceBm("Test Speakers");
         checkStopAndVolume(filename, MediaBackend::Karaoke);
         checkStopAndVolume(filename, MediaBackend::BackgroundMusic);
-        std::puts("Audio output routing, stop/volume, and fade checks passed");
+        const auto cdgFilename = temporary.filePath("shared-video.cdg");
+        {
+            QFile cdg(cdgFilename);
+            require(cdg.open(QIODevice::WriteOnly), "Cannot create test CDG");
+            QByteArray packets(24 * 300 * 30, '\0');
+            for (int i = 0; i < 300 * 30; ++i) {
+                packets[i * 24] = 9;
+                packets[i * 24 + 1] = 1; // Memory preset, as in the standalone CDG runtime check.
+            }
+            require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
+        }
+        checkSharedVideoFrames(filename, cdgFilename);
+        std::puts("Audio routing, stop/volume, fades, and shared CDG video checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

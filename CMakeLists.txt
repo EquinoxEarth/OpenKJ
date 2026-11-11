@@ -125,6 +125,8 @@ set(SOURCE_FILES
         src/dlgregularsingers.cpp
         src/dlgsettings.cpp
         src/dlgcdg.cpp
+        src/rotationdisplay.cpp
+        src/rotationdisplay.h
         src/models/tablemodelbreaksongs.cpp
         src/models/tablemodelcustomnamingpatterns.cpp
         src/models/tablemodelhistorysingers.cpp
@@ -360,6 +362,15 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         Qt6::Svg Qt6::Concurrent spdlog::spdlog)
     add_test(NAME add-song-dialog COMMAND openkj-add-song-dialog-test)
     set_tests_properties(add-song-dialog PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-rotation-display-test
+        packaging/rotation_display_test.cpp src/rotationdisplay.cpp
+        src/videodisplay.cpp src/xbrz.cpp
+        src/models/tablemodelrotation.cpp src/okjtypes.cpp src/settings.cpp src/simplecrypt.cpp
+        src/resources.qrc)
+    target_link_libraries(openkj-rotation-display-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
+        Qt6::Svg Qt6::Multimedia spdlog::spdlog)
+    add_test(NAME rotation-display COMMAND openkj-rotation-display-test)
+    set_tests_properties(rotation-display PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux" OR ${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")

@@ -413,6 +413,121 @@ int Settings::cdgWindowFullScreenMonitor()
     return valid && monitor >= 0 && monitor <= defaultMonitor ? monitor : defaultMonitor;
 }
 
+bool Settings::rotationDisplayVisible() const
+{
+    return !m_safeStartupMode && settings->value("rotationDisplay/visible", false).toBool();
+}
+
+void Settings::setRotationDisplayVisible(bool visible)
+{
+    settings->setValue("rotationDisplay/visible", visible);
+}
+
+bool Settings::rotationDisplayFullscreen() const
+{
+    return settings->value("rotationDisplay/fullscreen", false).toBool();
+}
+
+void Settings::setRotationDisplayFullscreen(bool fullscreen)
+{
+    settings->setValue("rotationDisplay/fullscreen", fullscreen);
+}
+
+QByteArray Settings::rotationDisplayGeometry() const
+{
+    return m_safeStartupMode ? QByteArray{} : settings->value("rotationDisplay/geometry").toByteArray();
+}
+
+void Settings::setRotationDisplayGeometry(const QByteArray &geometry)
+{
+    settings->setValue("rotationDisplay/geometry", geometry);
+}
+
+int Settings::rotationDisplaySingerCount() const
+{
+    return qBound(1, settings->value("rotationDisplay/singerCount", 5).toInt(), 20);
+}
+
+void Settings::setRotationDisplaySingerCount(int count)
+{
+    settings->setValue("rotationDisplay/singerCount", qBound(1, count, 20));
+}
+
+bool Settings::rotationDisplayShowEmptySingers() const
+{
+    return settings->value("rotationDisplay/showEmptySingers", false).toBool();
+}
+
+void Settings::setRotationDisplayShowEmptySingers(bool show)
+{
+    settings->setValue("rotationDisplay/showEmptySingers", show);
+}
+
+bool Settings::rotationDisplayVideoEnabled() const
+{
+    return settings->value("rotationDisplay/videoEnabled", true).toBool();
+}
+
+void Settings::setRotationDisplayVideoEnabled(bool enabled)
+{
+    settings->setValue("rotationDisplay/videoEnabled", enabled);
+}
+
+bool Settings::rotationDisplayVideoOnLeft() const
+{
+    return settings->value("rotationDisplay/videoOnLeft", true).toBool();
+}
+
+void Settings::setRotationDisplayVideoOnLeft(bool left)
+{
+    settings->setValue("rotationDisplay/videoOnLeft", left);
+}
+
+bool Settings::rotationDisplayShowHeading() const
+{
+    return settings->value("rotationDisplay/showHeading", true).toBool();
+}
+
+void Settings::setRotationDisplayShowHeading(bool show)
+{
+    settings->setValue("rotationDisplay/showHeading", show);
+}
+
+QFont Settings::rotationDisplayFont() const
+{
+    QFont font = QApplication::font();
+    font.setPointSize(48);
+    font.fromString(settings->value("rotationDisplay/font", font.toString()).toString());
+    return font;
+}
+
+void Settings::setRotationDisplayFont(const QFont &font)
+{
+    settings->setValue("rotationDisplay/font", font.toString());
+}
+
+QColor Settings::rotationDisplayTextColor() const
+{
+    return settings->value("rotationDisplay/textColor", QColor("#f1f5f9")).value<QColor>();
+}
+
+void Settings::setRotationDisplayTextColor(const QColor &color)
+{
+    if (color.isValid())
+        settings->setValue("rotationDisplay/textColor", color);
+}
+
+QColor Settings::rotationDisplayBackgroundColor() const
+{
+    return settings->value("rotationDisplay/backgroundColor", QColor("#101820")).value<QColor>();
+}
+
+void Settings::setRotationDisplayBackgroundColor(const QColor &color)
+{
+    if (color.isValid())
+        settings->setValue("rotationDisplay/backgroundColor", color);
+}
+
 void Settings::saveWindowState(QWidget *window)
 {
     settings->beginGroup(window->objectName());

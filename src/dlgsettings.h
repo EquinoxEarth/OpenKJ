@@ -57,6 +57,7 @@ private:
     QStringList audioOutputDevices;
     void updateBreakMusicOutput();
     void setupHotkeysForm();
+    void setupRotationDisplayPage();
     struct KeyboardShortcut
     {
         QString description;
@@ -72,6 +73,7 @@ public:
     ~DlgSettings() override;
 
 signals:
+    void rotationDisplaySettingsChanged();
     void audioUseFaderChanged(bool);
     void audioUseFaderChangedBm(bool);
     void audioSilenceDetectChanged(bool);

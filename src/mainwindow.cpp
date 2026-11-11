@@ -690,6 +690,7 @@ MainWindow::MainWindow(QWidget *parent) :
     }
     ui->videoPreview->setFillOnPaint(true);
     cdgWindow = std::make_unique<DlgCdg>(m_mediaBackendKar, m_mediaBackendBm, nullptr, Qt::Window);
+    m_rotationDisplay = std::make_unique<RotationDisplay>(m_rotModel);
     ui->tableViewDB->hideColumn(TableModelKaraokeSongs::COL_ID);
     ui->tableViewDB->hideColumn(TableModelKaraokeSongs::COL_FILENAME);
     ui->tableViewQueue->hideColumn(TableModelQueueSongs::COL_ID);
@@ -746,7 +747,10 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->labelVolumeBm->setPixmap(QIcon::fromTheme("player-volume").pixmap(QSize(22, 22)));
     updateIcons();
 
-    std::vector<QWidget *> videoWidgets{cdgWindow->getVideoDisplay(), ui->videoPreview};
+    // Keep the extra view registered even when hidden, so enabling it during
+    // a pause shows the retained frame without changing the playback sink.
+    std::vector<QWidget *> videoWidgets{cdgWindow->getVideoDisplay(), ui->videoPreview,
+                                       m_rotationDisplay->videoDisplay()};
     m_mediaBackendBm.setVideoOutputWidgets({cdgWindow->getVideoDisplayBm(), ui->videoPreviewBm});
     m_mediaBackendKar.setVideoOutputWidgets(videoWidgets);
     m_settings.setStartupOk(true);
@@ -884,6 +888,13 @@ void MainWindow::loadSettings() {
 }
 
 void MainWindow::setupConnections() {
+    connect(ui->btnToggleRotationWindow, &QPushButton::toggled,
+            m_rotationDisplay.get(), &RotationDisplay::setDisplayVisible);
+    connect(m_rotationDisplay.get(), &RotationDisplay::visibilityChanged, this, [this](bool visible) {
+        const QSignalBlocker blocker(ui->btnToggleRotationWindow);
+        ui->btnToggleRotationWindow->setChecked(visible);
+    });
+    m_rotationDisplay->setDisplayVisible(m_settings.rotationDisplayVisible());
     connect(cdgWindow.get(), &DlgCdg::visibilityChanged, ui->btnToggleCdgWindow, &QPushButton::setChecked);
     connect(ui->comboBoxHistoryDblClick, QOverload<int>::of(&QComboBox::currentIndexChanged), &m_settings,
             &Settings::setHistoryDblClickAction);
@@ -1972,6 +1983,8 @@ void MainWindow::actionSettingsTriggered() {
     connect(settingsDialog, &DlgSettings::tickerSpeedChanged, cdgWindow.get(), &DlgCdg::tickerSpeedChanged);
     connect(settingsDialog, &DlgSettings::tickerTextColorChanged, cdgWindow.get(), &DlgCdg::tickerTextColorChanged);
     connect(settingsDialog, &DlgSettings::tickerOutputModeChanged, this, &MainWindow::rotationDataChanged);
+    connect(settingsDialog, &DlgSettings::rotationDisplaySettingsChanged,
+            m_rotationDisplay.get(), &RotationDisplay::applySettings);
     connect(settingsDialog, &DlgSettings::tickerCustomStringChanged, this, &MainWindow::rotationDataChanged);
     connect(settingsDialog, &DlgSettings::shortcutsChanged, this, &MainWindow::shortcutsUpdated);
 
@@ -2088,6 +2101,7 @@ void MainWindow::karaokeMediaBackend_durationChanged(const qint64 &duration) {
 void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &state) {
     if (m_shuttingDown)
         return;
+    m_rotationDisplay->setCurrentSinger(m_curSinger, state == MediaBackend::PlayingState);
     if (state == MediaBackend::StoppedState) {
         m_logger->info("{} MainWindow - audio backend state is now STOPPED", m_loggingPrefix);
         // Duration queries can reset the label before a terminal state arrives.
@@ -2209,6 +2223,7 @@ void MainWindow::hasActiveVideoChanged() {
     ui->videoPreview->setHasActiveVideo(m_kHasActiveVideo);
     ui->videoPreviewBm->setHasActiveVideo(m_bmHasActiveVideo);
     cdgWindow->getVideoDisplay()->setHasActiveVideo(m_kHasActiveVideo);
+    m_rotationDisplay->videoDisplay()->setHasActiveVideo(m_kHasActiveVideo);
     cdgWindow->getVideoDisplayBm()->setHasActiveVideo(m_bmHasActiveVideo);
     if (m_timerKaraokeAA.isActive() && m_settings.karaokeAAAlertEnabled())
         return;
@@ -3358,6 +3373,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             return;
         }
     }
+    m_rotationDisplay->saveForShutdown();
     if (!m_settings.cdgWindowFullscreen())
         m_settings.saveWindowState(cdgWindow.get());
     m_settings.setShowCdgWindow(cdgWindow->isVisible());

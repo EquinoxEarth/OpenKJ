@@ -13,6 +13,7 @@
 #include "dlgsettings.h"
 #include "mediabackend.h"
 #include "dlgcdg.h"
+#include "rotationdisplay.h"
 #include "settings.h"
 #include "dlgregularsingers.h"
 #include "dlgregularexport.h"
@@ -97,6 +98,7 @@ private:
     std::unique_ptr<QSqlTableModel> m_tableModelPlaylists;
     ItemDelegatePlaylistSongs m_itemDelegatePlSongs{this};
     std::unique_ptr<DlgCdg> cdgWindow;
+    std::unique_ptr<RotationDisplay> m_rotationDisplay;
     std::unique_ptr<DlgDatabase> dbDialog;
     std::unique_ptr<DlgKeyChange> dlgKeyChange;
     std::unique_ptr<DlgRequests> requestsDialog;

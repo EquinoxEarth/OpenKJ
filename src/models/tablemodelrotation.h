@@ -73,6 +73,7 @@ public:
     [[nodiscard]] size_t singerCount();
     [[nodiscard]] bool singerExists(const QString &name) const;
     [[nodiscard]] QStringList singers() const;
+    [[nodiscard]] QStringList upcomingSingerNames(int limit, bool includeEmpty) const;
     [[nodiscard]] int singerTurnDistance(int singerId) const;
     void loadData();
     void commitChanges();

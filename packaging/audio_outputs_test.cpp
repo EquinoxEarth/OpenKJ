@@ -6,9 +6,12 @@
 #include <QFile>
 #include <QSlider>
 #include <QSignalSpy>
+#include <QPointer>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUuid>
 #include <cstdio>
 #include <stdexcept>
 
@@ -79,6 +82,62 @@ static void waitFor(Predicate predicate, int timeout, const char *message)
     while (!predicate() && timer.elapsed() < timeout)
         QTest::qWait(20);
     require(predicate(), message);
+}
+
+static void checkSettingsOwnershipAndPersistence()
+{
+    require(QStandardPaths::isTestModeEnabled(), "Settings checks require isolated test-mode paths");
+    QPointer<QSettings> storage;
+    QString path;
+    QSettings::Format format = QSettings::IniFormat;
+    const auto token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto key = "tests/settingsOwnership/" + token;
+    {
+        Settings owner;
+        storage = owner.findChild<QSettings *>(QString(), Qt::FindDirectChildrenOnly);
+        require(storage && storage->parent() == &owner, "Settings must own its QSettings object");
+        path = storage->fileName();
+        format = storage->format();
+        storage->setValue(key, token);
+        storage->sync();
+        require(storage->status() == QSettings::NoError, "Test settings must be writable");
+    }
+    require(storage.isNull(), "Destroying Settings must release its QSettings object");
+    QSettings reloaded(path, format);
+    const auto cleanup = qScopeGuard([&] { reloaded.remove(key); reloaded.sync(); });
+    require(reloaded.value(key).toString() == token, "Settings must survive destruction and reopening");
+    QFile saved(path);
+    require(saved.open(QIODevice::ReadOnly) && saved.readAll().contains(token.toUtf8()),
+            "Settings must actually be written to disk");
+}
+
+static void checkVideoSettingsReuse()
+{
+    VideoDisplay view;
+    view.resize(600, 432);
+    auto *owner = view.findChild<Settings *>(QString(), Qt::FindDirectChildrenOnly);
+    require(owner, "Each video view must retain one Settings instance");
+    QPointer<QSettings> storage = owner->findChild<QSettings *>(QString(), Qt::FindDirectChildrenOnly);
+    require(storage, "The video view's settings storage must be owned");
+    Settings controls;
+    const bool original = controls.cdgPrescalingEnabled();
+    const auto restore = qScopeGuard([&] { controls.setCdgPrescalingEnabled(original); });
+    QImage frame(300, 216, QImage::Format_RGB888);
+    for (int y = 0; y < frame.height(); ++y)
+        for (int x = 0; x < frame.width(); ++x)
+            frame.setPixelColor(x, y, x < y ? Qt::white : Qt::black);
+    view.updateFrame(frame);
+    controls.setCdgPrescalingEnabled(false);
+    const auto ordinary = view.grab().toImage();
+    controls.setCdgPrescalingEnabled(true);
+    const auto prescaled = view.grab().toImage();
+    controls.setCdgPrescalingEnabled(false);
+    require(ordinary == view.grab().toImage(), "Prescaling changes must remain reversible on an existing view");
+    require(ordinary != prescaled, "An existing view must observe a changed CDG prescaling preference");
+    for (int paint = 0; paint < 100; ++paint)
+        view.grab();
+    require(view.findChildren<Settings *>(QString(), Qt::FindDirectChildrenOnly).size() == 1 && storage,
+            "Repainting must retain the same settings owner and storage");
 }
 
 static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType type)
@@ -203,6 +262,8 @@ int main(int argc, char **argv)
     gst_device_provider_register(nullptr, "testaudio", GST_RANK_PRIMARY,
                                  test_audio_provider_get_type());
     try {
+        checkSettingsOwnershipAndPersistence();
+        checkVideoSettingsReuse();
         Settings settings;
         settings.setAudioOutputDevice("Default");
         settings.setAudioOutputDeviceBm("Default");
@@ -286,7 +347,7 @@ int main(int argc, char **argv)
             require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
         }
         checkSharedVideoFrames(filename, cdgFilename);
-        std::puts("Audio routing, stop/volume, fades, and shared CDG video checks passed");
+        std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and shared CDG checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

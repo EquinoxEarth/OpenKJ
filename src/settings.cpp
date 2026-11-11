@@ -367,7 +367,7 @@ Settings::Settings(QObject *parent) :
     {
         khDir.mkpath(khDir.absolutePath());
     }
-    settings = new QSettings(khDir.absolutePath() + QDir::separator() + "openkj.ini", QSettings::IniFormat);
+    settings = new QSettings(khDir.absolutePath() + QDir::separator() + "openkj.ini", QSettings::IniFormat, this);
 #endif
 }
 

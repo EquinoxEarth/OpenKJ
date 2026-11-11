@@ -1,6 +1,7 @@
 #ifndef CDGDISPLAY_H
 #define CDGDISPLAY_H
 
+#include "settings.h"
 #include <QWidget>
 #include <QBoxLayout>
 #include <QResizeEvent>
@@ -12,6 +13,7 @@ class VideoDisplay : public QWidget
 {
     Q_OBJECT
 private:
+    Settings m_settings{this};
     QPixmap m_currentBg;
     bool m_useDefaultBg{true};
     bool m_hasActiveVideo { false };

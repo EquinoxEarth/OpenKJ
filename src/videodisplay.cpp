@@ -2,7 +2,6 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QSvgRenderer>
-#include "settings.h"
 #include "xbrz.h"
 
 VideoDisplay::VideoDisplay(QWidget *parent) : QWidget(parent)
@@ -73,9 +72,8 @@ void VideoDisplay::paintEvent(QPaintEvent *event)
     if (m_hasActiveVideo && !m_currentFrame.isNull())
     {
         painter.fillRect(event->rect(), Qt::black);
-        Settings settings;
         QImage scaled;
-        if (m_currentFrame.width() == 300 && m_currentFrame.height() == 216 && settings.cdgPrescalingEnabled())
+        if (m_currentFrame.width() == 300 && m_currentFrame.height() == 216 && m_settings.cdgPrescalingEnabled())
         {
             QSize targetSize = m_currentFrame.size().scaled(size(), Qt::KeepAspectRatio);
             int factor = std::min(targetSize.width() / 300, targetSize.height() / 216);

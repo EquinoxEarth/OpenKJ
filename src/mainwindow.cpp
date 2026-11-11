@@ -471,17 +471,15 @@ void MainWindow::treatAllSingersAsRegsChanged(bool enabled) {
     autosizeRotationCols();
 }
 
-MainWindow::MainWindow(QWidget *parent) :
+MainWindow::MainWindow(const QSqlDatabase &database, QWidget *parent) :
         QMainWindow(parent),
         ui(new Ui::MainWindow),
+        m_database(database),
         rng(std::mt19937_64(std::chrono::system_clock::now().time_since_epoch().count())){
     m_logger = spdlog::get("logger");
 #ifdef _MSC_VER
     timeBeginPeriod(1);
 #endif
-    QCoreApplication::setOrganizationName("OpenKJ");
-    QCoreApplication::setOrganizationDomain("OpenKJ.org");
-    QCoreApplication::setApplicationName("OpenKJ");
     ui->setupUi(this);
     setMouseTracking(true);
     m_songShop = std::make_unique<SongShop>(this);
@@ -522,11 +520,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->sliderBmVolume->setMaximumWidth(12);
     ui->sliderProgress->setMaximumHeight(12);
 #endif
-    QDir okjDataDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
-    if (!okjDataDir.exists()) {
-        okjDataDir.mkpath(okjDataDir.absolutePath());
-    }
-    dbInit(okjDataDir);
+    initDatabaseWorker();
     ui->videoPreviewBm->hide();
     ui->pushButtonKeyDn->setEnabled(false);
     ui->pushButtonKeyUp->setEnabled(false);
@@ -1154,117 +1148,9 @@ void MainWindow::tableViewQueueSelChanged() {
     }
 }
 
-void MainWindow::dbInit(const QDir &okjDataDir) {
-    m_database = QSqlDatabase(QSqlDatabase::addDatabase("QSQLITE"));
-    m_database.setDatabaseName(okjDataDir.absolutePath() + QDir::separator() + "openkj.sqlite");
-    m_database.open();
-    QSqlQuery query(
-            "CREATE TABLE IF NOT EXISTS dbSongs ( songid INTEGER PRIMARY KEY AUTOINCREMENT, Artist COLLATE NOCASE, Title COLLATE NOCASE, DiscId COLLATE NOCASE, 'Duration' INTEGER, path VARCHAR(700) NOT NULL UNIQUE, filename COLLATE NOCASE, searchstring TEXT)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS rotationSingers ( singerid INTEGER PRIMARY KEY AUTOINCREMENT, name COLLATE NOCASE UNIQUE, 'position' INTEGER NOT NULL, 'regular' LOGICAL DEFAULT(0), 'regularid' INTEGER)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS queueSongs ( qsongid INTEGER PRIMARY KEY AUTOINCREMENT, singer INT, song INTEGER NOT NULL, artist INT, title INT, discid INT, path INT, keychg INT, played LOGICAL DEFAULT(0), 'position' INT)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS regularSingers ( regsingerid INTEGER PRIMARY KEY AUTOINCREMENT, Name COLLATE NOCASE UNIQUE, ph1 INT, ph2 INT, ph3 INT)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS regularSongs ( regsongid INTEGER PRIMARY KEY AUTOINCREMENT, regsingerid INTEGER NOT NULL, songid INTEGER NOT NULL, 'keychg' INTEGER, 'position' INTEGER)");
-    query.exec("CREATE TABLE IF NOT EXISTS sourceDirs ( path VARCHAR(255) UNIQUE, pattern INTEGER)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS bmsongs ( songid INTEGER PRIMARY KEY AUTOINCREMENT, Artist COLLATE NOCASE, Title COLLATE NOCASE, path VARCHAR(700) NOT NULL UNIQUE, Filename COLLATE NOCASE, Duration TEXT, searchstring TEXT)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS bmplaylists ( playlistid INTEGER PRIMARY KEY AUTOINCREMENT, title COLLATE NOCASE NOT NULL UNIQUE)");
-    query.exec(
-            "CREATE TABLE IF NOT EXISTS bmplsongs ( plsongid INTEGER PRIMARY KEY AUTOINCREMENT, playlist INT, position INT, Artist INT, Title INT, Filename INT, Duration INT, path INT)");
-    query.exec("CREATE TABLE IF NOT EXISTS bmsrcdirs ( path NOT NULL)");
-    query.exec("PRAGMA synchronous=OFF");
-    query.exec("PRAGMA cache_size=300000");
-    query.exec("PRAGMA temp_store=2");
-
-    int schemaVersion = 0;
-    query.exec("PRAGMA user_version");
-    if (query.first())
-        schemaVersion = query.value(0).toInt();
-    m_logger->info("{} Database schema version: {}", m_loggingPrefix, schemaVersion);
-
-    if (schemaVersion < 100) {
-        m_logger->info("{} Updating database schema to version 101", m_loggingPrefix);
-        query.exec("ALTER TABLE sourceDirs ADD COLUMN custompattern INTEGER");
-        query.exec("PRAGMA user_version = 100");
-        m_logger->info("{} DB Schema update to v100 completed", m_loggingPrefix);
-    }
-    if (schemaVersion < 101) {
-        m_logger->info("{} Updating database schema to version 101", m_loggingPrefix);
-        query.exec(
-                "CREATE TABLE custompatterns ( patternid INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, artistregex TEXT, artistcapturegrp INT, titleregex TEXT, titlecapturegrp INT, discidregex TEXT, discidcapturegrp INT)");
-        query.exec("PRAGMA user_version = 101");
-        m_logger->info("{} DB Schema update to v101 completed", m_loggingPrefix);
-    }
-    if (schemaVersion < 102) {
-        m_logger->info("{} Updating database schema to version 102", m_loggingPrefix);
-        query.exec("CREATE UNIQUE INDEX idx_path ON dbsongs(path)");
-        query.exec("PRAGMA user_version = 102");
-        m_logger->info("{} DB Schema update to v102 completed", m_loggingPrefix);
-    }
-    if (schemaVersion < 103) {
-        m_logger->info("{} Updating database schema to version 103", m_loggingPrefix);
-        query.exec("ALTER TABLE dbsongs ADD COLUMN searchstring TEXT");
-        query.exec("UPDATE dbsongs SET searchstring = filename || ' ' || artist || ' ' || title || ' ' || discid");
-        query.exec("PRAGMA user_version = 103");
-        m_logger->info("{} DB Schema update to v103 completed", m_loggingPrefix);
-
-    }
-    if (schemaVersion < 105) {
-        m_logger->info("{} Updating database schema to version 105", m_loggingPrefix);
-        query.exec("ALTER TABLE rotationSingers ADD COLUMN addts TIMESTAMP");
-        query.exec("PRAGMA user_version = 105");
-        m_logger->info("{} DB Schema update to v105 completed", m_loggingPrefix);
-    }
-    if (schemaVersion < 106) {
-        m_logger->info("{} Updating database schema to version 106", m_loggingPrefix);
-        query.exec(
-                "CREATE TABLE dbSongHistory ( id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT, artist TEXT, title TEXT, songid TEXT, timestamp TIMESTAMP)");
-        query.exec("CREATE INDEX idx_filepath ON dbSongHistory(filepath)");
-        query.exec("ALTER TABLE dbsongs ADD COLUMN plays INT DEFAULT(0)");
-        query.exec("ALTER TABLE dbsongs ADD COLUMN lastplay TIMESTAMP");
-        query.exec("CREATE TABLE historySingers(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)");
-        query.exec(
-                "CREATE TABLE historySongs(id INTEGER PRIMARY KEY AUTOINCREMENT, historySinger INT NOT NULL, filepath TEXT NOT NULL, artist TEXT, title TEXT, songid TEXT, keychange INT DEFAULT(0), plays INT DEFAULT(0), lastplay TIMESTAMP)");
-        query.exec("CREATE INDEX idx_historySinger on historySongs(historySinger)");
-        query.exec("PRAGMA user_version = 106");
-        m_logger->info("{} DB Schema update to v106 completed", m_loggingPrefix);
-        m_logger->info("{} Importing old regular singers data into singer history", m_loggingPrefix);
-        QSqlQuery songImportQuery;
-        songImportQuery.prepare(
-                "INSERT INTO historySongs (historySinger, filepath, artist, title, songid, keychange) values(:historySinger, :filepath, :artist, :title, :songid, :keychange)");
-        QSqlQuery singersQuery;
-        singersQuery.exec("SELECT regsingerid,name FROM regularSingers");
-        while (singersQuery.next()) {
-            m_logger->info("{} Running import for singer: {}", m_loggingPrefix,
-                           singersQuery.value("name").toString().toStdString());
-            QSqlQuery songsQuery;
-            songsQuery.exec(
-                    "SELECT dbsongs.artist,dbsongs.title,dbsongs.discid,regularsongs.keychg,dbsongs.path FROM regularsongs,dbsongs WHERE dbsongs.songid == regularsongs.songid AND regularsongs.regsingerid == " +
-                    singersQuery.value("regsingerid").toString() + " ORDER BY regularsongs.position");
-            while (songsQuery.next()) {
-                m_logger->info("{} Importing song: {}", m_loggingPrefix, songsQuery.value(4).toString().toStdString());
-                m_historySongsModel.saveSong(
-                        singersQuery.value("name").toString(),
-                        songsQuery.value(4).toString(),
-                        songsQuery.value(0).toString(),
-                        songsQuery.value(1).toString(),
-                        songsQuery.value(2).toString(),
-                        songsQuery.value(3).toInt()
-                );
-            }
-            m_logger->info("{} Import complete for singer: {}", m_loggingPrefix,
-                           singersQuery.value("name").toString().toStdString());
-        }
-    }
-
-    // Initialize background DatabaseWorker thread
-    QString dbPath = okjDataDir.absolutePath() + QDir::separator() + "openkj.sqlite";
+void MainWindow::initDatabaseWorker() {
     m_dbThread = new QThread(this);
-    m_dbWorker = new DatabaseWorker(dbPath);
+    m_dbWorker = new DatabaseWorker(m_database.databaseName());
     m_dbWorker->moveToThread(m_dbThread);
 
     connect(m_dbThread, &QThread::started, m_dbWorker, &DatabaseWorker::init);

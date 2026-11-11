@@ -160,6 +160,7 @@ private:
     std::shared_ptr<QTemporaryDir> m_preparedPlaybackDir;
     std::shared_ptr<std::atomic_bool> m_mediaPreparationCancelled;
     void cancelMediaPreparation();
+    void initDatabaseWorker();
     struct KaraokePlaybackRequest {
         okj::QueueSong song;
         bool trackSong{true};
@@ -203,7 +204,7 @@ private:
     void refreshSfxButtons();
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(const QSqlDatabase &database, QWidget *parent = nullptr);
     ~MainWindow() override;
 
 private slots:
@@ -344,7 +345,6 @@ private slots:
 protected:
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
-    void dbInit(const QDir &okjDataDir);
     void tableViewQueueSelChanged();
     void tableViewPlaylistSelectionChanged();
     void tableViewRotationSelChanged();

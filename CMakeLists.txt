@@ -176,6 +176,7 @@ set(SOURCE_FILES
         src/durationlazyupdater.cpp
         src/idledetect.cpp
         src/databaseworker.cpp
+        src/databaseschema.cpp
         src/mainwindow.h
         src/dlgaddsong.h
         src/dlgvideopreview.h
@@ -243,6 +244,7 @@ set(SOURCE_FILES
         src/durationlazyupdater.h
         src/idledetect.h
         src/databaseworker.h
+        src/databaseschema.h
         src/mainwindow.ui
         src/dlgaddsong.ui
         src/dlgkeychange.ui
@@ -295,6 +297,10 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-logging-test PRIVATE Qt6::Core spdlog::spdlog)
     add_test(NAME logging COMMAND openkj-logging-test)
     set_tests_properties(logging PROPERTIES TIMEOUT 10)
+    add_executable(openkj-database-schema-test packaging/database_schema_test.cpp src/databaseschema.cpp)
+    target_link_libraries(openkj-database-schema-test PRIVATE Qt6::Test Qt6::Sql)
+    add_test(NAME database-schema COMMAND openkj-database-schema-test)
+    set_tests_properties(database-schema PROPERTIES TIMEOUT 15)
     add_executable(openkj-run-guard-test packaging/run_guard_test.cpp src/runguard/runguard.cpp)
     target_link_libraries(openkj-run-guard-test PRIVATE Qt6::Core)
     add_test(NAME run-guard COMMAND openkj-run-guard-test)

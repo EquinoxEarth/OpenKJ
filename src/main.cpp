@@ -13,6 +13,7 @@
 #include <QStyleFactory>
 #include <QStringList>
 #include <QMessageBox>
+#include <QSqlDatabase>
 #include "settings.h"
 #include "idledetect.h"
 #include "runguard/runguard.h"
@@ -20,6 +21,7 @@
 #include "bundledruntime.h"
 #include "startupsplash.h"
 #include "mediainitialization.h"
+#include "databaseschema.h"
 #include "startuplogging.h"
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -297,7 +299,27 @@ int main(int argc, char *argv[]) {
         logger->info("GStreamer initialization completed in {} ms", result.elapsedMs);
         QElapsedTimer startupTimer;
         startupTimer.start();
-        mainWindow = std::make_unique<MainWindow>();
+        QCoreApplication::setOrganizationName("OpenKJ");
+        QCoreApplication::setOrganizationDomain("OpenKJ.org");
+        QCoreApplication::setApplicationName("OpenKJ");
+        const auto dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const auto path = dataDir.isEmpty() ? QString() : QDir(dataDir).filePath("openkj.sqlite");
+        auto database = QSqlDatabase::addDatabase("QSQLITE");
+        const auto error = path.isEmpty() ? QObject::tr("No application data directory is available.")
+                                          : okj::openAndMigrateDatabase(database, path);
+        if (!error.isEmpty()) {
+            logger->error("Database startup failed for {}: {}", path.toStdString(), error.toStdString());
+            splash.hide();
+            QMessageBox message(QMessageBox::Critical, QObject::tr("Unable to open the OpenKJ database"),
+                                QObject::tr("OpenKJ could not open or upgrade its database."));
+            message.setTextFormat(Qt::PlainText);
+            message.setInformativeText(path.isEmpty() ? error : QStringLiteral("%1\n\n%2").arg(path, error));
+            message.exec();
+            a.exit(1);
+            return;
+        }
+        logger->info("Database initialization completed in {} ms", startupTimer.restart());
+        mainWindow = std::make_unique<MainWindow>(database);
         logger->info("Main window initialization completed in {} ms", startupTimer.elapsed());
         splash.finishWhenReady(mainWindow.get());
     });

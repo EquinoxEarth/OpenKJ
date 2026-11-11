@@ -58,7 +58,25 @@ RotationDisplay::RotationDisplay(TableModelRotation &rotation, QWidget *parent)
 
 QString RotationDisplay::currentSingerName() const
 {
-    return m_currentSinger;
+    return displayName(m_currentSinger);
+}
+
+QString RotationDisplay::displayName(const QString &name) const
+{
+    if (!m_hideNameNotes)
+        return name;
+    QString displayed;
+    displayed.reserve(name.size());
+    int depth = 0;
+    for (const auto character : name) {
+        if (character == QLatin1Char('('))
+            ++depth;
+        else if (character == QLatin1Char(')') && depth > 0)
+            --depth;
+        else if (depth == 0)
+            displayed += character;
+    }
+    return displayed.simplified();
 }
 
 void RotationDisplay::setCurrentSinger(const QString &name, bool singing)
@@ -74,9 +92,12 @@ void RotationDisplay::refresh()
 {
     m_names = m_rotation.upcomingSingerNames(m_settings.rotationDisplaySingerCount(),
                                             m_settings.rotationDisplayShowEmptySingers());
+    for (auto &name : m_names)
+        name = displayName(name);
     const auto upcoming = m_names.isEmpty() ? tr("Waiting for singers") : tr("Up next: %1").arg(m_names.join(", "));
-    setAccessibleDescription(m_currentSinger.isEmpty() ? upcoming
-        : tr("Now singing: %1. %2").arg(currentSingerName(), upcoming));
+    const auto current = currentSingerName();
+    setAccessibleDescription(current.isEmpty() ? upcoming
+        : tr("Now singing: %1. %2").arg(current, upcoming));
     update();
 }
 
@@ -86,6 +107,7 @@ void RotationDisplay::applySettings()
     m_textColor = m_settings.rotationDisplayTextColor();
     m_backgroundColor = m_settings.rotationDisplayBackgroundColor();
     m_showHeading = m_settings.rotationDisplayShowHeading();
+    m_hideNameNotes = m_settings.rotationDisplayHideNameNotes();
     m_videoDisplay->setVisible(m_settings.rotationDisplayVideoEnabled());
     updateContentGeometry();
     refresh();

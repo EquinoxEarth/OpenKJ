@@ -463,6 +463,16 @@ void Settings::setRotationDisplayShowEmptySingers(bool show)
     settings->setValue("rotationDisplay/showEmptySingers", show);
 }
 
+bool Settings::rotationDisplayHideNameNotes() const
+{
+    return settings->value("rotationDisplay/hideNameNotes", false).toBool();
+}
+
+void Settings::setRotationDisplayHideNameNotes(bool hide)
+{
+    settings->setValue("rotationDisplay/hideNameNotes", hide);
+}
+
 bool Settings::rotationDisplayVideoEnabled() const
 {
     return settings->value("rotationDisplay/videoEnabled", true).toBool();

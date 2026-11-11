@@ -36,6 +36,7 @@ private slots:
         settings.setRotationDisplayFullscreen(false);
         settings.setRotationDisplaySingerCount(5);
         settings.setRotationDisplayShowEmptySingers(false);
+        settings.setRotationDisplayHideNameNotes(false);
         settings.setRotationDisplayVideoEnabled(false);
         settings.setRotationDisplayVideoOnLeft(true);
         settings.setRotationDisplayShowHeading(true);
@@ -111,6 +112,46 @@ private slots:
         model.onRotationLoaded({});
         QTRY_VERIFY(display.singerNames().isEmpty());
         QCOMPARE(display.accessibleDescription(), QString("Waiting for singers"));
+    }
+
+    void nameNotesOnlyAffectAudienceNames()
+    {
+        auto records = singers();
+        records[0].name = "Austin (Wendy)";
+        records[2].name = "Austin (Sue)";
+        records[4].name = QString::fromUtf8("Zoë (family (Wendy)) Smith (regular)");
+        records[5].name = QString::fromUtf8("René (family");
+        TableModelRotation model;
+        model.onRotationLoaded(records);
+        model.setCurrentSinger(71);
+        const auto originalNames = model.upcomingSingerNames(5, false);
+        RotationDisplay display(model);
+        display.setCurrentSinger(records[0].name, true);
+        QCOMPARE(display.currentSingerName(), records[0].name);
+        QCOMPARE(display.singerNames(), originalNames);
+        Settings settings;
+        settings.setRotationDisplayHideNameNotes(true);
+        display.applySettings();
+        QVERIFY(Settings().rotationDisplayHideNameNotes());
+        QCOMPARE(display.currentSingerName(), QString("Austin"));
+        // Separate singers remain separate even when their displayed names match.
+        QCOMPARE(display.singerNames(), QStringList({"Austin", QString::fromUtf8("Zoë Smith"),
+                                                     QString::fromUtf8("René"), "Austin"}));
+        QVERIFY(!display.accessibleDescription().contains("Wendy"));
+        QVERIFY(!display.accessibleDescription().contains("Sue"));
+        QCOMPARE(model.upcomingSingerNames(5, false), originalNames);
+        QCOMPARE(model.getSinger(71).name, records[0].name);
+        display.setCurrentSinger("(Wendy)", true);
+        QVERIFY(display.currentSingerName().isEmpty());
+        QVERIFY(!display.accessibleDescription().contains("Wendy"));
+        display.setCurrentSinger(records[0].name, true);
+        settings.setRotationDisplayHideNameNotes(false);
+        display.applySettings();
+        // Toggling off restores both areas immediately, including the active singer.
+        QCOMPARE(display.currentSingerName(), records[0].name);
+        QCOMPARE(display.singerNames(), originalNames);
+        display.setCurrentSinger(records[0].name, false);
+        QVERIFY(display.currentSingerName().isEmpty());
     }
 
     void videoPanelCanSwapSidesAndRetainPausedFrames()

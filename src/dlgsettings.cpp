@@ -320,6 +320,16 @@ void DlgSettings::setupRotationDisplayPage()
         m_settings.setRotationDisplayShowEmptySingers(checked);
         emit rotationDisplaySettingsChanged();
     });
+    auto *hideNotes = new QCheckBox(tr("Hide text in parentheses in singer names"), listGroup);
+    hideNotes->setObjectName("checkBoxRotationDisplayHideNameNotes");
+    hideNotes->setChecked(m_settings.rotationDisplayHideNameNotes());
+    hideNotes->setToolTip(tr("Show Austin (Wendy) as Austin in Now Singing and Up Next. "
+                             "Full names are kept in the host controls and saved history."));
+    listLayout->addRow(hideNotes);
+    connect(hideNotes, &QCheckBox::toggled, this, [this](bool checked) {
+        m_settings.setRotationDisplayHideNameNotes(checked);
+        emit rotationDisplaySettingsChanged();
+    });
     layout->addWidget(listGroup);
     auto *videoGroup = new QGroupBox(tr("Karaoke display"), page);
     auto *videoLayout = new QFormLayout(videoGroup);

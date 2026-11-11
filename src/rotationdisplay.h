@@ -48,6 +48,7 @@ private:
     VideoDisplay *m_videoDisplay{nullptr};
     QRectF m_singerArea;
     bool m_showHeading{true};
+    bool m_hideNameNotes{false};
     bool m_shuttingDown{false};
     bool m_changingState{false};
     QByteArray m_windowedGeometry;
@@ -56,6 +57,7 @@ private:
     void rememberWindowedGeometry();
     void saveWindowedGeometry();
     void updateContentGeometry();
+    [[nodiscard]] QString displayName(const QString &name) const;
 };
 
 #endif

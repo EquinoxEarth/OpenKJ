@@ -401,6 +401,8 @@ void MediaBackend::handleBusMessage(GstMessage *msg) {
                     m_state = PausedState;
                 }
                 else if (new_state == GST_STATE_NULL) m_state = StoppedState;
+                else
+                    break;
                 emit stateChanged(m_state);
             }
             break;

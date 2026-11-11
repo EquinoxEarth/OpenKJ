@@ -170,6 +170,7 @@ private:
     enum class InterruptionWarning { Never, Playing, PlayingOrPaused };
     QPointer<QMessageBox> m_karaokeInterruptionPrompt;
     std::optional<KaraokePlaybackRequest> m_pendingKaraokePlayback;
+    std::optional<KaraokePlaybackRequest> m_startingKaraokePlayback;
     bool m_pendingKaraokeCrossfade{false};
     bool m_karaokeStopReady{false};
 
@@ -177,7 +178,9 @@ private:
     void requestRotationSong(const okj::RotationSinger &singer, InterruptionWarning warning, bool selectSinger);
     void startKaraokePlayback(const KaraokePlaybackRequest &request, bool crossfade);
     void continueKaraokePlayback();
-    bool applyKaraokeSelection(const KaraokePlaybackRequest &request);
+    bool prepareKaraokeSelection(KaraokePlaybackRequest &request);
+    void recordKaraokeStart(const KaraokePlaybackRequest &request);
+    bool discardKaraokeStart();
     void cancelKaraokePlayback();
     void stopKaraokePlayback();
     std::shared_ptr<SongShop> m_songShop;

@@ -194,8 +194,12 @@ static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType 
     slider.setValue(60);
     backend.setUseFader(false);
     backend.setMedia(filename);
+    QSignalSpy states(&backend, &MediaBackend::stateChanged);
     backend.play();
     waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000, "Test audio must start");
+    for (const auto &event : states)
+        require(event.first().value<MediaBackend::State>() != MediaBackend::StoppedState,
+                "Starting a track must not report a cached Stopped state during preroll");
     auto *fader = backend.findChild<AudioFader *>();
     require(fader && fader->state() == AudioFader::FadedIn, "Normal playback must be audible");
     slider.setValue(75);
@@ -323,11 +327,15 @@ static void checkSharedVideoFrames(const QString &audioFilename, const QString &
     // arrive early, but another track must wait for native cleanup.
     backend.setMediaCdg(cdgFilename, audioFilename);
     QSignalSpy stops(&backend, &MediaBackend::stopCompleted);
+    QSignalSpy startupStates(&backend, &MediaBackend::stateChanged);
     backend.play();
     backend.rawStop();
     require(stops.isEmpty() && !backend.isPlaybackStopped(), "Stop completion must wait for native CDG cleanup");
     waitFor([&] { return stops.size() == 1 && backend.isPlaybackStopped(); }, 3000,
             "CDG cancellation must emit exactly one completion when the backend is ready");
+    for (const auto &event : startupStates)
+        require(event.first().value<MediaBackend::State>() != MediaBackend::PlayingState,
+                "Cancelling CDG preroll must not deliver a Playing state");
 
 }
 

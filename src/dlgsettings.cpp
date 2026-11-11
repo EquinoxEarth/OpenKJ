@@ -404,7 +404,8 @@ void DlgSettings::setupRotationDisplayPage()
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(page);
-    ui->tabWidgetMain->addTab(scroll, tr("Rotation Display"));
+    const int displayTabIndex = ui->tabWidgetMain->indexOf(ui->tabWidgetPage5);
+    ui->tabWidgetMain->insertTab(displayTabIndex + 1, scroll, tr("Rotation Display"));
 }
 
 DlgSettings::~DlgSettings() {

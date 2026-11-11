@@ -8,6 +8,7 @@
 #include <QMutexLocker>
 #include <math.h>
 #include <cmath>
+#include <utility>
 #include <QtConcurrent/QtConcurrentRun>
 
 // MediaBackend constructor & methods
@@ -337,6 +338,8 @@ bool MediaBackend::seekCdg(qint64 positionMs)
         GST_CLOCK_TIME_NONE
     );
 
+    invalidateVideoFrames(false);
+
     if (!success) {
         m_logger->warn(
             "{} CDG seek/rate change failed: {} ms at {}%",
@@ -504,11 +507,16 @@ GstFlowReturn MediaBackend::onNewVideoSample(
     gpointer userData)
 {
     auto *backend = static_cast<MediaBackend*>(userData);
-    const auto generation = backend->m_frameGeneration->load();
+    const auto generation = backend->m_frameGeneration.load();
 
     GstSample *sample = gst_app_sink_pull_sample(sink);
     if (!sample)
         return GST_FLOW_EOS;
+
+    if (!(generation & 1)) {
+        gst_sample_unref(sample);
+        return GST_FLOW_OK;
+    }
 
     GstBuffer *buffer = gst_sample_get_buffer(sample);
     GstCaps *caps = gst_sample_get_caps(sample);
@@ -549,42 +557,65 @@ GstFlowReturn MediaBackend::onNewVideoSample(
     gst_video_frame_unmap(&videoFrame);
     gst_sample_unref(sample);
 
-    if (!ownedImage.isNull() && (generation & 1))
-        emit backend->frameReady(ownedImage, generation);
+    if (!ownedImage.isNull())
+        backend->queueVideoFrame(std::move(ownedImage), generation);
 
     return GST_FLOW_OK;
+}
+
+void MediaBackend::queueVideoFrame(QImage image, quint64 generation)
+{
+    QMutexLocker lock(&m_frameMutex);
+    if (generation != m_frameGeneration.load())
+        return;
+
+    m_pendingFrame = std::move(image);
+    if (!m_frameDeliveryQueued) {
+        m_frameDeliveryQueued = true;
+        QMetaObject::invokeMethod(this, &MediaBackend::deliverVideoFrame, Qt::QueuedConnection);
+    }
+}
+
+void MediaBackend::deliverVideoFrame()
+{
+    QImage image;
+    quint64 generation;
+    {
+        QMutexLocker lock(&m_frameMutex);
+        image = std::exchange(m_pendingFrame, {});
+        generation = m_frameGeneration.load();
+        m_frameDeliveryQueued = false;
+    }
+    if (image.isNull() || m_seekPhase == SeekPhase::WaitingForPause)
+        return;
+
+    auto frame = std::make_shared<VideoDisplayFrame>(image);
+    for (const auto &display : m_videoSinks) {
+        if (display)
+            display->updateSharedFrame(frame);
+    }
+    emit frameReady(image, generation);
+}
+
+void MediaBackend::invalidateVideoFrames(bool stopping)
+{
+    QMutexLocker lock(&m_frameMutex);
+    const auto generation = m_frameGeneration.load();
+    if (generation & 1)
+        m_frameGeneration.store(generation + (stopping ? 1 : 2));
+    m_pendingFrame = {};
+    // A queued delivery can service a newer frame if one arrives first.
 }
 
 void MediaBackend::setVideoOutputWidgets(
     const std::vector<QWidget*>& surfaces)
 {
-    // Remove previous frame-delivery connections.
-    for (const auto &connection : m_videoConnections) {
-        QObject::disconnect(connection);
-    }
-
-    m_videoConnections.clear();
     m_videoSinks.clear();
 
     // Register every video display, including external monitors.
     for (auto *surface : surfaces) {
-        if (auto *display = qobject_cast<VideoDisplay*>(surface)) {
+        if (auto *display = qobject_cast<VideoDisplay*>(surface))
             m_videoSinks.push_back(display);
-
-            m_videoConnections.push_back(
-                connect(
-                    this,
-                    &MediaBackend::frameReady,
-                    display,
-                    [frameGeneration = m_frameGeneration, display](const QImage &image, quint64 generation) {
-                        // A queued sample can outlive Stop or a track change.
-                        if ((generation & 1) && generation == frameGeneration->load())
-                            display->updateFrame(image);
-                    },
-                    Qt::QueuedConnection
-                )
-            );
-        }
     }
 
     if (!m_pipeline || m_videoSinks.empty())
@@ -839,8 +870,8 @@ void MediaBackend::play(bool startSilent) {
     if (deferControl([this, startSilent] { play(startSilent); }))
         return;
     applyAudioOutputDevice();
-    if (!(m_frameGeneration->load() & 1))
-        ++*m_frameGeneration;
+    if (!(m_frameGeneration.load() & 1))
+        ++m_frameGeneration;
     m_stopAfterFade = false;
     // Set gain before starting the pipeline, including silent playlist advances.
     if (startSilent)
@@ -1190,6 +1221,7 @@ void MediaBackend::setPosition(const qint64 &position)
                 ),
                 static_cast<gint64>(position) * GST_MSECOND
             );
+            invalidateVideoFrames(false);
         }
 
         return;
@@ -1204,6 +1236,7 @@ void MediaBackend::setPosition(const qint64 &position)
 
     m_cdgStartPending = false;
     m_seekTargetMs = position;
+    invalidateVideoFrames(false);
     m_seekPhase = SeekPhase::WaitingForPause;
     m_seekTimer.start();
 
@@ -1440,6 +1473,8 @@ bool MediaBackend::seekVideoRate(qint64 positionMs)
         GST_CLOCK_TIME_NONE
     );
 
+    invalidateVideoFrames(false);
+
     m_logger->info(
         "{} Video playback rate={}x position={}ms accepted={}",
         m_loggingPrefix,
@@ -1480,8 +1515,7 @@ void MediaBackend::rawStop() {
     m_cdgStartPending = false;
     m_cdgRunningTime = 0;
     // Invalidate queued frames before waiting for the streaming threads to stop.
-    if (m_frameGeneration->load() & 1)
-        ++*m_frameGeneration;
+    invalidateVideoFrames(true);
     m_stopAfterFade = false;
     m_fader->immediateOut();
     // Prevent outstanding seek from restarting an old song.
@@ -1503,7 +1537,7 @@ void MediaBackend::rawStop() {
     if (m_cdgPipeline && !m_cdgStateBusy)
         gst_element_set_start_time(m_cdgPipeline, 0);
     m_state = StoppedState;
-    for (auto* display : m_videoSinks) {
+    for (const auto &display : m_videoSinks) {
         if (display) {
             display->clearFrame();
         }
@@ -1620,6 +1654,8 @@ void MediaBackend::setTempo(const int &percent)
             GST_SEEK_TYPE_NONE,
             GST_CLOCK_TIME_NONE
         );
+
+        invalidateVideoFrames(false);
 
         m_logger->info(
             "{} CDG tempo changed to {}% at {} ms (success: {})",

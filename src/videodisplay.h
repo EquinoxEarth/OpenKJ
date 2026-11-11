@@ -3,11 +3,30 @@
 
 #include "settings.h"
 #include <QWidget>
+#include <QCache>
 #include <QBoxLayout>
 #include <QResizeEvent>
 #include <QImage>
 #include <QVideoSink>
 #include <QVideoFrame>
+#include <array>
+#include <memory>
+#include <utility>
+
+// Shared by displays on the GUI thread for the lifetime of one decoded frame.
+class VideoDisplayFrame
+{
+public:
+    explicit VideoDisplayFrame(const QImage &image) : m_image(image) {}
+    [[nodiscard]] bool isCdgSized() const { return m_image.size() == QSize(300, 216); }
+    QImage scaled(const QSize &bounds, bool prescaleCdg);
+
+private:
+    QImage m_image;
+    QImage m_argb;
+    std::array<QImage, 5> m_enlarged; // xBRZ factors 2 through 6
+    QCache<std::pair<QSize, int>, QImage> m_scaled{32 * 1024 * 1024};
+};
 
 class VideoDisplay : public QWidget
 {
@@ -19,13 +38,14 @@ private:
     bool m_hasActiveVideo { false };
     bool m_fillOnPaint { false };
     bool m_repaintBackgroundOnce { false };
-    QImage m_currentFrame;
+    std::shared_ptr<VideoDisplayFrame> m_currentFrame;
     QVideoSink *m_videoSink;
 
 public:
     explicit VideoDisplay(QWidget *parent = nullptr);
     [[nodiscard]] bool hasActiveVideo() const { return m_hasActiveVideo; }
     QVideoSink* videoSink() const { return m_videoSink; }
+    void updateSharedFrame(const std::shared_ptr<VideoDisplayFrame> &frame);
 
 signals:
     void mouseMoveEvent(QMouseEvent *event) override;

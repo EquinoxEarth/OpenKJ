@@ -129,11 +129,17 @@ private:
     bool m_stopAfterFade{false};
     // Odd generations accept frames; even generations represent stopped playback.
     // Streaming callbacks capture this before pulling a sample.
-    std::shared_ptr<std::atomic<quint64>> m_frameGeneration =
-        std::make_shared<std::atomic<quint64>>(0);
+    std::atomic<quint64> m_frameGeneration{0};
+    QMutex m_frameMutex;
+    QImage m_pendingFrame;
+    bool m_frameDeliveryQueued{false};
+
+    void queueVideoFrame(QImage image, quint64 generation);
+    void deliverVideoFrame();
+    void invalidateVideoFrames(bool stopping);
 
     // Connected display widgets
-    QList<VideoDisplay*> m_videoSinks;
+    QList<QPointer<VideoDisplay>> m_videoSinks;
 
     QString m_filename;
     QString m_cdgFilename;
@@ -181,8 +187,6 @@ private:
 
     static gboolean busCall(GstBus *bus, GstMessage *msg, gpointer data);
     void handleBusMessage(GstMessage *msg);
-
-    std::vector<QMetaObject::Connection> m_videoConnections;
 
     static GstFlowReturn onNewVideoSample(
         GstAppSink *sink,
@@ -255,6 +259,7 @@ public slots:
     void setEnforceAspectRatio(const bool &enforce) {}
 
 signals:
+    // Emitted on the GUI thread after delivering the newest available frame.
     void frameReady(const QImage &image, quint64 generation);
     void audioAvailableChanged(const bool audioAvailable);
     void bufferStatusChanged(const int status);

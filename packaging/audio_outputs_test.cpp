@@ -1,8 +1,10 @@
 #include "mediabackend.h"
 #include "audiofader.h"
+#include "xbrz.h"
 #include <QApplication>
 #include <QDataStream>
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QFile>
 #include <QSlider>
 #include <QSignalSpy>
@@ -140,6 +142,43 @@ static void checkVideoSettingsReuse()
             "Repainting must retain the same settings owner and storage");
 }
 
+static void checkSharedRendering()
+{
+    QImage image(300, 216, QImage::Format_RGB888);
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            image.setPixelColor(x, y, x < y ? Qt::white : Qt::blue);
+
+    auto frame = std::make_shared<VideoDisplayFrame>(image);
+    const auto source = image.convertToFormat(QImage::Format_ARGB32);
+    QImage enlarged(600, 432, QImage::Format_ARGB32);
+    xbrz::scale(2, reinterpret_cast<const uint32_t *>(source.constBits()),
+                reinterpret_cast<uint32_t *>(enlarged.bits()), source.width(), source.height(),
+                xbrz::ColorFormat::ARGB);
+    const QSize bounds(640, 600);
+    const auto expected = enlarged.scaled(image.size().scaled(bounds, Qt::KeepAspectRatio),
+                                          Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    const auto scaled = frame->scaled(bounds, true);
+    require(scaled == expected, "Cached CDG prescaling must match the original pixels");
+    require(frame->scaled(QSize(640, 700), true).cacheKey() == scaled.cacheKey(),
+            "Equal fitted sizes must share the same scaled pixels");
+    require(frame->scaled(bounds, false) == image.scaled(bounds, Qt::KeepAspectRatio, Qt::SmoothTransformation),
+            "Toggling CDG prescaling must use a separate scaling result");
+    require(frame->scaled(QSize(300, 400), true) == image,
+            "A smaller view must use its own fitted size and skip xBRZ below 2x");
+
+    VideoDisplay view;
+    view.resize(bounds);
+    view.updateSharedFrame(frame);
+    const auto rendered = view.grab().toImage();
+    require(rendered.pixelColor(0, 0) == QColor(Qt::black) &&
+                rendered.pixelColor(rendered.width() * 3 / 4, rendered.height() / 2) == QColor(Qt::blue),
+            "Rendering must preserve centered letterboxing and image colors");
+    view.setBackground({});
+    view.clearFrame();
+    require(!view.hasActiveVideo() && view.grab().toImage() != rendered, "Clearing must release the rendered frame");
+}
+
 static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType type)
 {
     MediaBackend backend(nullptr, "Stop and volume test", type);
@@ -215,6 +254,24 @@ static void checkSharedVideoFrames(const QString &audioFilename, const QString &
         const auto image = singer.grab().toImage();
         return image == preview.grab().toImage() && image == rotation.grab().toImage();
     };
+    const auto frameColor = [&] {
+        const auto image = frames.last().at(0).value<QImage>();
+        return image.pixelColor(image.width() / 2, image.height() / 2);
+    };
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 2000, "CDG playback must be running");
+    const auto beforeStall = frames.size();
+    QElapsedTimer stall;
+    stall.start();
+    // Sleep without pumping GUI events while the streaming thread crosses a color change.
+    while (backend.position() < 900 && stall.elapsed() < 2000)
+        QTest::qSleep(10);
+    require(backend.position() >= 900 && frames.size() == beforeStall,
+            "Playback must advance without delivering frames during a GUI stall");
+    QCoreApplication::sendPostedEvents(&backend, QEvent::MetaCall);
+    require(frames.size() == beforeStall + 1 && frameColor() == QColor(Qt::green),
+            "The first GUI dispatch after a stall must deliver only the latest CDG frame");
+    require(matchingFrames(), "All outputs must receive the same frame after a stall");
+
     backend.pause();
     waitFor([&] { return backend.state() == MediaBackend::PausedState; }, 2000, "CDG playback must pause");
     QTest::qWait(100);
@@ -223,22 +280,41 @@ static void checkSharedVideoFrames(const QString &audioFilename, const QString &
     rotation.show();
     QTest::qWait(40);
     require(rotation.grab().toImage() == pausedImage, "Enabling a hidden view while paused must retain the current frame");
-    const auto beforeSeek = frames.size();
-    backend.setPosition(1500);
+
     backend.play();
-    waitFor([&] { return frames.size() > beforeSeek && backend.position() >= 1400; }, 5000,
-            "Playback must resume with decoded frames after seeking");
-    backend.pause();
-    QTest::qWait(100);
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 2000, "CDG playback must resume");
+    QTest::qWait(150); // Allow the coordinated PLAYING request to finish.
+    const auto beforeSeek = frames.size();
+    const auto priorGeneration = frames.last().at(1).toULongLong();
+    QTest::qSleep(100); // Leave a pre-seek frame pending in the mailbox.
+    backend.setPosition(2100);
+    QCoreApplication::sendPostedEvents(&backend, QEvent::MetaCall);
+    require(frames.size() == beforeSeek, "A frame pending before a seek must be discarded");
+    waitFor([&] {
+        return frames.size() > beforeSeek && backend.position() >= 2000 && frameColor() == QColor(Qt::blue);
+    }, 5000, "Playback must resume with frames from the new position after seeking");
+    require(frames.last().at(1).toULongLong() != priorGeneration, "A seek must invalidate the previous frame generation");
     require(matchingFrames(), "CDG outputs must still match after a seek");
-    // A frame queued just before Stop must not resurrect any of the views.
-    QImage lateFrame(300, 216, QImage::Format_RGB888);
-    lateFrame.fill(Qt::red);
-    backend.frameReady(lateFrame, frames.last().at(1).toULongLong());
+
+    QTest::qSleep(100); // Stop with a real decoded frame pending.
+    const auto beforeStop = frames.size();
     backend.rawStop();
-    QTest::qWait(40);
-    require(!singer.hasActiveVideo() && !preview.hasActiveVideo() && !rotation.hasActiveVideo(),
-            "Stop must clear all outputs and reject late queued frames");
+    QCoreApplication::sendPostedEvents(&backend, QEvent::MetaCall);
+    require(frames.size() == beforeStop && !singer.hasActiveVideo() && !preview.hasActiveVideo() &&
+                !rotation.hasActiveVideo(), "Stop must clear all outputs and reject pending frames");
+
+    backend.play();
+    waitFor([&] { return frames.size() > beforeStop && singer.hasActiveVideo(); }, 5000, "CDG must restart after Stop");
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 2000, "Restarted CDG must be playing");
+    QTest::qSleep(100);
+    const auto beforeTrackChange = frames.size();
+    backend.setMedia(audioFilename);
+    backend.play();
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000, "Replacement audio track must start");
+    QTest::qWait(100);
+    require(frames.size() == beforeTrackChange && !singer.hasActiveVideo() && !preview.hasActiveVideo() &&
+                !rotation.hasActiveVideo(), "A track change must discard pending frames from the previous track");
+
 }
 
 int main(int argc, char **argv)
@@ -264,6 +340,7 @@ int main(int argc, char **argv)
     try {
         checkSettingsOwnershipAndPersistence();
         checkVideoSettingsReuse();
+        checkSharedRendering();
         Settings settings;
         settings.setAudioOutputDevice("Default");
         settings.setAudioOutputDeviceBm("Default");
@@ -342,7 +419,16 @@ int main(int argc, char **argv)
             QByteArray packets(24 * 300 * 30, '\0');
             for (int i = 0; i < 300 * 30; ++i) {
                 packets[i * 24] = 9;
-                packets[i * 24 + 1] = 1; // Memory preset, as in the standalone CDG runtime check.
+                if (i % 30 == 0) {
+                    packets[i * 24 + 1] = 30; // Load the low palette.
+                    packets[i * 24 + 6] = 0x3c; // Color 1: red.
+                    packets[i * 24 + 8] = 0x03; // Color 2: green.
+                    packets[i * 24 + 9] = 0x30;
+                    packets[i * 24 + 11] = 0x0f; // Color 3: blue.
+                } else {
+                    packets[i * 24 + 1] = 1; // Memory preset.
+                    packets[i * 24 + 4] = i < 150 ? 1 : (i < 450 ? 2 : 3);
+                }
             }
             require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
         }

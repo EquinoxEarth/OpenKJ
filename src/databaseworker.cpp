@@ -122,7 +122,7 @@ void DatabaseWorker::loadRotation()
     emit rotationLoaded(singers);
 }
 
-void DatabaseWorker::loadQueue(int singerId)
+void DatabaseWorker::loadQueue(int singerId, quint64 requestId)
 {
     QList<okj::QueueSong> songs;
     QSqlQuery query(m_db);
@@ -152,7 +152,7 @@ void DatabaseWorker::loadQueue(int singerId)
             query.value(11).toString()
         });
     }
-    emit queueLoaded(songs);
+    emit queueLoaded(singerId, requestId, songs);
 }
 
 void DatabaseWorker::addSinger(const QString &name, int positionHint, bool makeRegular)
@@ -286,7 +286,8 @@ void DatabaseWorker::deleteQueueSong(int singerId, int queueSongId)
 void DatabaseWorker::setQueueSongKey(int singerId, int songId, int key)
 {
     QSqlQuery query(m_db);
-    query.prepare("UPDATE queuesongs SET keychg = :key WHERE qsongid = :id");
+    query.prepare("UPDATE queuesongs SET keychg = :key WHERE qsongid = :id AND singer = :singerId");
+    query.bindValue(":singerId", singerId);
     query.bindValue(":id", songId);
     query.bindValue(":key", key);
     query.exec();
@@ -298,7 +299,8 @@ void DatabaseWorker::setQueueSongKey(int singerId, int songId, int key)
 void DatabaseWorker::setQueueSongPlayed(int singerId, int songId, bool played)
 {
     QSqlQuery query(m_db);
-    query.prepare("UPDATE queuesongs SET played = :played WHERE qsongid = :id");
+    query.prepare("UPDATE queuesongs SET played = :played WHERE qsongid = :id AND singer = :singerId");
+    query.bindValue(":singerId", singerId);
     query.bindValue(":id", songId);
     query.bindValue(":played", played);
     query.exec();

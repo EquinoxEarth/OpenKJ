@@ -52,6 +52,7 @@ public:
 
     void loadSinger(int singerId);
     [[nodiscard]] int getSingerId() const { return m_curSingerId; }
+    [[nodiscard]] bool isQueueReady() const { return m_queueLoaded && m_curSingerId >= 0; }
     [[nodiscard]] int getPosition(int songId);
     [[nodiscard]] bool getPlayed(int songId);
     [[nodiscard]] int getKey(int songId);
@@ -62,13 +63,16 @@ public:
     void remove(int songId);
     void setKey(int songId, int semitones);
     void setPlayed(int qSongId, bool played = true);
+    void setPlayedForSinger(int singerId, int qSongId, bool played = true);
     void removeAll();
     void commitChanges();
 
 private:
     std::string m_loggingPrefix{"[QueueSongsModel]"};
     std::shared_ptr<spdlog::logger> m_logger;
-    int m_curSingerId{0};
+    int m_curSingerId{-1};
+    quint64 m_queueRequestId{0};
+    bool m_queueLoaded{false};
     TableModelKaraokeSongs &m_karaokeSongsModel;
     std::vector<okj::QueueSong> m_songs;
     Settings m_settings;
@@ -91,7 +95,7 @@ signals:
     void filesDroppedOnSinger(QList<QUrl> urls, int singerId, int position);
     void qSongsMoved(int startRow, int startCol, int endRow, int endCol);
 
-    void requestLoadQueue(int singerId);
+    void requestLoadQueue(int singerId, quint64 requestId);
     void requestCommitQueue(int singerId, const QList<okj::QueueSong> &songs);
     void requestSetQueueSongKey(int singerId, int qSongId, int semitones);
     void requestSetQueueSongPlayed(int singerId, int qSongId, bool played);
@@ -101,7 +105,7 @@ signals:
 public slots:
     void songAddSlot(int songId, int singerId, int keyChg = 0);
     void setFont(const QFont &font);
-    void onQueueLoaded(const QList<okj::QueueSong> &songs);
+    void onQueueLoaded(int singerId, quint64 requestId, const QList<okj::QueueSong> &songs);
 
 
 };

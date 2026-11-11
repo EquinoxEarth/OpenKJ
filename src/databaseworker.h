@@ -19,7 +19,7 @@ public:
 public slots:
     void init(); // Initialize connection on worker thread
     void loadRotation();
-    void loadQueue(int singerId);
+    void loadQueue(int singerId, quint64 requestId);
     
     // Write Slots
     void addSinger(const QString &name, int positionHint, bool makeRegular);
@@ -41,7 +41,7 @@ public slots:
 
 signals:
     void rotationLoaded(const QList<okj::RotationSinger> &singers);
-    void queueLoaded(const QList<okj::QueueSong> &songs);
+    void queueLoaded(int singerId, quint64 requestId, const QList<okj::QueueSong> &songs);
     void singerAdded(int singerId, const QString &name, int positionHint);
     void rotationUpdated();
     void queueUpdated(int singerId);

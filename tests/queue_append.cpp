@@ -68,13 +68,13 @@ int main(int argc, char **argv)
 
         QList<okj::QueueSong> loaded;
         QObject::connect(&worker, &DatabaseWorker::queueLoaded, &app,
-                         [&](const QList<okj::QueueSong> &songs) { loaded = songs; });
+                         [&](int, quint64, const QList<okj::QueueSong> &songs) { loaded = songs; });
         // Loading a two-song queue must not determine the destination's append position.
-        worker.loadQueue(1);
+        worker.loadQueue(1, 1);
         require(loaded.size() == 2, "Source queue should have two songs");
         worker.addSongToQueue(2, 8, -2);
         worker.addSongToQueue(2, 9, 3);
-        worker.loadQueue(2);
+        worker.loadQueue(2, 2);
         require(songIds(loaded) == QList<int>({1, 2, 3, 4, 5, 6, 7, 8, 9}),
                 "New songs must follow all seven existing songs in order");
         require(loaded[7].position == 7 && loaded[8].position == 8,
@@ -84,16 +84,16 @@ int main(int argc, char **argv)
         require(loaded[0].played && loaded[1].played, "Existing played songs must be preserved");
 
         worker.addSongToQueue(3, 10, 0);
-        worker.loadQueue(3);
+        worker.loadQueue(3, 3);
         require(loaded.size() == 1 && loaded[0].position == 0, "An empty queue must start at zero");
 
         // Imported or previously edited queues may have gaps in their positions.
         exec(db, "UPDATE queuesongs SET position = 20 WHERE singer = 2 AND song = 9");
         worker.addSongToQueue(2, 11, 0);
-        worker.loadQueue(2);
+        worker.loadQueue(2, 4);
         require(loaded.last().dbSongId == 11 && loaded.last().position == 21,
                 "Append must follow the last position even when there are gaps");
-        worker.loadQueue(1);
+        worker.loadQueue(1, 5);
         require(songIds(loaded) == QList<int>({1, 2}), "Another singer's queue must remain unchanged");
         require(error.isEmpty(), "Database worker reported an error");
         qInfo() << "Queue append regression checks passed";

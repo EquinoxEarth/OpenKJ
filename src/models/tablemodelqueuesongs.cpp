@@ -65,7 +65,7 @@ int TableModelQueueSongs::columnCount([[maybe_unused]]const QModelIndex &parent)
 }
 
 QVariant TableModelQueueSongs::data(const QModelIndex &index, int role) const {
-    if (!index.isValid())
+    if (!index.isValid() || index.row() >= rowCount() || index.column() >= columnCount())
         return {};
     switch (role) {
         case Qt::FontRole:
@@ -135,17 +135,25 @@ QVariant TableModelQueueSongs::getItemDisplayRoleData(const QModelIndex &index) 
 
 void TableModelQueueSongs::loadSinger(const int singerId) {
     m_logger->debug("{} loadSinger({}) requesting data from background DatabaseWorker", m_loggingPrefix, singerId);
+    beginResetModel();
     m_curSingerId = singerId;
-    emit requestLoadQueue(singerId);
+    ++m_queueRequestId;
+    m_queueLoaded = false;
+    m_songs.clear();
+    endResetModel();
+    if (singerId >= 0)
+        emit requestLoadQueue(singerId, m_queueRequestId);
 }
 
-void TableModelQueueSongs::onQueueLoaded(const QList<okj::QueueSong> &songs) {
-    emit layoutAboutToBeChanged();
-    m_songs.clear();
-    for (const auto &song : songs) {
-        m_songs.push_back(song);
-    }
-    emit layoutChanged();
+void TableModelQueueSongs::onQueueLoaded(int singerId, quint64 requestId, const QList<okj::QueueSong> &songs) {
+    if (singerId != m_curSingerId || requestId != m_queueRequestId || m_queueLoaded || singerId < 0)
+        return;
+    if (std::any_of(songs.begin(), songs.end(), [singerId](const auto &song) { return song.singerId != singerId; }))
+        return;
+    beginResetModel();
+    m_songs.assign(songs.begin(), songs.end());
+    m_queueLoaded = true;
+    endResetModel();
     emit queueModified(m_curSingerId);
 }
 
@@ -177,7 +185,8 @@ int TableModelQueueSongs::getKey(const int songId) {
 }
 
 void TableModelQueueSongs::move(const int oldPosition, const int newPosition) {
-    if (oldPosition == newPosition)
+    if (!isQueueReady() || oldPosition < 0 || newPosition < 0 ||
+        oldPosition >= rowCount() || newPosition >= rowCount() || oldPosition == newPosition)
         return;
     emit layoutAboutToBeChanged();
     if (oldPosition > newPosition) {
@@ -210,6 +219,8 @@ void TableModelQueueSongs::moveSongId(const int songId, const int newPosition) {
 }
 
 int TableModelQueueSongs::add(const int songId) {
+    if (!isQueueReady())
+        return -1;
     okj::KaraokeSong ksong = m_karaokeSongsModel.getSong(songId);
     QSqlQuery query;
     query.prepare("INSERT INTO queuesongs (singer,song,artist,title,discid,path,keychg,played,position) "
@@ -241,11 +252,15 @@ int TableModelQueueSongs::add(const int songId) {
 }
 
 void TableModelQueueSongs::insert(const int songId, const int position) {
+    if (!isQueueReady())
+        return;
     add(songId);
     move(static_cast<int>(m_songs.size()) - 1, position);
 }
 
 void TableModelQueueSongs::remove(const int songId) {
+    if (!isQueueReady() || getPosition(songId) < 0)
+        return;
     emit layoutAboutToBeChanged();
     auto it = std::remove_if(m_songs.begin(), m_songs.end(), [&songId](okj::QueueSong &song) {
         return (song.id == songId);
@@ -261,31 +276,46 @@ void TableModelQueueSongs::remove(const int songId) {
 }
 
 void TableModelQueueSongs::setKey(const int songId, const int semitones) {
+    if (!isQueueReady())
+        return;
     auto it = std::find_if(m_songs.begin(), m_songs.end(), [&songId](okj::QueueSong &song) {
         return (song.id == songId);
     });
-    if (it != m_songs.end()) {
-        it->keyChange = semitones;
-        emit dataChanged(this->index(it->position, COL_KEY), this->index(it->position, COL_KEY),
-                         QVector<int>{Qt::DisplayRole});
-    }
+    if (it == m_songs.end())
+        return;
+    it->keyChange = semitones;
+    emit dataChanged(this->index(it->position, COL_KEY), this->index(it->position, COL_KEY),
+                     QVector<int>{Qt::DisplayRole});
     emit requestSetQueueSongKey(m_curSingerId, songId, semitones);
 }
 
 void TableModelQueueSongs::setPlayed(const int songId, const bool played) {
+    if (!isQueueReady() || getPosition(songId) < 0)
+        return;
+    setPlayedForSinger(m_curSingerId, songId, played);
+}
+
+void TableModelQueueSongs::setPlayedForSinger(int singerId, int songId, bool played) {
+    if (singerId < 0)
+        return;
     m_logger->debug("{} Setting songId {} to played", m_loggingPrefix, songId);
     auto it = std::find_if(m_songs.begin(), m_songs.end(), [&songId](okj::QueueSong &song) {
         return (song.id == songId);
     });
-    if (it != m_songs.end()) {
+    if (singerId == m_curSingerId && isQueueReady() && it != m_songs.end()) {
         it->played = played;
         emit dataChanged(this->index(it->position, 0), this->index(it->position, columnCount() - 1),
                          QVector<int>{Qt::FontRole, Qt::BackgroundRole, Qt::ForegroundRole});
     }
-    emit requestSetQueueSongPlayed(m_curSingerId, songId, played);
+    emit requestSetQueueSongPlayed(singerId, songId, played);
+    // A pending SELECT may predate this write. Request a new snapshot after it.
+    if (singerId == m_curSingerId && !isQueueReady())
+        loadSinger(singerId);
 }
 
 void TableModelQueueSongs::removeAll() {
+    if (!isQueueReady())
+        return;
     emit layoutAboutToBeChanged();
     m_songs.clear();
     m_songs.shrink_to_fit();
@@ -295,6 +325,8 @@ void TableModelQueueSongs::removeAll() {
 }
 
 void TableModelQueueSongs::commitChanges() {
+    if (!isQueueReady())
+        return;
     QList<okj::QueueSong> list;
     for (const auto &song : m_songs) {
         list.append(song);
@@ -303,11 +335,15 @@ void TableModelQueueSongs::commitChanges() {
 }
 
 void TableModelQueueSongs::songAddSlot(int songId, int singerId, int keyChg) {
-    if (singerId == m_curSingerId) {
+    if (singerId < 0)
+        return;
+    if (singerId == m_curSingerId && isQueueReady()) {
         int queueSongId = add(songId);
         setKey(queueSongId, keyChg);
     } else {
         emit requestAddSongToQueue(singerId, songId, keyChg);
+        if (singerId == m_curSingerId)
+            loadSinger(singerId);
     }
 }
 
@@ -321,6 +357,8 @@ QStringList TableModelQueueSongs::mimeTypes() const {
 
 QMimeData *TableModelQueueSongs::mimeData(const QModelIndexList &indexes) const {
     auto mimeData = new QMimeData();
+    if (!isQueueReady())
+        return mimeData;
     if (indexes.size() > 1) {
         QJsonArray jArr;
         std::for_each(indexes.begin(), indexes.end(), [&](QModelIndex index) {
@@ -337,6 +375,8 @@ QMimeData *TableModelQueueSongs::mimeData(const QModelIndexList &indexes) const 
 
 bool TableModelQueueSongs::canDropMimeData(const QMimeData *data, Qt::DropAction action, int row, int column,
                                            const QModelIndex &parent) const {
+    if (!isQueueReady())
+        return false;
     if ((data->hasFormat("integer/songid")) || (data->hasFormat("text/queueitems")) ||
         data->hasFormat("text/uri-list")) {
         return true;
@@ -350,10 +390,16 @@ bool TableModelQueueSongs::dropMimeData(const QMimeData *data, Qt::DropAction ac
         emit songDroppedWithoutSinger();
         return false;
     }
+    if (!isQueueReady())
+        return false;
     if (action == Qt::MoveAction && data->hasFormat("text/queueitems")) {
         QJsonDocument jDoc = QJsonDocument::fromJson(data->data("text/queueitems"));
         QJsonArray jArr = jDoc.array();
         auto ids = jArr.toVariantList();
+        if (ids.empty() || std::any_of(ids.begin(), ids.end(), [this](const auto &id) {
+                return getPosition(id.toInt()) < 0;
+            }))
+            return false;
         int dropRow{0};
         if (parent.row() >= 0)
             dropRow = parent.row();
@@ -421,11 +467,15 @@ Qt::DropActions TableModelQueueSongs::supportedDropActions() const {
 }
 
 Qt::ItemFlags TableModelQueueSongs::flags([[maybe_unused]]const QModelIndex &index) const {
+    if (!isQueueReady())
+        return Qt::NoItemFlags;
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled;
 
 }
 
 void TableModelQueueSongs::sort(int column, Qt::SortOrder order) {
+    if (!isQueueReady())
+        return;
     emit layoutAboutToBeChanged();
     if (order == Qt::AscendingOrder) {
         std::sort(m_songs.begin(), m_songs.end(), [&column](okj::QueueSong &a, okj::QueueSong &b) {

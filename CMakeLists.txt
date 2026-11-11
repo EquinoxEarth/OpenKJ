@@ -349,6 +349,14 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-queue-append-test PRIVATE Qt6::Widgets Qt6::Sql spdlog::spdlog)
     add_test(NAME queue-append COMMAND openkj-queue-append-test)
     set_tests_properties(queue-append PROPERTIES TIMEOUT 15 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-queue-loading-test
+        packaging/queue_loading_test.cpp src/databaseworker.cpp
+        src/models/tablemodelqueuesongs.cpp src/models/tablemodelkaraokesongs.cpp
+        src/okjtypes.cpp src/settings.cpp src/simplecrypt.cpp src/resources.qrc)
+    target_link_libraries(openkj-queue-loading-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
+        Qt6::Svg Qt6::Concurrent spdlog::spdlog)
+    add_test(NAME queue-loading COMMAND openkj-queue-loading-test)
+    set_tests_properties(queue-loading PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(openkj-audio-outputs-test
         packaging/audio_outputs_test.cpp

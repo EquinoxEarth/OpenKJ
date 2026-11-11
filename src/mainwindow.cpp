@@ -213,7 +213,7 @@ void MainWindow::setupShortcuts() {
         m_karaokeSongsModel.updateSongHistory(m_karaokeSongsModel.getIdForPath(nextSongPath));
         play(nextSongPath);
         m_mediaBackendKar.setPitchShift(nextSinger.nextSongKeyChg());
-        m_qModel.setPlayed(nextSinger.nextSongQueueId());
+        m_qModel.setPlayedForSinger(nextSinger.id, nextSinger.nextSongQueueId());
         m_rotModel.setCurrentSinger(nextSinger.id);
         m_rotDelegate.setCurrentSinger(nextSinger.id);
         if (m_settings.rotationAltSortOrder()) {
@@ -1710,7 +1710,7 @@ void MainWindow::tableViewDbDoubleClicked(const QModelIndex &index) {
         return;
     }
     if (m_qModel.getSingerId() >= 0 && ui->tableViewRotation->selectionModel()->hasSelection()) {
-        m_qModel.add(song->id);
+        m_qModel.songAddSlot(song->id, m_qModel.getSingerId());
         updateRotationDuration();
     } else {
         QMessageBox msgBox;
@@ -1769,7 +1769,7 @@ void MainWindow::tableViewRotationDoubleClicked(const QModelIndex &index) {
                 m_historySongsModel.saveSong(m_curSinger, nextSongPath, m_curArtist, m_curTitle, curSongId,
                                              curKeyChange);
             m_mediaBackendKar.setPitchShift(curKeyChange);
-            m_qModel.setPlayed(singer.nextSongQueueId());
+            m_qModel.setPlayedForSinger(singer.id, singer.nextSongQueueId());
             m_rotDelegate.setCurrentSinger(singerId);
             m_rotModel.setCurrentSinger(singerId);
             if (m_settings.rotationAltSortOrder()) {
@@ -1898,7 +1898,7 @@ void MainWindow::tableViewQueueDoubleClicked(const QModelIndex &index) {
     if (m_settings.treatAllSingersAsRegs() || singer.regular)
         m_historySongsModel.saveSong(singer.name, song.path, song.artist, song.title, song.songId, song.keyChange);
     m_mediaBackendKar.setPitchShift(song.keyChange);
-    m_qModel.setPlayed(song.id);
+    m_qModel.setPlayedForSinger(song.singerId, song.id);
     m_rotModel.setCurrentSinger(singer.id);
     m_rotDelegate.setCurrentSinger(singer.id);
     if (m_settings.rotationAltSortOrder()) {
@@ -2006,9 +2006,12 @@ void MainWindow::songDroppedOnSinger(const int &singerId, const int &songId, con
 }
 
 void MainWindow::tableViewQueueClicked(const QModelIndex &index) {
+    if (!index.isValid() || !m_qModel.isQueueReady())
+        return;
+    const int songId = index.sibling(index.row(), TableModelQueueSongs::COL_ID).data().toInt();
     if (index.column() == TableModelQueueSongs::COL_PATH) {
         if ((m_settings.showQueueRemovalWarning()) &&
-            (!m_qModel.getPlayed(index.sibling(index.row(), TableModelQueueSongs::COL_ID).data().toInt()))) {
+            (!m_qModel.getPlayed(songId))) {
             QMessageBox msgBox(this);
             auto *cb = new QCheckBox("Show this warning in the future");
             cb->setChecked(m_settings.showQueueRemovalWarning());
@@ -2021,10 +2024,10 @@ void MainWindow::tableViewQueueClicked(const QModelIndex &index) {
             connect(cb, &QCheckBox::toggled, &m_settings, &Settings::setShowQueueRemovalWarning);
             msgBox.exec();
             if (msgBox.clickedButton() == yesButton) {
-                m_qModel.remove(index.sibling(index.row(), TableModelQueueSongs::COL_ID).data().toInt());
+                m_qModel.remove(songId);
             }
         } else {
-            m_qModel.remove(index.sibling(index.row(), TableModelQueueSongs::COL_ID).data().toInt());
+            m_qModel.remove(songId);
         }
     }
 }
@@ -2788,7 +2791,7 @@ void MainWindow::karaokeAATimerTimeout() {
         m_karaokeSongsModel.updateSongHistory(m_karaokeSongsModel.getIdForPath(m_kAANextSongPath));
         play(m_kAANextSongPath);
         m_mediaBackendKar.setPitchShift(singer.nextSongKeyChg());
-        m_qModel.setPlayed(singer.nextSongQueueId());
+        m_qModel.setPlayedForSinger(singer.id, singer.nextSongQueueId());
         m_rotModel.setCurrentSinger(m_kAANextSinger);
         m_rotDelegate.setCurrentSinger(m_kAANextSinger);
         if (m_settings.rotationAltSortOrder()) {
@@ -3471,7 +3474,8 @@ void MainWindow::filesDroppedOnQueue(const QList<QUrl> &urls, const int &singerI
                 m_logger->info("{} addSong returned songid: {}", m_loggingPrefix, songId);
                 if (songId == -1)
                     continue;
-                m_qModel.insert(songId, position);
+                if (singerId == m_qModel.getSingerId() && m_qModel.isQueueReady())
+                    m_qModel.insert(songId, position);
             }
         }
 }

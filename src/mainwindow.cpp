@@ -22,6 +22,7 @@
 #include "mzarchive.h"
 #include "mediapreparation.h"
 #include "dlgeditsong.h"
+#include "songedit.h"
 #include "soundfxbutton.h"
 #include "src/models/tableviewtooltipfilter.h"
 #include "dbupdater.h"
@@ -2232,230 +2233,63 @@ void MainWindow::previewKaraokeSong(const QString &path) {
 }
 
 void MainWindow::editSong(const std::shared_ptr<okj::KaraokeSong>& song) {
-    QSqlQuery query;
-    bool isCdg = false;
-    if (QFileInfo(song->path).suffix().toLower() == "cdg")
-        isCdg = true;
-    QString mediaFile;
-    if (isCdg)
-        mediaFile = findMatchingAudioFile(song->path);
+    const int songId = song->id;
+    const QString originalPath = song->path;
+    const QString artist = song->artist;
+    const QString title = song->title;
+    const QString discId = song->songid;
     TableModelKaraokeSourceDirs model;
-    SourceDir srcDir = model.getDirByPath(song->path);
-    bool allowRename = true;
-    bool showSongId = true;
-    if (srcDir.getPattern() == SourceDir::AT || srcDir.getPattern() == SourceDir::TA)
-        showSongId = false;
-    if (srcDir.getPattern() == SourceDir::CUSTOM || srcDir.getPattern() == SourceDir::METADATA)
-        allowRename = false;
-    if (srcDir.getIndex() == -1) {
-        allowRename = false;
-        QMessageBox msgBoxErr;
-        msgBoxErr.setText("Unable to find a configured source path containing the file.");
-        msgBoxErr.setInformativeText(
-                "You won't be able to rename the file.  To fix this, ensure that a source directory is configured in the database settings which contains this file.");
-        msgBoxErr.setStandardButtons(QMessageBox::Ok);
-        msgBoxErr.exec();
+    const SourceDir sourceDir = model.getDirByPath(originalPath);
+    const auto pattern = sourceDir.getPattern();
+    const bool showSongId = pattern != SourceDir::AT && pattern != SourceDir::TA;
+    const bool allowRename = sourceDir.getIndex() != -1 &&
+                             pattern != SourceDir::CUSTOM && pattern != SourceDir::METADATA;
+    if (sourceDir.getIndex() == -1) {
+        QMessageBox::warning(this, tr("Song folder is not configured"),
+                             tr("Add the file's source folder in the database settings to rename it."));
     }
-    DlgEditSong dlg(song->artist, song->title, song->songid, showSongId, allowRename, this);
-    int result = dlg.exec();
-    if (result != QDialog::Accepted)
+
+    DlgEditSong dialog(artist, title, discId, showSongId, allowRename, this);
+    if (dialog.exec() != QDialog::Accepted)
         return;
-    if (song->artist == dlg.artist() && song->title == dlg.title() && song->songid == dlg.songId())
+    okj::SongEdit edit{dialog.artist(), dialog.title(), dialog.songId(), {}};
+    if (artist == edit.artist && title == edit.title && discId == edit.discId)
         return;
-    if (dlg.renameFile()) {
-        if (!QFileInfo(song->path).isWritable()) {
-            QMessageBox msgBoxErr;
-            msgBoxErr.setText("Unable to rename file");
-            msgBoxErr.setInformativeText(
-                    "Unable to rename file, your user does not have write permissions. Operation cancelled.");
-            msgBoxErr.setStandardButtons(QMessageBox::Ok);
-            msgBoxErr.exec();
-            return;
-        }
-        if (isCdg) {
-            if (!QFileInfo(mediaFile).isWritable()) {
-                QMessageBox msgBoxErr;
-                msgBoxErr.setText("Unable to rename file");
-                msgBoxErr.setInformativeText(
-                        "Unable to rename file, your user does not have write permissions. Operation cancelled.");
-                msgBoxErr.setStandardButtons(QMessageBox::Ok);
-                msgBoxErr.exec();
-                return;
-            }
-        }
-        QString newFn;
-        QString newMediaFn;
-        bool unsupported = false;
-        switch (srcDir.getPattern()) {
-            case SourceDir::SAT:
-                newFn = dlg.songId() + " - " + dlg.artist() + " - " + dlg.title() + "." +
-                        QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.songId() + " - " + dlg.artist() + " - " + dlg.title() + "." +
-                                 QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::STA:
-                newFn = dlg.songId() + " - " + dlg.title() + " - " + dlg.artist() + "." +
-                        QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.songId() + " - " + dlg.title() + " - " + dlg.artist() + "." +
-                                 QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::ATS:
-                newFn = dlg.artist() + " - " + dlg.title() + " - " + dlg.songId() + "." +
-                        QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.artist() + " - " + dlg.title() + " - " + dlg.songId() + "." +
-                                 QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::TAS:
-                newFn = dlg.title() + " - " + dlg.artist() + " - " + dlg.songId() + "." +
-                        QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.title() + " - " + dlg.artist() + " - " + dlg.songId() + "." +
-                                 QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::S_T_A:
-                newFn = dlg.songId() + "_" + dlg.title() + "_" + dlg.artist() + "." +
-                        QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.songId() + "_" + dlg.title() + "_" + dlg.artist() + "." +
-                                 QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::AT:
-                newFn = dlg.artist() + " - " + dlg.title() + "." + QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.artist() + " - " + dlg.title() + "." + QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::TA:
-                newFn = dlg.title() + " - " + dlg.artist() + "." + QFileInfo(song->path).suffix();
-                if (isCdg)
-                    newMediaFn = dlg.title() + " - " + dlg.artist() + "." + QFileInfo(mediaFile).suffix();
-                break;
-            case SourceDir::CUSTOM:
-            case SourceDir::METADATA:
-                unsupported = true;
-                break;
-        }
-        if (unsupported) {
-            QMessageBox msgBoxErr;
-            msgBoxErr.setText("Unable to rename file");
-            msgBoxErr.setInformativeText(
-                    "Unable to rename file, renaming custom and metadata based source files is not supported. Operation cancelled.");
-            msgBoxErr.setStandardButtons(QMessageBox::Ok);
-            msgBoxErr.exec();
-            return;
-        }
-        if (QFile::exists(newFn)) {
-            QMessageBox msgBoxErr;
-            msgBoxErr.setText("Unable to rename file");
-            msgBoxErr.setInformativeText(
-                    "Unable to rename file, a file by that name already exists in the same directory. Operation cancelled.");
-            msgBoxErr.setStandardButtons(QMessageBox::Ok);
-            msgBoxErr.exec();
-            return;
-        }
-        if (isCdg) {
-            if (QFile::exists(newMediaFn)) {
-                QMessageBox msgBoxErr;
-                msgBoxErr.setText("Unable to rename file");
-                msgBoxErr.setInformativeText(
-                        "Unable to rename file, a file by that name already exists in the same directory. Operation cancelled.");
-                msgBoxErr.setStandardButtons(QMessageBox::Ok);
-                msgBoxErr.exec();
-                return;
-            }
-        }
-        QString newFilePath = QFileInfo(song->path).absoluteDir().absolutePath() + "/" + newFn;
-        if (newFilePath != song->path) {
-            if (!QFile::rename(song->path,
-                               QFileInfo(song->path).absoluteDir().absolutePath() + "/" + newFn)) {
-                QMessageBox msgBoxErr;
-                msgBoxErr.setText("Error while renaming file!");
-                msgBoxErr.setInformativeText("An unknown error occurred while renaming the file. Operation cancelled.");
-                msgBoxErr.setStandardButtons(QMessageBox::Ok);
-                msgBoxErr.exec();
-                return;
-            }
-            if (isCdg) {
-                if (!QFile::rename(mediaFile,
-                                   QFileInfo(song->path).absoluteDir().absolutePath() + "/" + newMediaFn)) {
-                    QMessageBox msgBoxErr;
-                    msgBoxErr.setText("Error while renaming file!");
-                    msgBoxErr.setInformativeText(
-                            "An unknown error occurred while renaming the file. Operation cancelled.");
-                    msgBoxErr.setStandardButtons(QMessageBox::Ok);
-                    msgBoxErr.exec();
-                    return;
-                }
-            }
-        }
-        m_logger->info("{} New filename: {}", m_loggingPrefix, newFn.toStdString());
-        query.prepare(
-                "UPDATE dbsongs SET artist = :artist, title = :title, discid = :songid, path = :path, filename = :filename, searchstring = :searchstring WHERE songid = :rowid");
-        QString newArtist = dlg.artist();
-        QString newTitle = dlg.title();
-        QString newSongId = dlg.songId();
-        QString newPath = QFileInfo(song->path).absoluteDir().absolutePath() + "/" + newFn;
-        QString newSearchString =
-                QFileInfo(newPath).completeBaseName() + " " + newArtist + " " + newTitle + " " + newSongId;
-        query.bindValue(":artist", newArtist);
-        query.bindValue(":title", newTitle);
-        query.bindValue(":songid", newSongId);
-        query.bindValue(":path", newPath);
-        query.bindValue(":filename", newFn);
-        query.bindValue(":searchstring", newSearchString);
-        query.bindValue(":rowid", song->id);
-        query.exec();
-        if (auto error = query.lastError(); error.type() != QSqlError::NoError) {
-            m_logger->error("{} Database error: {}", m_loggingPrefix, error.text().toStdString());
-            QMessageBox msgBoxErr;
-            msgBoxErr.setText("Error while updating the database!");
-            msgBoxErr.setInformativeText(query.lastError().text());
-            msgBoxErr.setStandardButtons(QMessageBox::Ok);
-            msgBoxErr.exec();
-            return;
-        } else {
-            QMessageBox msgBoxInfo;
-            msgBoxInfo.setText("Edit successful");
-            msgBoxInfo.setInformativeText("The file has been renamed and the database has been updated successfully.");
-            msgBoxInfo.setStandardButtons(QMessageBox::Ok);
-            msgBoxInfo.exec();
-            refreshLibrarySong(song->id);
-            return;
-        }
-    } else {
-        query.prepare(
-                "UPDATE dbsongs SET artist = :artist, title = :title, discid = :songid, searchstring = :searchstring WHERE songid = :rowid");
-        QString newArtist = dlg.artist();
-        QString newTitle = dlg.title();
-        QString newSongId = dlg.songId();
-        QString newSearchString =
-                QFileInfo(song->path).completeBaseName() + " " + newArtist + " " + newTitle + " " + newSongId;
-        query.bindValue(":artist", newArtist);
-        query.bindValue(":title", newTitle);
-        query.bindValue(":songid", newSongId);
-        query.bindValue(":searchstring", newSearchString);
-        query.bindValue(":rowid", song->id);
-        query.exec();
-        if (auto error = query.lastError(); error.type() != QSqlError::NoError) {
-            m_logger->error("{} Database error: {}", m_loggingPrefix, error.text().toStdString());
-            QMessageBox msgBoxErr;
-            msgBoxErr.setText("Error while updating the database!");
-            msgBoxErr.setInformativeText(query.lastError().text());
-            msgBoxErr.setStandardButtons(QMessageBox::Ok);
-            msgBoxErr.exec();
-            return;
-        } else {
-            QMessageBox msgBoxInfo;
-            msgBoxInfo.setText("Edit successful");
-            msgBoxInfo.setInformativeText("The database has been updated successfully.");
-            msgBoxInfo.setStandardButtons(QMessageBox::Ok);
-            msgBoxInfo.exec();
-            refreshLibrarySong(song->id);
+    if (dialog.renameFile()) {
+        switch (pattern) {
+        case SourceDir::SAT: edit.filenameBase = edit.discId + " - " + edit.artist + " - " + edit.title; break;
+        case SourceDir::STA: edit.filenameBase = edit.discId + " - " + edit.title + " - " + edit.artist; break;
+        case SourceDir::ATS: edit.filenameBase = edit.artist + " - " + edit.title + " - " + edit.discId; break;
+        case SourceDir::TAS: edit.filenameBase = edit.title + " - " + edit.artist + " - " + edit.discId; break;
+        case SourceDir::S_T_A: edit.filenameBase = edit.discId + '_' + edit.title + '_' + edit.artist; break;
+        case SourceDir::AT: edit.filenameBase = edit.artist + " - " + edit.title; break;
+        case SourceDir::TA: edit.filenameBase = edit.title + " - " + edit.artist; break;
+        case SourceDir::CUSTOM:
+        case SourceDir::METADATA:
+            QMessageBox::warning(this, tr("Unable to rename file"),
+                                 tr("This source folder's naming pattern does not support renaming."));
             return;
         }
     }
+
+    const auto error = okj::saveSongEdit(m_database, songId, originalPath, edit);
+    if (!error.isEmpty()) {
+        m_logger->error("{} Song edit failed: {}", m_loggingPrefix, error.toStdString());
+        QMessageBox message(QMessageBox::Warning, tr("Song edit failed"), tr("Could not save the song edit."),
+                            QMessageBox::Ok, this);
+        message.setTextFormat(Qt::PlainText);
+        message.setInformativeText(error);
+        message.exec();
+        return;
+    }
+
+    refreshLibrarySong(songId);
+    if (dialog.renameFile()) {
+        m_qModel.loadSinger(m_qModel.getSingerId());
+        m_rotModel.loadData();
+        m_historySongsModel.loadSinger(m_historySongsModel.currentSingerName());
+    }
+    QMessageBox::information(this, tr("Edit successful"), tr("The song edit was saved."));
 }
 
 void MainWindow::markSongBad(const std::shared_ptr<okj::KaraokeSong>& song) {

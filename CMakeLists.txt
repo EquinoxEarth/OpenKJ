@@ -177,6 +177,7 @@ set(SOURCE_FILES
         src/idledetect.cpp
         src/databaseworker.cpp
         src/databaseschema.cpp
+        src/songedit.cpp
         src/mainwindow.h
         src/dlgaddsong.h
         src/dlgvideopreview.h
@@ -245,6 +246,7 @@ set(SOURCE_FILES
         src/idledetect.h
         src/databaseworker.h
         src/databaseschema.h
+        src/songedit.h
         src/mainwindow.ui
         src/dlgaddsong.ui
         src/dlgkeychange.ui
@@ -301,6 +303,10 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-database-schema-test PRIVATE Qt6::Test Qt6::Sql)
     add_test(NAME database-schema COMMAND openkj-database-schema-test)
     set_tests_properties(database-schema PROPERTIES TIMEOUT 15)
+    add_executable(openkj-song-edit-test packaging/song_edit_test.cpp src/songedit.cpp src/databaseschema.cpp)
+    target_link_libraries(openkj-song-edit-test PRIVATE Qt6::Test Qt6::Sql)
+    add_test(NAME song-edit COMMAND openkj-song-edit-test)
+    set_tests_properties(song-edit PROPERTIES TIMEOUT 15)
     add_executable(openkj-run-guard-test packaging/run_guard_test.cpp src/runguard/runguard.cpp)
     target_link_libraries(openkj-run-guard-test PRIVATE Qt6::Core)
     add_test(NAME run-guard COMMAND openkj-run-guard-test)

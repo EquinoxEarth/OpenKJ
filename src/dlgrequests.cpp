@@ -8,7 +8,8 @@
 #include "src/models/tableviewtooltipfilter.h"
 #include "dlgvideopreview.h"
 
-#include <spdlog/sinks/basic_file_sink.h>
+#include "startuplogging.h"
+#include <QDate>
 
 
 QString toMixedCase(const QString &s) {
@@ -29,17 +30,20 @@ DlgRequests::DlgRequests(TableModelRotation &rotationModel, OKJSongbookAPI &song
         rotModel(rotationModel),
         songbookApi(songbookAPI),
         ui(new Ui::DlgRequests) {
-    QString logDir = m_settings.logDir();
-    QDir dir;
-    dir.mkpath(logDir);
-    QString logFilePath;
-    QString filename = "openkj-requests-" + QDateTime::currentDateTime().toString("yyyy-MM-dd") + ".log";
-    logFilePath = logDir + QDir::separator() + filename;
-    m_reqLogger = spdlog::basic_logger_mt("requests", logFilePath.toStdString());
-    m_reqLogger->set_level(spdlog::level::info);
-    m_reqLogger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] | %v");
-    m_reqLogger->info("New logging session starting up");
-    m_reqLogger->flush();
+    m_reqLogger = std::make_shared<spdlog::logger>("requests");
+    const int fileLogLevel = m_settings.getFileLogLevel();
+    if (fileLogLevel >= Settings::LOG_LEVEL_CRITICAL && fileLogLevel <= Settings::LOG_LEVEL_TRACE) {
+        const auto name = QStringLiteral("openkj-requests-") + QDate::currentDate().toString(Qt::ISODate) + ".log";
+        const auto fileLog = okj::openFileLog(
+            {m_settings.logDir(), Settings::defaultLogDir(), okj::fallbackLogDirectory()},
+            name, spdlog::level::info, "[%Y-%m-%d %H:%M:%S.%e] | %v");
+        okj::reportLogFallback(fileLog);
+        if (fileLog.sink) {
+            m_reqLogger->sinks().push_back(fileLog.sink);
+            m_reqLogger->info("New logging session starting up");
+            m_reqLogger->flush();
+        }
+    }
     curRequestId = -1;
     ui->setupUi(this);
     requestsModel = new TableModelRequests(songbookApi, this);

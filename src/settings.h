@@ -86,6 +86,7 @@ public:
     qint64 hash(const QString & str);
     bool progressiveSearchEnabled();
     QString storeDownloadDir();
+    static QString defaultLogDir();
     QString logDir();
     bool logShow();
     bool logEnabled();

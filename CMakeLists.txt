@@ -102,6 +102,8 @@ set(SOURCE_FILES
         src/startupsplash.cpp
         src/startupsplash.h
         src/logging.h
+        src/startuplogging.cpp
+        src/startuplogging.h
         src/tablelayout.h
         src/bundledruntime.h
         src/dlgaddsong.cpp
@@ -289,7 +291,7 @@ option(OPENKJ_BUILD_SMOKE_TESTS "Build isolated Qt/SQLite/GStreamer runtime chec
 if(OPENKJ_BUILD_SMOKE_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     enable_testing()
-    add_executable(openkj-logging-test packaging/logging_test.cpp)
+    add_executable(openkj-logging-test packaging/logging_test.cpp src/startuplogging.cpp)
     target_link_libraries(openkj-logging-test PRIVATE Qt6::Core spdlog::spdlog)
     add_test(NAME logging COMMAND openkj-logging-test)
     set_tests_properties(logging PROPERTIES TIMEOUT 10)

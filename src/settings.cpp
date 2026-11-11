@@ -140,9 +140,15 @@ QString Settings::storeDownloadDir()
     return settings->value("storeDownloadDir", QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + QDir::separator() + "OpenKJ_Downloads" + QDir::separator()).toString();
 }
 
+QString Settings::defaultLogDir()
+{
+    const auto documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    return documents.isEmpty() ? QString{} : QDir(documents).filePath("OpenKJ_Logs") + QDir::separator();
+}
+
 QString Settings::logDir()
 {
-    return settings->value("logDir", QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QDir::separator() + "OpenKJ_Logs" + QDir::separator()).toString();
+    return settings->value("logDir", defaultLogDir()).toString();
 }
 
 bool Settings::logShow()

@@ -8,6 +8,7 @@
 #include <QFutureWatcher>
 #include <QStandardPaths>
 #include <QDebug>
+#include <QDate>
 #include "mainwindow.h"
 #include <QStyleFactory>
 #include <QStringList>
@@ -19,8 +20,8 @@
 #include "bundledruntime.h"
 #include "startupsplash.h"
 #include "mediainitialization.h"
+#include "startuplogging.h"
 #include <memory>
-#include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/async_logger.h>
 #include <spdlog/async.h>
@@ -150,80 +151,45 @@ static void configureBundledGStreamer()
 #endif
 
 
-int main(int argc, char *argv[]) {
-    QString logDir = settings.logDir();
-    QDir dir;
-    QString logFilePath;
-    QString filename = "openkj-debug-" + QDateTime::currentDateTime().toString("yyyy-MM-dd") + ".log";
-    dir.mkpath(logDir);
-    logFilePath = logDir + QDir::separator() + filename;
+static spdlog::level::level_enum logLevel(int setting)
+{
+    switch (setting) {
+    case Settings::LOG_LEVEL_CRITICAL: return spdlog::level::critical;
+    case Settings::LOG_LEVEL_ERROR: return spdlog::level::err;
+    case Settings::LOG_LEVEL_WARNING: return spdlog::level::warn;
+    case Settings::LOG_LEVEL_INFO: return spdlog::level::info;
+    case Settings::LOG_LEVEL_DEBUG: return spdlog::level::debug;
+    case Settings::LOG_LEVEL_TRACE: return spdlog::level::trace;
+    default: return spdlog::level::off;
+    }
+}
 
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFilePath.toStdString(), false);
+int main(int argc, char *argv[]) {
+    auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    console->set_pattern("[%^%l%$] %v");
+    const auto consoleLevel = logLevel(settings.getConsoleLogLevel());
+    const auto fileLevel = logLevel(settings.getFileLogLevel());
+    okj::FileLog fileLog;
+    if (fileLevel != spdlog::level::off) {
+        const auto name = QStringLiteral("openkj-debug-") + QDate::currentDate().toString(Qt::ISODate) + ".log";
+        fileLog = okj::openFileLog({settings.logDir(), Settings::defaultLogDir(), okj::fallbackLogDirectory()},
+                                  name, fileLevel, "[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
+        okj::reportLogFallback(fileLog);
+    }
+
+    // Keep warnings visible if file logging was requested but no file could be opened.
+    console->set_level(fileLevel != spdlog::level::off && !fileLog.sink
+                           ? std::min(consoleLevel, spdlog::level::warn) : consoleLevel);
+    std::vector<spdlog::sink_ptr> sinks{console};
+    if (fileLog.sink)
+        sinks.push_back(fileLog.sink);
     spdlog::init_thread_pool(8192, 2);
-    std::vector<spdlog::sink_ptr> sinks{console_sink, file_sink};
     logger = std::make_shared<spdlog::async_logger>("logger", sinks.begin(), sinks.end(), spdlog::thread_pool(),
                                                     spdlog::async_overflow_policy::block);
     spdlog::register_logger(logger);
     logger->set_level(spdlog::level::trace);
     spdlog::flush_every(std::chrono::seconds(1));
     logger->flush_on(spdlog::level::warn);
-
-    auto consoleLogLevel = settings.getConsoleLogLevel();
-    auto fileLogLevel = settings.getFileLogLevel();
-
-    switch (consoleLogLevel) {
-        case Settings::LOG_LEVEL_CRITICAL:
-            console_sink->set_level(spdlog::level::critical);
-            break;
-        case Settings::LOG_LEVEL_ERROR:
-            console_sink->set_level(spdlog::level::err);
-            break;
-        case Settings::LOG_LEVEL_WARNING:
-            console_sink->set_level(spdlog::level::warn);
-            break;
-        case Settings::LOG_LEVEL_INFO:
-            console_sink->set_level(spdlog::level::info);
-            break;
-        case Settings::LOG_LEVEL_DEBUG:
-            console_sink->set_level(spdlog::level::debug);
-            break;
-        case Settings::LOG_LEVEL_TRACE:
-            console_sink->set_level(spdlog::level::trace);
-            break;
-        default:
-            console_sink->set_level(spdlog::level::off);
-    }
-    switch (fileLogLevel) {
-        case Settings::LOG_LEVEL_CRITICAL:
-            file_sink->set_level(spdlog::level::critical);
-            break;
-        case Settings::LOG_LEVEL_ERROR:
-            file_sink->set_level(spdlog::level::err);
-            break;
-        case Settings::LOG_LEVEL_WARNING:
-            file_sink->set_level(spdlog::level::warn);
-            break;
-        case Settings::LOG_LEVEL_INFO:
-            file_sink->set_level(spdlog::level::info);
-            break;
-        case Settings::LOG_LEVEL_DEBUG:
-            file_sink->set_level(spdlog::level::debug);
-            break;
-        case Settings::LOG_LEVEL_TRACE:
-            file_sink->set_level(spdlog::level::trace);
-            break;
-        default:
-            file_sink->set_level(spdlog::level::off);
-    }
-    if (file_sink->level() > console_sink->level())
-        logger->set_level(file_sink->level());
-    else
-        logger->set_level(console_sink->level());
-
-    logger->set_level(spdlog::level::trace);
-    console_sink->set_pattern("[%^%l%$] %v");
-    file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
 
     logger->info("OpenKJ version {} starting up", OKJ_VERSION_STRING);
 

@@ -1,4 +1,8 @@
 #include "logging.h"
+#include "startuplogging.h"
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 
 #include <spdlog/async.h>
 #include <spdlog/sinks/ostream_sink.h>
@@ -14,11 +18,63 @@ void require(bool condition, const char *message)
     if (!condition)
         throw std::runtime_error(message);
 }
+
+void checkStartupLogFallback()
+{
+    QTemporaryDir test;
+    require(test.isValid(), "Cannot create an isolated startup logging directory");
+    const auto standard = test.filePath("Documents/OpenKJ_Logs");
+    const auto fallback = test.filePath("app-data/logs");
+    const auto disconnected = test.filePath("removed-volume/custom-logs");
+    const auto filename = QStringLiteral("openkj-debug-test.log");
+
+    const auto disabled = okj::openFileLog({disconnected, standard, fallback}, filename,
+                                            spdlog::level::off, "%v");
+    require(!disabled.sink && disabled.diagnostic.isEmpty(), "Disabled file logging must skip file setup");
+    require(!QFile::exists(test.filePath("removed-volume")) && !QFile::exists(test.filePath("app-data")),
+            "Disabled logging must leave both paths alone");
+
+    const auto normal = okj::openFileLog({standard, standard, fallback}, filename,
+                                          spdlog::level::info, "%v");
+    require(normal.sink && normal.path == QDir(standard).filePath(filename) && normal.diagnostic.isEmpty(),
+            "The normal log directory should be created and used");
+
+    const auto recovered = okj::openFileLog({disconnected, standard, fallback}, filename,
+                                             spdlog::level::critical, "%v");
+    require(recovered.sink && recovered.path == QDir(fallback).filePath(filename) &&
+                recovered.diagnostic.contains(disconnected),
+            "An unavailable custom directory should fall back with a useful diagnostic");
+    require(!QFile::exists(test.filePath("removed-volume")), "A missing custom volume should stay absent");
+    okj::reportLogFallback(recovered);
+    require(recovered.sink->level() == spdlog::level::critical, "Fallback must preserve the file log threshold");
+    QFile saved(recovered.path);
+    require(saved.open(QIODevice::ReadOnly) && saved.readAll().contains("removed-volume"),
+            "The fallback file should retain the startup diagnostic");
+
+    const auto unwritable = test.filePath("unwritable");
+    require(QDir().mkpath(QDir(unwritable).filePath(filename)), "Cannot block the configured log file");
+    const auto fileError = okj::openFileLog({unwritable, standard, fallback}, filename,
+                                             spdlog::level::info, "%v");
+    require(fileError.sink && fileError.diagnostic.contains("could not open"),
+            "A file sink that cannot open its file should use the fallback");
+
+    const auto blockedFallback = test.filePath("blocked-fallback");
+    QFile blocker(blockedFallback);
+    require(blocker.open(QIODevice::WriteOnly), "Cannot block the fallback directory");
+    blocker.close();
+    const auto consoleOnly = okj::openFileLog({unwritable, standard, blockedFallback}, filename,
+                                               spdlog::level::info, "%v");
+    require(!consoleOnly.sink && consoleOnly.diagnostic.contains("fallback failed") &&
+                consoleOnly.diagnostic.contains("console diagnostics"),
+            "Failure of both locations must leave a console diagnostic");
+}
+
 }
 
 int main()
 {
     try {
+        checkStartupLogFallback();
         std::ostringstream output;
         std::string error;
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(output);

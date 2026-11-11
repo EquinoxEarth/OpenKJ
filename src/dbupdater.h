@@ -72,7 +72,7 @@ private:
         bool IsValid = false;
         DbSongRecord CurrentRecord;
         explicit DbEnumerator(DbUpdater& parent) : m_parent(parent) {}
-        void prepareQuery(bool limitToPaths);
+        bool prepareQuery(bool limitToPaths);
         void readNextRecord();
         [[nodiscard]] int count() const { return m_count; }
     };

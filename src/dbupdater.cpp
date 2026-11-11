@@ -32,7 +32,17 @@ bool DbUpdater::process(const QList<QString> &paths, ProcessingOptions options)
     }
     const std::lock_guard<std::mutex> locker(mutex, std::adopt_lock);
 
+    m_errors.clear();
     m_missingFilesSongIds.clear();
+    if (paths.isEmpty())
+        return true;
+    for (const auto &path : paths) {
+        const QFileInfo source(path);
+        if (path.isEmpty() || !source.isDir() || !source.isReadable()) {
+            m_errors.append(tr("Source folder is unavailable or unreadable; scan cancelled: %1").arg(path));
+            return false;
+        }
+    }
     setPaths(paths);
 
     emit stateChanged("Scanning disk for files...");
@@ -42,7 +52,8 @@ bool DbUpdater::process(const QList<QString> &paths, ProcessingOptions options)
     emit stateChanged("Scanning database for files...");
     QApplication::processEvents();
     DbEnumerator dbEnumerator(*this);
-    dbEnumerator.prepareQuery(!options.testFlag(FixMovedFilesSearchInWholeDB));
+    if (!dbEnumerator.prepareQuery(!options.testFlag(FixMovedFilesSearchInWholeDB)))
+        return false;
 
     emit stateChanged("Checking files against database...");
     qInfo() << "Checking for new songs";
@@ -99,6 +110,15 @@ bool DbUpdater::process(const QList<QString> &paths, ProcessingOptions options)
     while (diskEnumerator.IsValid || dbEnumerator.IsValid);
 
 
+    // A disconnected source must not turn its entire library into removal candidates.
+    for (const auto &path : m_paths) {
+        const QFileInfo source(path);
+        if (!source.isDir() || !source.isReadable()) {
+            m_errors.append(tr("Source folder became unavailable; scan cancelled: %1").arg(path));
+            return false;
+        }
+    }
+
     if (options.testFlag(FixMovedFiles) && !newFilesOnDisk.empty() && !filesMissingOnDisk.empty()) {
         fixMissingFiles(filesMissingOnDisk, newFilesOnDisk);
     }
@@ -108,7 +128,12 @@ bool DbUpdater::process(const QList<QString> &paths, ProcessingOptions options)
     if (options.testFlag(PrepareForRemovalOfMissing)) {
         m_missingFilesSongIds.reserve(filesMissingOnDisk.size());
         foreach(const auto &rec, filesMissingOnDisk) {
-            m_missingFilesSongIds.append(rec.id);
+            // Whole-database moved-file lookup may inspect other sources, but
+            // only a source actually scanned can supply removal candidates.
+            if (std::any_of(m_paths.cbegin(), m_paths.cend(), [&rec](const QString &prefix) {
+                    return rec.path.startsWith(prefix, Qt::CaseSensitive);
+                }))
+                m_missingFilesSongIds.append(rec.id);
         }
     }
 
@@ -319,7 +344,7 @@ void DbUpdater::DiskEnumerator::readNextDiskFile()
     IsValid = CurrentFile != nullptr;
 }
 
-void DbUpdater::DbEnumerator::prepareQuery(bool limitToPaths)
+bool DbUpdater::DbEnumerator::prepareQuery(bool limitToPaths)
 {
     if (!limitToPaths) {
         m_dbSongs.prepare("SELECT songid, path, CASE discid WHEN '!!DROPPED!!' THEN 1 ELSE 0 END FROM dbsongs ORDER BY path");
@@ -327,16 +352,24 @@ void DbUpdater::DbEnumerator::prepareQuery(bool limitToPaths)
     else {
         QStringList sql_path_filter;
         for(int i = 0; i < m_parent.m_paths.size(); i++) {
-            sql_path_filter.append(QString("path LIKE :pathfilter%1").arg(i));
+            // Each normalized prefix ends in '/'. The half-open BINARY range
+            // [prefix, prefix-with-final-slash-replaced-by-'0') matches exactly
+            // its descendants, treats all filename characters literally, and
+            // can use idx_path. Case matches the scanner's QString comparison.
+            sql_path_filter.append(QString("(path COLLATE BINARY >= :pathstart%1 AND path COLLATE BINARY < :pathend%1)").arg(i));
         }
 
         m_dbSongs.prepare("SELECT songid, path, CASE discid WHEN '!!DROPPED!!' THEN 1 ELSE 0 END FROM dbsongs WHERE " + sql_path_filter.join(" OR ") + " ORDER BY path");
         for(int i = 0; i < m_parent.m_paths.size(); i++) {
-            auto key = QString(":pathfilter%1").arg(i);
-            m_dbSongs.bindValue(key, m_parent.m_paths[i] + "%");
+            const auto &prefix = m_parent.m_paths[i];
+            m_dbSongs.bindValue(QString(":pathstart%1").arg(i), prefix);
+            m_dbSongs.bindValue(QString(":pathend%1").arg(i), prefix.chopped(1) + "0");
         }
     }
-    m_dbSongs.exec();
+    if (!m_dbSongs.exec()) {
+        m_parent.m_errors.append(m_dbSongs.lastError().text());
+        return false;
+    }
 
     // trick to do count in SQlite:
     m_count = 0;
@@ -346,6 +379,7 @@ void DbUpdater::DbEnumerator::prepareQuery(bool limitToPaths)
         m_dbSongs.first();
         m_dbSongs.previous();
     }
+    return true;
 }
 
 void DbUpdater::DbEnumerator::readNextRecord()
@@ -366,9 +400,8 @@ void DbUpdater::setPaths(const QList<QString> &paths)
     //  * Remove any subpath as parent paths are scanned recursively
     m_paths = QStringList();
     foreach(auto path, paths) {
-        m_paths << (path.endsWith("/")
-                ? path
-                : path + "/");
+        path = QDir(QDir::fromNativeSeparators(path)).absolutePath();
+        m_paths << (path.endsWith("/") ? path : path + "/");
     }
 
     m_paths.sort();

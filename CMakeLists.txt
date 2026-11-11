@@ -326,6 +326,14 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-table-layout-test PRIVATE Qt6::Test Qt6::Widgets)
     add_test(NAME table-layout COMMAND openkj-table-layout-test)
     set_tests_properties(table-layout PROPERTIES TIMEOUT 15 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(openkj-source-folder-scan-test
+        packaging/source_folder_scan_test.cpp src/dbupdater.cpp
+        src/karaokefileinfo.cpp src/karaokefilepatternresolver.cpp src/custompattern.cpp src/tagreader.cpp
+        src/mzarchive.cpp src/settings.cpp src/simplecrypt.cpp)
+    target_link_libraries(openkj-source-folder-scan-test PRIVATE ${LIBRARIES} Qt6::Test)
+    add_test(NAME source-folder-scan COMMAND openkj-source-folder-scan-test)
+    set_tests_properties(source-folder-scan PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)
     add_test(NAME directory-listing COMMAND openkj-directory-listing-test)

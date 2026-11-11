@@ -183,7 +183,11 @@ void DlgDatabase::scan(bool scanAllPaths)
     dbUpdateDlg->show();
     QApplication::processEvents();
 
-    updater.process(paths, processingOptions);
+    if (!updater.process(paths, processingOptions)) {
+        dbUpdateDlg->hide();
+        showDbUpdateErrors(updater.getErrors());
+        return;
+    }
 
     showDbUpdateErrors(updater.getErrors());
 

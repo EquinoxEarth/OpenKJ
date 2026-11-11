@@ -7,6 +7,7 @@
 #include <QUrl>
 #include <QTimer>
 #include "settings.h"
+#include "songbookupload.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/async_logger.h>
 #include "logging.h"
@@ -61,9 +62,8 @@ private:
     bool connectionReset;
     int entitledSystems;
     bool programIsIdle;
-    bool cancelUpdate;
-    bool updateInProgress;
     Settings m_settings;
+    okj::SongbookUpload m_songDbUpload{this};
 
 public:
     explicit OKJSongbookAPI(QObject *parent = nullptr);
@@ -79,16 +79,14 @@ public:
     void alertCheck();
     void getEntitledSystemCount();
     [[nodiscard]] int entitledSystemCount() const { return entitledSystems; }
-    [[nodiscard]] bool updateWasCancelled() const {return cancelUpdate; }
     void triggerTestAdd();
 
 signals:
     void venuesChanged(OkjsVenues);
     void sslError();
-    void remoteSongDbUpdateProgress(int);
-    void remoteSongDbUpdateNumDocs(int);
-    void remoteSongDbUpdateDone();
-    void remoteSongDbUpdateStart();
+    void remoteSongDbUpdatePrepared(int totalBatches);
+    void remoteSongDbUpdateProgress(int confirmedBatches);
+    void remoteSongDbUpdateFinished(const okj::SongbookUploadResult &result);
     void requestsChanged(OkjsRequests);
     void synchronized(QTime);
     void delayError(int);

@@ -1,4 +1,5 @@
 #include "okjversion.h"
+#include "songbookupload.h"
 #include "songshop.h"
 #include "updatechecker.h"
 
@@ -10,10 +11,15 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QSignalSpy>
+#include <QScopeGuard>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QUuid>
 #include <QtEndian>
 #include <cstring>
 #include <spdlog/sinks/null_sink.h>
@@ -24,6 +30,7 @@ struct Response {
     int status{200};
     QByteArray length;
     QNetworkReply::NetworkError error{QNetworkReply::NoError};
+    bool stalled{false};
 };
 
 class ScriptedReply : public QNetworkReply
@@ -39,7 +46,7 @@ public:
             setRawHeader("Content-Length", response.length);
         open(ReadOnly | Unbuffered);
         QTimer::singleShot(0, this, [this, response] {
-            if (isFinished())
+            if (isFinished() || response.stalled)
                 return;
             const auto middle = response.body.size() / 2;
             m_bytes = response.body.first(middle);
@@ -85,12 +92,14 @@ class ScriptedNetwork : public QNetworkAccessManager
 public:
     QList<Response> responses;
     QList<QNetworkRequest> requests;
+    QList<QByteArray> payloads;
     QPointer<QNetworkReply> latest;
 
 protected:
-    QNetworkReply *createRequest(Operation, const QNetworkRequest &request, QIODevice *) override
+    QNetworkReply *createRequest(Operation, const QNetworkRequest &request, QIODevice *outgoingData) override
     {
         requests.append(request);
+        payloads.append(outgoingData ? outgoingData->readAll() : QByteArray{});
         latest = new ScriptedReply(request, responses.isEmpty() ? Response{{}, 500} : responses.takeFirst(), this);
         return latest;
     }
@@ -104,6 +113,53 @@ class NetworkHandlingTest : public QObject
     QString savedFolder;
     int savedBranch{0};
     bool savedChecks{false};
+    using UploadResult = okj::SongbookUploadResult;
+
+    static void createSongbookCatalog(const QString &path, int distinctSongs)
+    {
+        const auto name = QUuid::createUuid().toString();
+        const auto remove = qScopeGuard([&] { QSqlDatabase::removeDatabase(name); });
+        auto db = QSqlDatabase::addDatabase("QSQLITE", name);
+        db.setDatabaseName(path);
+        QVERIFY2(db.open(), qPrintable(db.lastError().text()));
+        QSqlQuery query(db);
+        QVERIFY(query.exec("CREATE TABLE dbsongs (artist TEXT COLLATE NOCASE, title TEXT COLLATE NOCASE, discid TEXT)"));
+        QVERIFY(query.exec("INSERT INTO dbsongs VALUES ('Excluded', 'Bad', '!!BAD!!'), "
+                           "('Excluded', 'Dropped', '!!DROPPED!!'), ('Excluded', 'No disc', NULL)"));
+        if (distinctSongs >= 2) {
+            // These distinct pairs have the same concatenation and one appears twice.
+            QVERIFY(query.exec("INSERT INTO dbsongs VALUES ('AB', 'C', '001'), ('A', 'BC', '002'), ('A', 'BC', '003')"));
+        }
+        const int generated = distinctSongs >= 2 ? distinctSongs - 2 : distinctSongs;
+        if (generated > 0) {
+            QVERIFY(query.exec(QStringLiteral("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < %1) "
+                                              "INSERT INTO dbsongs SELECT 'Singer', printf('Song %04d', i), 'TEST' FROM n")
+                                   .arg(generated)));
+        }
+    }
+
+    static okj::SongbookUploadOptions uploadOptions(const QString &path)
+    {
+        return {path, QUrl("http://songbook.example.test/api"), "fixture-key", 3};
+    }
+
+    static Response cleared()
+    {
+        return {R"({"command":"clearDatabase","error":"false"})"};
+    }
+
+    static Response batchAccepted(int count)
+    {
+        return {QJsonDocument(QJsonObject{{"command", "addSongs"}, {"error", false}, {"errors", QJsonArray{}},
+                                          {"entries processed", count}}).toJson(QJsonDocument::Compact)};
+    }
+
+    static Response stalled()
+    {
+        Response response;
+        response.stalled = true;
+        return response;
+    }
 
     static QString assetSuffix()
     {
@@ -382,6 +438,208 @@ private slots:
                        "{\"result\":\"SUCCESS\",\"download_links\":[\"http://cdn.example.test/song\"]}");
         QTRY_COMPARE(downloadFailures.size(), 1);
         QCOMPARE(network.requests.size(), 3);
+        QTRY_VERIFY(network.latest.isNull());
+    }
+
+    void songbookUploadBatches_data()
+    {
+        QTest::addColumn<int>("songs");
+        for (int count : {0, 999, 1000, 1001, 2002})
+            QTest::newRow(qPrintable(QString::number(count))) << count;
+    }
+
+    void songbookUploadBatches()
+    {
+        QFETCH(int, songs);
+        QTemporaryDir folder;
+        QVERIFY(folder.isValid());
+        const auto path = folder.filePath("library.sqlite");
+        createSongbookCatalog(path, songs);
+        ScriptedNetwork network;
+        network.responses.append(cleared());
+        for (int remaining = songs; remaining > 0; remaining -= 1000)
+            network.responses.append(batchAccepted(qMin(1000, remaining)));
+
+        okj::SongbookUpload upload(nullptr, &network);
+        QSignalSpy prepared(&upload, &okj::SongbookUpload::prepared);
+        QSignalSpy progress(&upload, &okj::SongbookUpload::progress);
+        QSignalSpy finished(&upload, &okj::SongbookUpload::finished);
+        upload.start(uploadOptions(path));
+        QVERIFY(network.requests.isEmpty());
+        QTRY_COMPARE(finished.size(), 1);
+        QTRY_VERIFY(network.latest.isNull());
+        const auto result = finished.first().first().value<UploadResult>();
+        const int batches = (songs + 999) / 1000;
+        QCOMPARE(result.status, UploadResult::Status::Completed);
+        QCOMPARE(result.catalog, UploadResult::Catalog::Cleared);
+        QCOMPARE(result.totalBatches, batches);
+        QCOMPARE(result.confirmedBatches, batches);
+        QCOMPARE(prepared.size(), 1);
+        QCOMPARE(prepared.first().first().toInt(), batches);
+        QCOMPARE(progress.size(), batches);
+        QCOMPARE(network.requests.size(), 1 + batches);
+
+        const auto clear = QJsonDocument::fromJson(network.payloads.first()).object();
+        QCOMPARE(clear.value("command").toString(), "clearDatabase");
+        QVERIFY(!clear.contains("songs"));
+        QSet<QPair<QString, QString>> uploaded;
+        for (int i = 0; i < batches; ++i) {
+            QCOMPARE(progress.at(i).first().toInt(), i);
+            const auto request = QJsonDocument::fromJson(network.payloads.at(i + 1)).object();
+            QCOMPARE(request.value("command").toString(), "addSongs");
+            QCOMPARE(request.value("api_key").toString(), "fixture-key");
+            QCOMPARE(request.value("system_id").toInt(), 3);
+            const auto batch = request.value("songs").toArray();
+            QCOMPARE(batch.size(), qMin(1000, songs - i * 1000));
+            for (const auto &entry : batch) {
+                const auto artist = entry.toObject().value("artist").toString();
+                const auto title = entry.toObject().value("title").toString();
+                QVERIFY(artist != "Excluded");
+                QVERIFY(!uploaded.contains({artist, title}));
+                uploaded.insert({artist, title});
+            }
+        }
+        QCOMPARE(uploaded.size(), songs);
+        if (songs > 0) {
+            QVERIFY(uploaded.contains(QPair<QString, QString>{"A", "BC"}));
+            QVERIFY(uploaded.contains(QPair<QString, QString>{"AB", "C"}));
+        }
+    }
+
+    void songbookFailedRepliesStopUpload_data()
+    {
+        QTest::addColumn<int>("confirmedBatches");
+        QTest::addColumn<bool>("clearSucceeded");
+        QTest::addColumn<QByteArray>("body");
+        QTest::addColumn<int>("status");
+        QTest::addColumn<QString>("error");
+        QTest::newRow("clear HTTP failure") << 0 << false << QByteArray() << 503 << QString("HTTP 503");
+        QTest::newRow("clear rejected") << 0 << false
+            << QByteArray(R"({"error":"true","errorString":"Invalid key"})") << 200 << QString("Invalid key");
+        QTest::newRow("clear malformed") << 0 << false << QByteArray("<html>") << 200 << QString("acknowledge");
+        QTest::newRow("batch rejected") << 1 << true
+            << QByteArray(R"({"command":"addSongs","error":true,"errorString":"Batch rejected"})") << 200 << QString("Batch rejected");
+        QTest::newRow("legacy errors array") << 0 << true
+            << QByteArray(R"({"command":"addSongs","error":"false","errors":[["failed"]]})") << 200 << QString("reported an error");
+        QTest::newRow("short batch") << 1 << true
+            << QByteArray(R"({"command":"addSongs","error":false,"entries processed":999})") << 200 << QString("different number");
+        QTest::newRow("wrong command") << 0 << true
+            << QByteArray(R"({"command":"clearDatabase","error":false})") << 200 << QString("acknowledge");
+        QTest::newRow("oversized reply") << 0 << true << QByteArray(300 * 1024, 'x') << 200 << QString("reply");
+    }
+
+    void songbookFailedRepliesStopUpload()
+    {
+        QFETCH(int, confirmedBatches);
+        QFETCH(bool, clearSucceeded);
+        QFETCH(QByteArray, body);
+        QFETCH(int, status);
+        QFETCH(QString, error);
+        QTemporaryDir folder;
+        const auto path = folder.filePath("library.sqlite");
+        createSongbookCatalog(path, 2002);
+        ScriptedNetwork network;
+        if (clearSucceeded)
+            network.responses.append(cleared());
+        for (int i = 0; i < confirmedBatches; ++i)
+            network.responses.append(batchAccepted(1000));
+        network.responses.append({body, status});
+        okj::SongbookUpload upload(nullptr, &network);
+        QSignalSpy finished(&upload, &okj::SongbookUpload::finished);
+        upload.start(uploadOptions(path));
+        QTRY_COMPARE(finished.size(), 1);
+        QTRY_VERIFY(network.latest.isNull());
+        const auto result = finished.first().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Failed);
+        QCOMPARE(result.catalog, clearSucceeded ? UploadResult::Catalog::Cleared : UploadResult::Catalog::ClearUnconfirmed);
+        QCOMPARE(result.confirmedBatches, confirmedBatches);
+        QCOMPARE(result.totalBatches, 3);
+        QCOMPARE(network.requests.size(), clearSucceeded ? confirmedBatches + 2 : 1);
+        QVERIFY2(result.error.contains(error), qPrintable(result.error));
+    }
+
+    void songbookDeadlineAbortsAndAllowsRetry()
+    {
+        QTemporaryDir folder;
+        const auto path = folder.filePath("library.sqlite");
+        createSongbookCatalog(path, 1001);
+        ScriptedNetwork network;
+        network.responses = {cleared(), batchAccepted(1000), stalled()};
+        okj::SongbookUpload upload(nullptr, &network, 100);
+        QSignalSpy finished(&upload, &okj::SongbookUpload::finished);
+        upload.start(uploadOptions(path));
+        QTRY_COMPARE(finished.size(), 1);
+        QTRY_VERIFY(network.latest.isNull());
+        auto result = finished.first().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Failed);
+        QCOMPARE(result.catalog, UploadResult::Catalog::Cleared);
+        QCOMPARE(result.confirmedBatches, 1);
+        QCOMPARE(network.requests.size(), 3);
+        QVERIFY(result.error.contains("timed out"));
+
+        network.responses = {cleared(), batchAccepted(1000), batchAccepted(1)};
+        upload.start(uploadOptions(path));
+        QTRY_COMPARE(finished.size(), 2);
+        result = finished.last().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Completed);
+        QCOMPARE(result.confirmedBatches, 2);
+        QCOMPARE(network.requests.size(), 6);
+    }
+
+    void songbookPreparationErrorNeverClearsRemoteCatalog()
+    {
+        QTemporaryDir folder;
+        ScriptedNetwork network;
+        okj::SongbookUpload upload(nullptr, &network);
+        QSignalSpy finished(&upload, &okj::SongbookUpload::finished);
+        const auto path = folder.filePath("invalid.sqlite");
+        putFile(path, "not a database");
+        upload.start(uploadOptions(path));
+        QTRY_COMPARE(finished.size(), 1);
+        const auto result = finished.first().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Failed);
+        QCOMPARE(result.catalog, UploadResult::Catalog::Untouched);
+        QVERIFY(network.requests.isEmpty());
+    }
+
+    void songbookCancellationTracksRemoteState()
+    {
+        QTemporaryDir folder;
+        const auto path = folder.filePath("library.sqlite");
+        createSongbookCatalog(path, 1001);
+        ScriptedNetwork network;
+        okj::SongbookUpload upload(nullptr, &network);
+        QSignalSpy finished(&upload, &okj::SongbookUpload::finished);
+
+        upload.start(uploadOptions(path));
+        upload.cancel();
+        QCOMPARE(finished.size(), 1);
+        auto result = finished.last().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Cancelled);
+        QCOMPARE(result.catalog, UploadResult::Catalog::Untouched);
+        QVERIFY(network.requests.isEmpty());
+
+        network.responses = {stalled()};
+        upload.start(uploadOptions(path));
+        QTRY_COMPARE(network.requests.size(), 1);
+        upload.cancel();
+        QCOMPARE(finished.size(), 2);
+        result = finished.last().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Cancelled);
+        QCOMPARE(result.catalog, UploadResult::Catalog::ClearUnconfirmed);
+        QCOMPARE(result.confirmedBatches, 0);
+        QTRY_VERIFY(network.latest.isNull());
+
+        network.responses = {cleared(), batchAccepted(1000), stalled()};
+        upload.start(uploadOptions(path));
+        QTRY_COMPARE(network.requests.size(), 4);
+        upload.cancel();
+        QCOMPARE(finished.size(), 3);
+        result = finished.last().first().value<UploadResult>();
+        QCOMPARE(result.status, UploadResult::Status::Cancelled);
+        QCOMPARE(result.catalog, UploadResult::Catalog::Cleared);
+        QCOMPARE(result.confirmedBatches, 1);
+        QCOMPARE(result.totalBatches, 2);
         QTRY_VERIFY(network.latest.isNull());
     }
 };

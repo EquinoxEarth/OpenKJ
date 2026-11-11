@@ -6,10 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QFile>
-#include <QSqlQuery>
-#include <QMessageBox>
-#include <QPushButton>
+#include <QSqlDatabase>
 #include "idledetect.h"
 
 extern IdleDetect *filter;
@@ -27,8 +24,6 @@ OKJSongbookAPI::OKJSongbookAPI(QObject *parent) : QObject(parent)
     programIsIdle = false;
     delayErrorEmitted = false;
     connectionReset = false;
-    cancelUpdate = false;
-    updateInProgress = false;
     serial = 0;
     entitledSystems = 1;
     timer = new QTimer(this);
@@ -38,6 +33,9 @@ OKJSongbookAPI::OKJSongbookAPI(QObject *parent) : QObject(parent)
     manager = new QNetworkAccessManager(this);
     connect(manager, &QNetworkAccessManager::sslErrors, this, &OKJSongbookAPI::onSslErrors);
     connect(manager, &QNetworkAccessManager::finished, this, &OKJSongbookAPI::onNetworkReply);
+    connect(&m_songDbUpload, &okj::SongbookUpload::prepared, this, &OKJSongbookAPI::remoteSongDbUpdatePrepared);
+    connect(&m_songDbUpload, &okj::SongbookUpload::progress, this, &OKJSongbookAPI::remoteSongDbUpdateProgress);
+    connect(&m_songDbUpload, &okj::SongbookUpload::finished, this, &OKJSongbookAPI::remoteSongDbUpdateFinished);
     connect(timer, &QTimer::timeout, this, &OKJSongbookAPI::timerTimeout);
     connect(alertTimer, &QTimer::timeout, this, &OKJSongbookAPI::alertTimerTimeout);
     connect(filter, &IdleDetect::idleStateChanged, this, &OKJSongbookAPI::idleStateChanged);
@@ -160,101 +158,15 @@ void OKJSongbookAPI::clearRequests()
 
 void OKJSongbookAPI::updateSongDb()
 {
-    cancelUpdate = false;
-    updateInProgress = true;
-    emit remoteSongDbUpdateStart();
-    int songsPerDoc = 1000;
-    QList<QJsonDocument> jsonDocs;
-    QSqlQuery query;
-    int numEntries = 0;
-    if (cancelUpdate)
-        return;
-    if (query.exec("SELECT COUNT(DISTINCT artist||title) FROM dbsongs WHERE discid != '!!DROPPED!!' AND discid != '!!BAD!!'"))
-    {
-        if (query.next())
-            numEntries = query.value(0).toInt();
-    }
-    if (cancelUpdate)
-        return;
-    if (query.exec("SELECT DISTINCT artist,title FROM dbsongs WHERE discid != '!!DROPPED!!' AND discid != '!!BAD!!' ORDER BY artist ASC, title ASC"))
-    {
-        if (cancelUpdate)
-            return;
-        bool done = false;
-        int numDocs = numEntries / songsPerDoc;
-        if (numEntries % songsPerDoc > 0)
-            numDocs++;
-        emit remoteSongDbUpdateNumDocs(numDocs);
-        int docs = 0;
-        while (!done)
-        {
-            if (cancelUpdate)
-                return;
-            QApplication::processEvents();
-            QJsonArray songsArray;
-            int count = 0;
-            while ((query.next()) && (count < songsPerDoc))
-            {
-                if (cancelUpdate)
-                    return;
-                QJsonObject songObject;
-                songObject.insert("artist", query.value(0).toString());
-                songObject.insert("title", query.value(1).toString());
-                songsArray.insert(0, songObject);
-                QApplication::processEvents();
-                count++;
-            }
-            docs++;
-            if (count < songsPerDoc)
-                done = true;
-            QJsonObject mainObject;
-            mainObject.insert("api_key", m_settings.requestServerApiKey());
-            mainObject.insert("command","addSongs");
-            mainObject.insert("songs", songsArray);
-            mainObject.insert("system_id", m_settings.systemId());
-            QJsonDocument jsonDocument;
-            jsonDocument.setObject(mainObject);
-            jsonDocs.append(jsonDocument);
-        }
-        QUrl url(m_settings.requestServerUrl());
-        QJsonObject mainObject;
-        mainObject.insert("api_key", m_settings.requestServerApiKey());
-        mainObject.insert("command","clearDatabase");
-        mainObject.insert("system_id", m_settings.systemId());
-        QJsonDocument jsonDocument;
-        jsonDocument.setObject(mainObject);
-        QNetworkRequest request(url);
-        if (cancelUpdate)
-            return;
-        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        QNetworkAccessManager *manager = new QNetworkAccessManager(this);
-        QNetworkReply *reply = manager->post(request, jsonDocument.toJson());
-        while (!reply->isFinished())
-            QApplication::processEvents();
-        m_logger->trace("{} Got reply: {}", m_loggingPrefix, reply->readAll().toStdString());
-        for (int i=0; i < jsonDocs.size(); i++)
-        {
-            if (cancelUpdate)
-                return;
-            QApplication::processEvents();
-            QNetworkRequest request(url);
-            request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-            QNetworkAccessManager *manager = new QNetworkAccessManager(this);
-            QNetworkReply *reply = manager->post(request, jsonDocs.at(i).toJson());
-            while (!reply->isFinished()){
-                if (cancelUpdate)
-                    return;
-                QApplication::processEvents();
-            }
-            if (cancelUpdate)
-                return;
-            emit remoteSongDbUpdateProgress(i + 1);
-        }
-    }
-    if (cancelUpdate)
-        return;
-    updateInProgress = false;
-    emit remoteSongDbUpdateDone();
+    const auto database = QSqlDatabase::database(QLatin1String(QSqlDatabase::defaultConnection), false);
+    m_songDbUpload.start({database.databaseName(), QUrl(m_settings.requestServerUrl()),
+                          m_settings.requestServerApiKey(), m_settings.systemId(),
+                          m_settings.requestServerIgnoreCertErrors()});
+}
+
+void OKJSongbookAPI::dbUpdateCanceled()
+{
+    m_songDbUpload.cancel();
 }
 
 bool OKJSongbookAPI::test()
@@ -529,27 +441,6 @@ void OKJSongbookAPI::getEntitledSystemCount()
     QNetworkRequest request(m_settings.requestServerUrl());
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     manager->post(request, jsonDocument.toJson());
-}
-
-void OKJSongbookAPI::dbUpdateCanceled()
-{
-    m_logger->info("{} Remote db update cancelled by user", m_loggingPrefix);
-    if (!cancelUpdate && updateInProgress)
-    {
-        QMessageBox msgBox(nullptr);
-        msgBox.setWindowTitle(tr("Cancelling Update"));
-        msgBox.setIcon(QMessageBox::Warning);
-        msgBox.setText("Are you sure you want to cancel the Songbook DB update?\n\nYour previous Songbook DB contents have already been cleared.\n\nCancelling now will result in an incomplete database of songs on your Songbook account.\n");
-   //     msgBox.setInformativeText("Are you sure?  Your previous Songbook DB contents have already been cleared.\nCancelling now will result in an incomplete database of songs on your Songbook account.");
-        QPushButton *yesButton = msgBox.addButton(tr("Cancel Update"), QMessageBox::AcceptRole);
-        msgBox.addButton(tr("Continue Update"), QMessageBox::RejectRole);
-        msgBox.exec();
-        if (msgBox.clickedButton() == yesButton)
-        {
-            cancelUpdate = true;
-            updateInProgress = false;
-        }
-    }
 }
 
 bool OkjsVenue::operator ==(const OkjsVenue &v) const

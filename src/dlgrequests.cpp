@@ -390,42 +390,75 @@ void DlgRequests::venuesChanged(OkjsVenues venues) {
     ui->checkBoxAccepting->setChecked(songbookApi.getAccepting());
 }
 
-void DlgRequests::on_pushButtonUpdateDb_clicked() {
+void DlgRequests::on_pushButtonUpdateDb_clicked()
+{
+    if (QMessageBox::question(this, tr("Update Songbook catalog"),
+                              tr("Replace the remote catalog with your local song list? The server clears the "
+                                 "current catalog before uploading the songs. Cancelling or losing the connection "
+                                 "after that can leave it incomplete."),
+                              QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+        return;
+
     ui->pushButtonUpdateDb->setEnabled(false);
-    QMessageBox msgBox;
-    msgBox.setText(
-            tr("Are you sure?\n\nThis operation can take serveral minutes depending on the size of your song database and the speed of your internet connection.\n"));
-//    msgBox.setInformativeText(tr("This operation can take serveral minutes depending on the size of your song database and the speed of your internet connection."));
-    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
-    msgBox.setDefaultButton(QMessageBox::Cancel);
-    int ret = msgBox.exec();
-    if (ret == QMessageBox::Yes) {
-        qInfo() << "Opening progress dialog for remote db update";
-        QProgressDialog *progressDialog = new QProgressDialog(this);
-//        progressDialog->setCancelButton(0);
-        progressDialog->setMinimum(0);
-        progressDialog->setMaximum(20);
-        progressDialog->setValue(0);
-        progressDialog->setLabelText(tr("Updating request server song database"));
-        progressDialog->show();
-        QApplication::processEvents();
-        connect(&songbookApi, &OKJSongbookAPI::remoteSongDbUpdateNumDocs, progressDialog, &QProgressDialog::setMaximum);
-        connect(&songbookApi, &OKJSongbookAPI::remoteSongDbUpdateProgress, progressDialog, &QProgressDialog::setValue);
-        connect(progressDialog, &QProgressDialog::canceled, &songbookApi, &OKJSongbookAPI::dbUpdateCanceled);
-        //    progressDialog->show();
-        songbookApi.updateSongDb();
-        if (songbookApi.updateWasCancelled())
-            qInfo() << "Songbook DB update cancelled by user";
-        else {
-            QMessageBox msgBox;
-            msgBox.setText(tr("Remote database update completed!"));
-            msgBox.exec();
+    auto *progress = new QProgressDialog(tr("Preparing the local song list…"), tr("Cancel"), 0, 0, this);
+    progress->setWindowTitle(tr("Updating Songbook"));
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    connect(progress, &QProgressDialog::canceled, &songbookApi, &OKJSongbookAPI::dbUpdateCanceled);
+    connect(&songbookApi, &OKJSongbookAPI::remoteSongDbUpdatePrepared, progress, [this, progress](int total) {
+        progress->setLabelText(tr("Waiting for Songbook to clear the catalog…"));
+        progress->setMaximum(total);
+        progress->setValue(0);
+    });
+    connect(&songbookApi, &OKJSongbookAPI::remoteSongDbUpdateProgress, progress, [this, progress](int confirmed) {
+        progress->setLabelText(tr("Uploading songs to Songbook…"));
+        progress->setValue(confirmed);
+    });
+    connect(&songbookApi, &OKJSongbookAPI::remoteSongDbUpdateFinished, progress,
+            [this, progress](const okj::SongbookUploadResult &result) {
+        using Result = okj::SongbookUploadResult;
+        disconnect(&songbookApi, nullptr, progress, nullptr);
+        progress->hide();
+        progress->deleteLater();
+        ui->pushButtonUpdateDb->setEnabled(true);
+
+        QString message;
+        QString details;
+        auto icon = QMessageBox::Information;
+        if (result.status == Result::Status::Completed) {
+            message = result.totalBatches == 0 ? tr("Songbook catalog cleared. There were no local songs to upload.")
+                                               : tr("Songbook catalog updated.");
+        } else {
+            message = result.status == Result::Status::Cancelled ? tr("Songbook update cancelled.")
+                                                                 : tr("Songbook update failed.");
+            switch (result.catalog) {
+            case Result::Catalog::Untouched:
+                details = tr("The remote catalog was left untouched.");
+                break;
+            case Result::Catalog::ClearUnconfirmed:
+                details = tr("The server may have cleared the remote catalog. OpenKJ received no confirmation.");
+                break;
+            case Result::Catalog::Cleared:
+                details = tr("The server cleared the catalog. %1 of %2 batches were confirmed. "
+                             "The remote song list may be incomplete.")
+                              .arg(result.confirmedBatches).arg(result.totalBatches);
+                break;
+            }
+            if (!result.error.isEmpty())
+                details += QStringLiteral("\n\n") + result.error;
+            if (result.status == Result::Status::Failed || result.catalog != Result::Catalog::Untouched)
+                icon = QMessageBox::Warning;
         }
-        qInfo() << "Closing progress dialog for remote db update";
-        progressDialog->close();
-        progressDialog->deleteLater();
-    }
-    ui->pushButtonUpdateDb->setEnabled(true);
+
+        auto *notice = new QMessageBox(icon, tr("Songbook update"), message, QMessageBox::Ok, this);
+        notice->setTextFormat(Qt::PlainText);
+        notice->setInformativeText(details);
+        notice->setAttribute(Qt::WA_DeleteOnClose);
+        notice->open();
+    });
+
+    progress->show();
+    songbookApi.updateSongDb();
 }
 
 void DlgRequests::on_comboBoxVenue_activated(int index) {

@@ -118,27 +118,8 @@ void MainWindow::setupShortcuts() {
     m_scutKSelectNextSinger.setKey(m_settings.loadShortcutKeySequence("kSelectNextSinger"));
     m_scutKSelectNextSinger.setContext(Qt::ApplicationShortcut);
     connect(&m_scutKSelectNextSinger, &QShortcut::activated, [&]() {
-        okj::RotationSinger nextSinger;
-        QString nextSongPath;
-        bool empty{false};
-        int curSingerId{m_rotModel.currentSinger()};
-        int curPos{m_rotModel.getSinger(curSingerId).position};
-        if (curSingerId == -1)
-            curPos = static_cast<int>(m_rotModel.singerCount() - 1);
-        int loops = 0;
-        while ((nextSongPath == "") && (!empty)) {
-            if (loops > m_rotModel.singerCount()) {
-                empty = true;
-            } else {
-                if (++curPos >= m_rotModel.singerCount()) {
-                    curPos = 0;
-                }
-                nextSinger = m_rotModel.getSingerAtPosition(curPos);
-                nextSongPath = nextSinger.nextSongPath();
-                loops++;
-            }
-        }
-        if (empty) {
+        const auto nextSinger = m_rotModel.nextSinger();
+        if (!nextSinger.isValid()) {
             QMessageBox::information(this, "Unable to select next",
                                      "Sorry, no unsung karaoke songs are currently in any singer's queue");
             return;
@@ -171,27 +152,9 @@ void MainWindow::setupShortcuts() {
             }
             m_mediaBackendKar.stop();
         }
-        okj::RotationSinger nextSinger;
-        QString nextSongPath;
-        bool empty{false};
-        int curSingerId{m_rotModel.currentSinger()};
-        int curPos{m_rotModel.getSinger(curSingerId).position};
-        if (curSingerId == -1)
-            curPos = static_cast<int>(m_rotModel.singerCount() - 1);
-        int loops = 0;
-        while ((nextSongPath == "") && (!empty)) {
-            if (loops > m_rotModel.singerCount()) {
-                empty = true;
-            } else {
-                if (++curPos >= m_rotModel.singerCount()) {
-                    curPos = 0;
-                }
-                nextSinger = m_rotModel.getSingerAtPosition(curPos);
-                nextSongPath = nextSinger.nextSongPath();
-                loops++;
-            }
-        }
-        if (empty) {
+        const auto nextSinger = m_rotModel.nextSinger();
+        const auto nextSongPath = nextSinger.nextSongPath();
+        if (!nextSinger.isValid()) {
             QMessageBox::information(this, "Unable to play next",
                                      "Sorry, no unsung karaoke songs are currently in any singer's queue");
             return;
@@ -218,7 +181,6 @@ void MainWindow::setupShortcuts() {
         m_rotDelegate.setCurrentSinger(nextSinger.id);
         if (m_settings.rotationAltSortOrder()) {
             auto curSingerPos = nextSinger.position;
-            m_curSingerOriginalPosition = curSingerPos;
             if (curSingerPos != 0)
                 m_rotModel.singerMove(curSingerPos, 0);
         }
@@ -1786,7 +1748,6 @@ void MainWindow::tableViewRotationDoubleClicked(const QModelIndex &index) {
             m_rotModel.setCurrentSinger(singerId);
             if (m_settings.rotationAltSortOrder()) {
                 auto curSingerPos = m_rotModel.getSinger(singerId).position;
-                m_curSingerOriginalPosition = curSingerPos;
                 if (curSingerPos != 0) {
                     m_rotModel.singerMove(curSingerPos, 0);
                     ui->tableViewRotation->clearSelection();
@@ -1916,7 +1877,6 @@ void MainWindow::tableViewQueueDoubleClicked(const QModelIndex &index) {
     if (m_settings.rotationAltSortOrder()) {
         // Need a new copy of the singer since the rotation has changed since we last grabbed them
         singer = m_rotModel.getSinger(singer.id);
-        m_curSingerOriginalPosition = singer.position;
         if (singer.position != 0) {
             m_rotModel.singerMove(singer.position, 0);
             ui->tableViewRotation->clearSelection();
@@ -2143,50 +2103,37 @@ void MainWindow::karaokeMediaBackend_stateChanged(const MediaBackend::State &sta
             return;
         m_lastAudioState = state;
         restoreBreakMusicVolume();
+        if (m_settings.rotationAltSortOrder()) {
+            const auto completedSinger = m_rotModel.getSinger(m_rotModel.currentSinger());
+            if (completedSinger.isValid())
+                m_rotModel.singerMove(completedSinger.position, static_cast<int>(m_rotModel.singerCount() - 1));
+            m_rotModel.setCurrentSinger(-1);
+            m_rotDelegate.setCurrentSinger(-1);
+            ui->tableViewRotation->clearSelection();
+            if (m_rotModel.singerCount() > 0)
+                ui->tableViewRotation->selectRow(0);
+            m_rotModel.setCurRemainSecs(0);
+        }
         if (m_settings.karaokeAutoAdvance()) {
             m_logger->info("{}  - Karaoke Autoplay is enabled", m_loggingPrefix);
             if (m_kAASkip) {
                 m_kAASkip = false;
                 m_logger->info("{}  - Karaoke Autoplay set to skip, bailing out", m_loggingPrefix);
             } else {
-                okj::RotationSinger nextSinger;
-                QString nextSongPath;
-                const int count = static_cast<int>(m_rotModel.singerCount());
-                const int curSingerId = m_rotModel.currentSinger();
-                int curPos = curSingerId == -1 ? count - 1 : m_rotModel.getSinger(curSingerId).position;
-                if (m_settings.rotationAltSortOrder() && curSingerId != -1)
-                    curPos = m_curSingerOriginalPosition;
-                // Examine each singer at most once, including wraparound.
-                for (int step = 0; step < count && nextSongPath.isEmpty(); ++step) {
-                    curPos = (curPos + 1) % count;
-                    nextSinger = m_rotModel.getSingerAtPosition(curPos);
-                    nextSongPath = nextSinger.nextSongPath();
-                }
-                if (nextSongPath.isEmpty())
+                if (!updateKaraokeAutoAdvanceTarget())
                     m_logger->info("{} KaraokeAA - No more songs to play, giving up", m_loggingPrefix);
                 else {
-                    m_kAANextSinger = nextSinger.id;
-                    m_kAANextSongPath = nextSongPath;
+                    const auto nextSinger = m_rotModel.getSinger(m_kAANextSinger);
                     m_logger->info("{} KaraokeAA - Will play: {} - {}", m_loggingPrefix,
-                                   nextSinger.name.toStdString(), nextSongPath.toStdString());
+                                   nextSinger.name.toStdString(), m_kAANextSongPath.toStdString());
                     m_logger->info("{} KaraokeAA - Starting {} second timer", m_loggingPrefix,
                                    m_settings.karaokeAATimeout());
                     m_timerKaraokeAA.start(m_settings.karaokeAATimeout() * 1000);
                     updateAutoplayStatus();
-                    cdgWindow->setNextSinger(nextSinger.name);
-                    cdgWindow->setNextSong(nextSinger.nextSongArtistTitle());
                     cdgWindow->setCountdownSecs(m_settings.karaokeAATimeout());
                     cdgWindow->showAlert(true);
                 }
             }
-        }
-        if (m_settings.rotationAltSortOrder()) {
-            m_rotModel.singerMove(0, static_cast<int>(m_rotModel.singerCount() - 1));
-            m_rotModel.setCurrentSinger(-1);
-            m_rotDelegate.setCurrentSinger(-1);
-            ui->tableViewRotation->clearSelection();
-            ui->tableViewRotation->selectRow(0);
-            m_rotModel.setCurRemainSecs(0);
         }
     }
     if (state == MediaBackend::EndOfMediaState) {
@@ -2258,6 +2205,13 @@ void MainWindow::hasActiveVideoChanged() {
 void MainWindow::rotationDataChanged() {
     if (m_shuttingDown)
         return;
+    if (m_timerKaraokeAA.isActive()) {
+        if (!updateKaraokeAutoAdvanceTarget()) {
+            m_timerKaraokeAA.stop();
+            cdgWindow->showAlert(false);
+        }
+        updateAutoplayStatus();
+    }
     m_logger->trace("{} [{}] Called", m_loggingPrefix, __func__);
     auto st = std::chrono::high_resolution_clock::now();
     if (m_settings.rotationShowNextSong())
@@ -2778,11 +2732,12 @@ void MainWindow::karaokeAATimerTimeout() {
     } else {
         // Starting media emits callbacks that can modify the rotation; retain
         // the selected song's details throughout this transition.
-        const auto singer = m_rotModel.getSinger(m_kAANextSinger);
-        if (!singer.isValid() || singer.nextSongPath().isEmpty()) {
+        const auto singer = m_rotModel.nextSinger();
+        if (!singer.isValid()) {
             m_logger->info("{} KaraokeAA - Selected singer no longer has an upcoming song", m_loggingPrefix);
             return;
         }
+        m_kAANextSinger = singer.id;
         m_kAANextSongPath = singer.nextSongPath();
         m_curSinger = singer.name;
         m_curArtist = singer.nextSongArtist();
@@ -2790,7 +2745,7 @@ void MainWindow::karaokeAATimerTimeout() {
         ui->labelArtist->setText(m_curArtist);
         ui->labelTitle->setText(m_curTitle);
         ui->labelSinger->setText(m_curSinger);
-        if (m_settings.treatAllSingersAsRegs() || m_rotModel.getSinger(m_kAANextSinger).regular) {
+        if (m_settings.treatAllSingersAsRegs() || singer.regular) {
             m_historySongsModel.saveSong(
                     m_curSinger,
                     m_kAANextSongPath,
@@ -2804,10 +2759,9 @@ void MainWindow::karaokeAATimerTimeout() {
         play(m_kAANextSongPath);
         m_mediaBackendKar.setPitchShift(singer.nextSongKeyChg());
         m_qModel.setPlayedForSinger(singer.id, singer.nextSongQueueId());
-        m_rotModel.setCurrentSinger(m_kAANextSinger);
-        m_rotDelegate.setCurrentSinger(m_kAANextSinger);
+        m_rotModel.setCurrentSinger(singer.id);
+        m_rotDelegate.setCurrentSinger(singer.id);
         if (m_settings.rotationAltSortOrder()) {
-            m_curSingerOriginalPosition = singer.position;
             if (singer.position != 0)
                 m_rotModel.singerMove(singer.position, 0);
         }
@@ -3945,6 +3899,15 @@ void MainWindow::updateDatabaseStatus() {
     }
 }
 
+bool MainWindow::updateKaraokeAutoAdvanceTarget() {
+    const auto singer = m_rotModel.nextSinger();
+    m_kAANextSinger = singer.isValid() ? singer.id : -1;
+    m_kAANextSongPath = singer.isValid() ? singer.nextSongPath() : QString();
+    cdgWindow->setNextSinger(singer.isValid() ? singer.name : QString());
+    cdgWindow->setNextSong(singer.isValid() ? singer.nextSongArtistTitle() : QString());
+    return singer.isValid();
+}
+
 void MainWindow::updateAutoplayStatus() {
     if (!m_settings.karaokeAutoAdvance()) {
         m_labelAutoplayStatus.setText(tr(" Autoplay: Off"));
@@ -4547,7 +4510,6 @@ void MainWindow::buttonHistoryPlayClicked() {
     m_rotDelegate.setCurrentSinger(curSingerId);
     if (m_settings.rotationAltSortOrder()) {
         auto curSingerPos = m_rotModel.getSinger(curSingerId).position;
-        m_curSingerOriginalPosition = curSingerPos;
         if (curSingerPos != 0)
             m_rotModel.singerMove(curSingerPos, 0);
     }

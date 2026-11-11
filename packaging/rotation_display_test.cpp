@@ -32,6 +32,7 @@ private slots:
     void init()
     {
         Settings settings;
+        settings.setRotationAltSortOrder(false);
         settings.setRotationDisplayVisible(false);
         settings.setRotationDisplayFullscreen(false);
         settings.setRotationDisplaySingerCount(5);
@@ -66,6 +67,103 @@ private slots:
         model.onRotationLoaded({singers().first()});
         model.setCurrentSinger(71);
         QCOMPARE(model.upcomingSingerNames(5, false), QStringList({"Alex"}));
+    }
+
+    void playbackOrderMatchesDisplayAcrossSongCompletion_data()
+    {
+        QTest::addColumn<bool>("keepCurrentOnTop");
+        QTest::addColumn<int>("currentRow");
+        QTest::addColumn<QStringList>("expected");
+        QTest::newRow("normal-middle") << false << 1 << QStringList({"C", "D", "A", "B"});
+        QTest::newRow("normal-wrap") << false << 3 << QStringList({"A", "B", "C", "D"});
+        QTest::newRow("pinned-middle") << true << 1 << QStringList({"A", "C", "D", "B"});
+        QTest::newRow("pinned-last") << true << 3 << QStringList({"A", "B", "C", "D"});
+        QTest::newRow("pinned-first") << true << 0 << QStringList({"B", "C", "D", "A"});
+    }
+
+    void playbackOrderMatchesDisplayAcrossSongCompletion()
+    {
+        QFETCH(bool, keepCurrentOnTop);
+        QFETCH(int, currentRow);
+        QFETCH(QStringList, expected);
+        Settings settings;
+        settings.setRotationAltSortOrder(keepCurrentOnTop);
+        QList<okj::RotationSinger> records;
+        for (int i = 0; i < 4; ++i) {
+            okj::RotationSinger singer(10 + i, QString(QChar('A' + i)), i, false, QDateTime::currentDateTime());
+            singer.cachedNextSongPath = QString("/test/%1.mp4").arg(i);
+            singer.cachedNextSongArtist = "Artist";
+            singer.cachedNextSongTitle = singer.name + " song";
+            records.append(singer);
+        }
+        TableModelRotation model;
+        model.onRotationLoaded(records);
+        model.setCurrentSinger(records[currentRow].id);
+        RotationDisplay display(model);
+        QCOMPARE(display.singerNames(), expected);
+        // Moving the active singer to the top must not change the announced order.
+        if (keepCurrentOnTop)
+            model.singerMove(currentRow, 0);
+        QCOMPARE(model.upcomingSingerNames(20, false), expected);
+        QCOMPARE(model.nextSinger().name, expected.first());
+        QTRY_COMPARE(display.singerNames(), expected);
+        const auto announcedSong = model.nextSinger().nextSongPath();
+        // The stop handler moves the completed singer to the bottom, then clears
+        // the active singer before choosing the countdown and playback target.
+        if (keepCurrentOnTop) {
+            model.singerMove(model.getSinger(model.currentSinger()).position, 3);
+            model.setCurrentSinger(-1);
+        }
+        QCOMPARE(model.upcomingSingerNames(20, false), expected);
+        QCOMPARE(model.nextSinger().name, expected.first());
+        QCOMPARE(model.nextSinger().nextSongPath(), announcedSong);
+        QTRY_COMPARE(display.singerNames(), expected);
+        // An edit during the countdown must affect the display and playback's
+        // shared choice together, while preserving stable singer/song identity.
+        model.singerDelete(model.nextSinger().id);
+        expected.removeFirst();
+        QCOMPARE(model.nextSinger().name, expected.first());
+        QTRY_COMPARE(display.singerNames(), expected);
+    }
+
+    void emptyQueuesAndReordersUseTheSameFilteredOrder()
+    {
+        Settings settings;
+        settings.setRotationAltSortOrder(true);
+        auto records = singers();
+        TableModelRotation model;
+        QVERIFY(!model.nextSinger().isValid());
+        model.onRotationLoaded(records);
+        model.setCurrentSinger(105); // Morgan, originally in the middle.
+        model.singerMove(2, 0);
+        RotationDisplay display(model);
+        QCOMPARE(model.nextSinger().name, QString("Alex"));
+        QCOMPARE(display.singerNames(), QStringList({"Alex", "Chris", "Drew", "Morgan"}));
+        // Showing empty singers is an audience option; playback skips them.
+        settings.setRotationDisplayShowEmptySingers(true);
+        display.applySettings();
+        QCOMPARE(display.singerNames(), QStringList({"Alex", "Jamie", "Taylor", "Chris", "Drew"}));
+        QCOMPARE(model.nextSinger().name, QString("Alex"));
+        model.singerMove(model.getSinger(16).position, 1);
+        QCOMPARE(model.nextSinger().id, 16); // A host reorder takes effect immediately.
+        settings.setRotationDisplayShowEmptySingers(false);
+        display.applySettings();
+        QCOMPARE(display.singerNames().first(), model.nextSinger().name);
+        // No other singer has a song: the current singer can take another turn.
+        records = {model.getSinger(105)};
+        records.first().position = 0;
+        model.onRotationLoaded(records);
+        QCOMPARE(model.nextSinger().id, 105);
+        QTRY_COMPARE(display.singerNames(), QStringList({"Morgan"}));
+        records.first().cachedNextSongPath.clear();
+        model.onRotationLoaded(records);
+        QVERIFY(!model.nextSinger().isValid());
+        QTRY_VERIFY(display.singerNames().isEmpty());
+        // Removing the active singer starts at the remaining top.
+        model.onRotationLoaded({singers().first()});
+        QCOMPARE(model.nextSinger().id, 71);
+        model.onRotationLoaded({});
+        QVERIFY(!model.nextSinger().isValid());
     }
 
     void liveChangesAndSettingsUpdateTheWindow()

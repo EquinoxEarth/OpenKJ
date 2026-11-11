@@ -73,6 +73,7 @@ public:
     [[nodiscard]] size_t singerCount();
     [[nodiscard]] bool singerExists(const QString &name) const;
     [[nodiscard]] QStringList singers() const;
+    [[nodiscard]] okj::RotationSinger nextSinger() const;
     [[nodiscard]] QStringList upcomingSingerNames(int limit, bool includeEmpty) const;
     [[nodiscard]] int singerTurnDistance(int singerId) const;
     void loadData();
@@ -106,6 +107,7 @@ private:
     // Expected state after previously issued writes; refreshed by a database load.
     QList<okj::RotationSinger> m_expectedState;
     Settings m_settings;
+    [[nodiscard]] QList<int> upcomingSingerPositions(int limit, bool includeEmpty) const;
     [[nodiscard]] QVariant getTooltipData(const QModelIndex &index) const;
     [[nodiscard]] QVariant getDisplayData(const QModelIndex &index) const;
     [[nodiscard]] QVariant getColumnSizeHint(const QModelIndex &index) const;

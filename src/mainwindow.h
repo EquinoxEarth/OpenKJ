@@ -75,7 +75,6 @@ private:
     bool m_testMode{false};
     int m_rtClickQueueSongId{-1};
     int m_rtClickRotationSingerId{-1};
-    int m_curSingerOriginalPosition{0};
     int m_kAANextSinger{-1};
     int m_bmCurrentPlaylist{0};
     QString m_dbRtClickFile;
@@ -121,6 +120,7 @@ private:
     void updateDatabaseStatus();
     void connectDurationScanStatus();
     void updateAutoplayStatus();
+    bool updateKaraokeAutoAdvanceTarget();
     void applyQueueTabLayout();
     okj::DeferredLayout m_queueLayout{this, [this] { applyQueueTabLayout(); }};
     QTimer m_timerKaraokeAA;

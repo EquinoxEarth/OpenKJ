@@ -60,7 +60,7 @@ void Settings::setLastRunVersion(const QString &version)
     settings->setValue("lastRunVersion", version);
 }
 
-bool Settings::safeStartupMode() const
+bool Settings::safeStartupMode()
 {
     return m_safeStartupMode;
 }
@@ -425,7 +425,7 @@ void Settings::setRotationDisplayVisible(bool visible)
 
 bool Settings::rotationDisplayFullscreen() const
 {
-    return settings->value("rotationDisplay/fullscreen", false).toBool();
+    return !m_safeStartupMode && settings->value("rotationDisplay/fullscreen", false).toBool();
 }
 
 void Settings::setRotationDisplayFullscreen(bool fullscreen)

@@ -299,14 +299,11 @@ int main(int argc, char *argv[]) {
         msgBox.setIcon(QMessageBox::Warning);
         msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         msgBox.setDefaultButton(QMessageBox::Yes);
-        if (msgBox.exec() == QMessageBox::Yes)
-            settings.setSafeStartupMode(true);
-        else
-            settings.setSafeStartupMode(false);
+        Settings::setSafeStartupMode(msgBox.exec() == QMessageBox::Yes);
     }
 #ifdef Q_OS_DARWIN
     if (settings.lastRunVersion() != OKJ_VERSION_STRING)
-        settings.setSafeStartupMode(true);
+        Settings::setSafeStartupMode(true);
 #endif
     settings.setLastRunVersion(OKJ_VERSION_STRING);
     settings.setStartupOk(false);

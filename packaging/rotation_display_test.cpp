@@ -3,8 +3,15 @@
 #include "videodisplay.h"
 
 #include <QApplication>
+#include <QDialog>
+#include <QHeaderView>
+#include <QSplitter>
+#include <QStandardItemModel>
+#include <QTableView>
+#include <QTreeView>
 #include <QSignalSpy>
 #include <QScreen>
+#include <QScopeGuard>
 #include <QPainter>
 #include <QStandardPaths>
 #include <QTest>
@@ -46,6 +53,120 @@ private slots:
         QFont font = QApplication::font();
         font.setPointSize(48);
         settings.setRotationDisplayFont(font);
+    }
+
+    void cleanup()
+    {
+        Settings::setSafeStartupMode(false);
+    }
+
+    void recoverySkipsSavedUiStateAcrossSettingsInstances()
+    {
+        QWidget mainWindow;
+        QDialog dialog;
+        QTableView table;
+        QTreeView tree;
+        QSplitter splitter;
+        QStandardItemModel columns(0, 2);
+        mainWindow.setObjectName("recoveryTestMainWindow");
+        dialog.setObjectName("recoveryTestDialog");
+        table.setObjectName("recoveryTestTable");
+        tree.setObjectName("recoveryTestTree");
+        splitter.setObjectName("recoveryTestSplitter");
+        table.setModel(&columns);
+        tree.setModel(&columns);
+        mainWindow.resize(480, 360);
+        dialog.resize(400, 300);
+        table.setColumnWidth(0, 180);
+        table.hideColumn(1);
+        tree.setColumnWidth(0, 190);
+        splitter.setOrientation(Qt::Vertical);
+
+        Settings existingConsumer;
+        const auto restoreStartupSettings = qScopeGuard([
+            &existingConsumer, startupOk = existingConsumer.lastStartupOk(),
+            showCdg = existingConsumer.showCdgWindow(),
+            cdgFullscreen = existingConsumer.cdgWindowFullscreen()
+        ] {
+            Settings::setSafeStartupMode(false);
+            existingConsumer.setStartupOk(startupOk);
+            existingConsumer.setShowCdgWindow(showCdg);
+            existingConsumer.setCdgWindowFullscreen(cdgFullscreen);
+        });
+        {
+            Settings previousRun;
+            previousRun.setStartupOk(false);
+            previousRun.saveWindowState(&mainWindow);
+            previousRun.saveWindowState(&dialog);
+            previousRun.saveColumnWidths(&table);
+            previousRun.saveColumnWidths(&tree);
+            previousRun.saveSplitterState(&splitter);
+            previousRun.setShowCdgWindow(true);
+            previousRun.setCdgWindowFullscreen(true);
+            previousRun.setRotationDisplayVisible(true);
+            previousRun.setRotationDisplayFullscreen(true);
+            previousRun.setRotationDisplayGeometry(mainWindow.saveGeometry());
+        }
+
+        QVERIFY(!existingConsumer.lastStartupOk());
+        Settings::setSafeStartupMode(true); // Equivalent to accepting the startup prompt.
+        Settings newConsumer;
+        QVERIFY(Settings::safeStartupMode());
+        QVERIFY(!newConsumer.showCdgWindow());
+        QVERIFY(!existingConsumer.cdgWindowFullscreen());
+        QVERIFY(!newConsumer.rotationDisplayVisible());
+        QVERIFY(!newConsumer.rotationDisplayFullscreen());
+
+        mainWindow.resize(320, 240);
+        dialog.resize(300, 220);
+        table.setColumnWidth(0, 100);
+        table.showColumn(1);
+        tree.setColumnWidth(0, 100);
+        splitter.setOrientation(Qt::Horizontal);
+        existingConsumer.restoreWindowState(&mainWindow);
+        newConsumer.restoreWindowState(&dialog);
+        QVERIFY(!newConsumer.restoreColumnWidths(&table));
+        existingConsumer.restoreColumnWidths(&tree);
+        newConsumer.restoreSplitterState(&splitter);
+        QCOMPARE(mainWindow.size(), QSize(320, 240));
+        QCOMPARE(dialog.size(), QSize(300, 220));
+        QCOMPARE(table.columnWidth(0), 100);
+        QVERIFY(!table.isColumnHidden(1));
+        QCOMPARE(tree.columnWidth(0), 100);
+        QCOMPARE(splitter.orientation(), Qt::Horizontal);
+
+        TableModelRotation model;
+        RotationDisplay recovered(model);
+        recovered.setDisplayVisible(newConsumer.rotationDisplayVisible());
+        QVERIFY(!recovered.isVisible());
+        QCOMPARE(recovered.size(), QSize(600, 720));
+
+        Settings::setSafeStartupMode(false);
+        QVERIFY(existingConsumer.showCdgWindow());
+        QVERIFY(newConsumer.cdgWindowFullscreen());
+        existingConsumer.restoreWindowState(&mainWindow);
+        newConsumer.restoreWindowState(&dialog);
+        QVERIFY(newConsumer.restoreColumnWidths(&table));
+        existingConsumer.restoreColumnWidths(&tree);
+        newConsumer.restoreSplitterState(&splitter);
+        QCOMPARE(mainWindow.size(), QSize(480, 360));
+        QCOMPARE(dialog.size(), QSize(400, 300));
+        QCOMPARE(table.columnWidth(0), 180);
+        QVERIFY(table.isColumnHidden(1));
+        QCOMPARE(tree.columnWidth(0), 190);
+        QCOMPARE(splitter.orientation(), Qt::Vertical);
+
+        RotationDisplay normal(model);
+        QCOMPARE(normal.size(), QSize(480, 360));
+        normal.setDisplayVisible(newConsumer.rotationDisplayVisible());
+        QTRY_VERIFY(normal.isFullScreen());
+        normal.close();
+
+        Settings::setSafeStartupMode(true);
+        recovered.setDisplayVisible(true);
+        QTRY_VERIFY(recovered.isVisible());
+        QVERIFY(!recovered.isFullScreen());
+        recovered.close();
     }
 
     void orderWrapsOnceAndLimitFollowsFiltering()
@@ -367,7 +488,7 @@ private slots:
         settings.setRotationDisplaySingerCount(-1);
         QCOMPARE(Settings().rotationDisplaySingerCount(), 1);
         settings.setRotationDisplayVisible(true);
-        settings.setSafeStartupMode(true);
+        Settings::setSafeStartupMode(true);
         QVERIFY(!settings.rotationDisplayVisible());
         settings.setRotationDisplayVisible(false);
     }

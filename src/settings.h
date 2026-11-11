@@ -51,7 +51,8 @@ class Settings : public QObject
 
 private:
     QSettings *settings;
-    bool m_safeStartupMode{false};
+    // Recovery applies to all settings consumers for this run.
+    inline static bool m_safeStartupMode{false};
 
 public:
     enum {
@@ -75,8 +76,8 @@ public:
     void setStartupOk(bool ok);
     [[nodiscard]] QString lastRunVersion() const;
     void setLastRunVersion(const QString &version);
-    [[nodiscard]] bool safeStartupMode() const;
-    void setSafeStartupMode(bool safeMode);
+    [[nodiscard]] static bool safeStartupMode();
+    static void setSafeStartupMode(bool safeMode);
     [[nodiscard]] int historyDblClickAction() const;
     void setHistoryDblClickAction(int index);
     int getSystemRamSize();

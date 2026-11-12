@@ -136,7 +136,7 @@ MediaBackend::MediaBackend(QObject *parent, QString objectName, MediaType type)
         setAudioOutputDevice(m_settings.audioOutputDevice());
     } else if (m_type == BackgroundMusic) {
         setAudioOutputDevice(m_settings.effectiveAudioOutputDeviceBm());
-    } else {
+    } else if (m_type != VideoPreview) {
         setAudioOutputDevice("Default");
     }
 
@@ -172,6 +172,11 @@ MediaBackend::~MediaBackend() {
 
 void MediaBackend::setupPipeline() {
     m_pipeline = gst_element_factory_make("playbin", nullptr);
+    if (!m_pipeline) {
+        m_logger->error("{} Failed to create playbin", m_loggingPrefix);
+        return;
+    }
+
     // Use one clock for the audio and CDG pipelines.
     m_sharedClock = gst_system_clock_obtain();
 
@@ -180,8 +185,19 @@ void MediaBackend::setupPipeline() {
         m_sharedClock
     );
 
-    if (!m_pipeline) {
-        m_logger->error("{} Failed to create playbin", m_loggingPrefix);
+    if (m_type == VideoPreview) {
+        m_activeOutputDevice.clear();
+        m_requestedOutputDevice.clear();
+        m_muted = true;
+        // Even a silent CD+G preview needs a clocked audio stream.
+        auto *sink = gst_element_factory_make("fakesink", nullptr);
+        if (sink) {
+            gst_object_ref_sink(sink);
+            g_object_set(sink, "sync", TRUE, nullptr);
+            g_object_set(m_pipeline, "audio-sink", sink, nullptr);
+            gst_object_unref(sink);
+        }
+        g_object_set(m_pipeline, "mute", TRUE, nullptr);
         return;
     }
 
@@ -442,12 +458,18 @@ void MediaBackend::setAudioOutputDevice(const AudioOutputDevice &device) {
 }
 
 void MediaBackend::setAudioOutputDevice(const QString &deviceName) {
-    m_requestedOutputDevice = deviceName.isEmpty() ? QStringLiteral("Default") : deviceName;
+    m_requestedOutputDevice = deviceName.isEmpty() && m_type != VideoPreview
+        ? QStringLiteral("Default") : deviceName;
     applyAudioOutputDevice();
 }
 
+bool MediaBackend::hasPreviewAudioOutput() const {
+    return m_type == VideoPreview && !m_activeOutputDevice.isEmpty() && m_activeOutputDevice != "Default";
+}
+
 void MediaBackend::applyAudioOutputDevice() {
-    if (!m_pipeline || !m_audioSink || m_cdgStateBusy ||
+    const bool preview = m_type == VideoPreview;
+    if (!m_pipeline || (!preview && !m_audioSink) || m_cdgStateBusy ||
         m_requestedOutputDevice == m_activeOutputDevice)
         return;
 
@@ -460,7 +482,7 @@ void MediaBackend::applyAudioOutputDevice() {
 
     GstElement *replacement = nullptr;
     QString selected = m_requestedOutputDevice;
-    if (selected != "Default") {
+    if (!selected.isEmpty() && selected != "Default") {
         auto *monitor = gst_device_monitor_new();
         const auto filter = gst_device_monitor_add_filter(monitor, "Audio/Sink", nullptr);
         auto *devices = filter ? gst_device_monitor_get_devices(monitor) : nullptr;
@@ -475,11 +497,28 @@ void MediaBackend::applyAudioOutputDevice() {
         }
         g_list_free_full(devices, gst_object_unref);
         gst_object_unref(monitor);
-        if (!replacement) {
+        if (!replacement && !preview) {
             m_logger->warn("{} Audio output '{}' unavailable; using Default", m_loggingPrefix,
                            selected.toStdString());
             selected = "Default";
         }
+    }
+    if (preview) {
+        // Never fall back to the system audio output for a preview.
+        if (!replacement) {
+            selected.clear();
+            if (m_activeOutputDevice.isEmpty())
+                return;
+            replacement = gst_element_factory_make("fakesink", nullptr);
+            if (!replacement)
+                return;
+            g_object_set(replacement, "sync", TRUE, nullptr);
+        }
+        gst_object_ref_sink(replacement);
+        g_object_set(m_pipeline, "audio-sink", replacement, nullptr);
+        gst_object_unref(replacement);
+        m_activeOutputDevice = selected;
+        return;
     }
     if (!replacement)
         replacement = gst_element_factory_make("autoaudiosink", nullptr);
@@ -747,22 +786,53 @@ MediaBackend::State MediaBackend::state() {
     return m_state;
 }
 
-QStringList MediaBackend::getOutputDevices() {
+QStringList MediaBackend::getOutputDevices(QStringList *defaultOutputs) {
     QStringList list{"Default"};
     auto *monitor = gst_device_monitor_new();
     const auto filter = gst_device_monitor_add_filter(monitor, "Audio/Sink", nullptr);
     // A one-shot probe also refreshes USB/Bluetooth outputs each time Settings opens.
     auto *devices = filter ? gst_device_monitor_get_devices(monitor) : nullptr;
     for (auto *entry = devices; entry; entry = entry->next) {
-        auto *name = gst_device_get_display_name(GST_DEVICE(entry->data));
+        auto *device = GST_DEVICE(entry->data);
+        auto *name = gst_device_get_display_name(device);
         const auto displayName = QString::fromUtf8(name);
         if (!displayName.isEmpty() && !list.contains(displayName))
             list.append(displayName);
+        if (defaultOutputs && !displayName.isEmpty()) {
+            auto *properties = gst_device_get_properties(device);
+            gboolean isDefault = FALSE;
+            if (properties && gst_structure_get_boolean(properties, "is-default", &isDefault) && isDefault)
+                defaultOutputs->append(displayName);
+            if (properties)
+                gst_structure_free(properties);
+        }
         g_free(name);
     }
     g_list_free_full(devices, gst_object_unref);
     gst_object_unref(monitor);
     return list;
+}
+
+QStringList MediaBackend::getPreviewOutputDevices(const QStringList &activeOutputs) {
+    Settings settings;
+    QStringList defaultOutputs;
+    const auto devices = getOutputDevices(&defaultOutputs);
+    auto choices = devices;
+    choices.removeOne(QStringLiteral("Default"));
+    const auto reserved = activeOutputs + QStringList{
+        settings.audioOutputDevice(), settings.effectiveAudioOutputDeviceBm()};
+    for (const auto &device : reserved) {
+        if (device == "Default" || !devices.contains(device)) {
+            // A missing assignment falls back to the system default.
+            if (defaultOutputs.isEmpty())
+                return {};
+            for (const auto &name : defaultOutputs)
+                choices.removeAll(name);
+        } else {
+            choices.removeAll(device);
+        }
+    }
+    return choices;
 }
 
 void MediaBackend::eventTimer_timeout() {
@@ -1168,40 +1238,44 @@ void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioF
     m_rateControlledVideo = false;
     logStage("pipeline and temporary file cleanup");
 
-    m_tempDir = std::make_unique<QTemporaryDir>();
-    if (m_tempDir->isValid()) {
-        QFileInfo audioInfo(audioFilename);
-        QString targetAudio = m_tempDir->path() + QDir::separator() + "song." + audioInfo.suffix();
-        QString targetCdg = m_tempDir->path() + QDir::separator() + "song.cdg";
-
-        if (QFile::copy(audioFilename, targetAudio) && QFile::copy(cdgFilename, targetCdg)) {
-            logStage("copying audio and CDG files");
-            const auto uri = localMediaUri(targetAudio);
-            g_object_set(G_OBJECT(m_pipeline), "uri", uri.constData(), nullptr);
-            g_object_set(G_OBJECT(m_pipeline), "suburi", nullptr, nullptr);
-
-            // Use the copied CDG file in the temporary directory.
-            m_cdgFilename = targetCdg;
-            setupCdgPipeline(m_cdgFilename);
-
-            m_hasVideo = false;
-            emit hasActiveVideoChanged(false);
-            
-            if (!m_cdgFilename.isEmpty()) {
-                m_cdgLastDrawPosMs = getCdgLastDrawPositionMs(m_cdgFilename);
-            } else {
-                m_cdgLastDrawPosMs = 0;
-            }
-
-            updateVolume();
-            updateAudioFilters();
-            logStage("pipeline setup and CDG analysis");
-        } else {
-            emit audioError("Failed to copy media files to temp dir");
-        }
-    } else {
-        emit audioError("Failed to create temporary directory");
+    if (!m_pipeline) {
+        emit audioError("Unable to initialize audio playback");
+        return;
     }
+
+    QString playAudio = audioFilename;
+    const bool preview = m_type == VideoPreview;
+    if (!preview) {
+        m_tempDir = std::make_unique<QTemporaryDir>();
+        if (!m_tempDir->isValid()) {
+            emit audioError("Failed to create temporary directory");
+            return;
+        }
+        const auto targetAudio = m_tempDir->filePath("song." + QFileInfo(audioFilename).suffix());
+        const auto targetCdg = m_tempDir->filePath("song.cdg");
+        if (!QFile::copy(audioFilename, targetAudio) || !QFile::copy(cdgFilename, targetCdg)) {
+            emit audioError("Failed to copy media files to temp dir");
+            return;
+        }
+        playAudio = targetAudio;
+        m_cdgFilename = targetCdg;
+        logStage("copying audio and CDG files");
+    }
+
+    const auto uri = localMediaUri(playAudio);
+    g_object_set(G_OBJECT(m_pipeline), "uri", uri.constData(), "suburi", nullptr, nullptr);
+    if (!setupCdgPipeline(m_cdgFilename) && preview) {
+        emit audioError("Unable to initialize CDG playback");
+        return;
+    }
+
+    m_hasVideo = false;
+    emit hasActiveVideoChanged(false);
+    // Previews do not use end-of-song silence detection.
+    m_cdgLastDrawPosMs = preview ? 0 : getCdgLastDrawPositionMs(m_cdgFilename);
+    updateVolume();
+    updateAudioFilters();
+    logStage("pipeline setup and CDG analysis");
 }
 
 void MediaBackend::setMuted(const bool &muted) {
@@ -1708,6 +1782,12 @@ void MediaBackend::setEqLevel(const int &band, const int &level) {
 }
 
 void MediaBackend::updateVolume() {
+    if (m_type == VideoPreview) {
+        if (m_pipeline)
+            g_object_set(m_pipeline, "volume", m_volume / 100.0, nullptr);
+        emit volumeChanged(m_volume);
+        return;
+    }
     if (!m_volumeElement) return;
     double volMult = m_fader ? m_fader->volume() : 1.0;
     int vol = static_cast<int>(m_volume * volMult);

@@ -43,6 +43,7 @@
 #include <QVBoxLayout>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <QMediaDevices>
 
 DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBackend, OKJSongbookAPI &songbookAPI,
                          QWidget *parent) :
@@ -110,6 +111,11 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     ui->comboBoxBAudioDevices->addItems(audioOutputDevices);
     ui->checkBoxBreakOutputFollowsKaraoke->setChecked(m_settings.audioOutputBmFollowsKaraoke());
     updateBreakMusicOutput();
+    ui->comboBoxPreviewAudioDevices->setToolTip(tr("Output changes apply when you open a preview."));
+    ui->checkBoxPreviewStartsMuted->setChecked(m_settings.previewStartsMuted());
+    updatePreviewAudioOutput();
+    auto *mediaDevices = new QMediaDevices(this);
+    connect(mediaDevices, &QMediaDevices::audioOutputsChanged, this, &DlgSettings::updatePreviewAudioOutput);
     ui->checkBoxProgressiveSearch->setChecked(m_settings.progressiveSearchEnabled());
     ui->horizontalSliderTickerSpeed->setValue(m_settings.tickerSpeed());
     QString ss = ui->pushButtonTextColor->styleSheet();
@@ -1105,9 +1111,11 @@ void DlgSettings::on_comboBoxKAudioDevices_currentIndexChanged(int index) {
         return;
     qInfo() << "Changing karaoke audio output device to: " << index << ")" << device;
     m_settings.setAudioOutputDevice(device);
+    emit audioOutputRoutingChanged();
     kAudioBackend.setAudioOutputDevice(device);
     if (m_settings.audioOutputBmFollowsKaraoke())
         updateBreakMusicOutput();
+    updatePreviewAudioOutput();
 }
 
 void DlgSettings::on_comboBoxBAudioDevices_currentIndexChanged(int index) {
@@ -1118,7 +1126,9 @@ void DlgSettings::on_comboBoxBAudioDevices_currentIndexChanged(int index) {
         return;
     qInfo() << "Changing break music audio output device to: " << index << ")" << device;
     m_settings.setAudioOutputDeviceBm(device);
+    emit audioOutputRoutingChanged();
     bmAudioBackend.setAudioOutputDevice(device);
+    updatePreviewAudioOutput();
 }
 
 void DlgSettings::updateBreakMusicOutput() {
@@ -1135,7 +1145,36 @@ void DlgSettings::on_checkBoxBreakOutputFollowsKaraoke_toggled(bool checked) {
     if (!m_pageSetupDone)
         return;
     m_settings.setAudioOutputBmFollowsKaraoke(checked);
+    emit audioOutputRoutingChanged();
     updateBreakMusicOutput();
+    updatePreviewAudioOutput();
+}
+
+void DlgSettings::updatePreviewAudioOutput() {
+    auto *combo = ui->comboBoxPreviewAudioDevices;
+    const QSignalBlocker blocker(combo);
+    combo->clear();
+    combo->addItem(tr("None"), QString());
+    const auto outputs = MediaBackend::getPreviewOutputDevices(
+        {kAudioBackend.activeAudioOutputDevice(), bmAudioBackend.activeAudioOutputDevice()});
+    for (const auto &output : outputs)
+        combo->addItem(output, output);
+    const int index = combo->findData(m_settings.previewAudioOutputDevice());
+    combo->setCurrentIndex(qMax(0, index));
+    ui->checkBoxPreviewStartsMuted->setEnabled(index > 0);
+}
+
+void DlgSettings::on_comboBoxPreviewAudioDevices_currentIndexChanged(int index) {
+    if (!m_pageSetupDone || index < 0)
+        return;
+    m_settings.setPreviewAudioOutputDevice(ui->comboBoxPreviewAudioDevices->itemData(index).toString());
+    emit audioOutputRoutingChanged();
+    ui->checkBoxPreviewStartsMuted->setEnabled(index > 0);
+}
+
+void DlgSettings::on_checkBoxPreviewStartsMuted_toggled(bool checked) {
+    if (m_pageSetupDone)
+        m_settings.setPreviewStartsMuted(checked);
 }
 
 void DlgSettings::on_checkBoxEnforceAspectRatio_clicked(bool checked) {

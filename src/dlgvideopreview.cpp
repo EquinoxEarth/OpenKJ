@@ -1,118 +1,161 @@
 #include "dlgvideopreview.h"
+#include "mediapreparation.h"
 #include "ui_dlgvideopreview.h"
+
+#include <QFileInfo>
+#include <QFutureWatcher>
+#include <QMediaDevices>
 #include <QMessageBox>
+#include <QPainter>
+#include <QStyle>
+#include <QTimer>
+#include <QtConcurrent/QtConcurrentRun>
+#include <chrono>
 #include <utility>
-#include "mzarchive.h"
-#include "okjutil.h"
 
-
-DlgVideoPreview::DlgVideoPreview(QString mediaFilePath, QWidget *parent) :
-        QDialog(parent), ui(new Ui::DlgVideoPreview), m_mediaFilename(std::move(mediaFilePath)) {
-    m_logger = spdlog::get("logger");
-    m_logger->trace("{} Constructor called with media path: {}", m_loggingPrefix, m_mediaFilename);
-
+DlgVideoPreview::DlgVideoPreview(QString mediaFilePath, QWidget *parent, const QStringList &activeOutputs)
+    : QDialog(parent), ui(new Ui::DlgVideoPreview), m_mediaFilename(std::move(mediaFilePath))
+{
     ui->setupUi(this);
-
-    connect(ui->pushButtonClose, &QPushButton::clicked, [&]() {
-        close();
-    });
-    if (!QFile(m_mediaFilename).exists()) {
-        m_logger->warn("{} Bad karaoke file - file missing - {}", m_loggingPrefix, m_mediaFilename);
-        QMessageBox::warning(nullptr, tr("Bad karaoke file"), tr("File missing."), QMessageBox::Ok);
-        QTimer::singleShot(250, [&] () { if (ui) close(); });
-        return;
-    }
+    connect(ui->pushButtonClose, &QPushButton::clicked, this, &QWidget::close);
     m_mediaBackend.setVideoOutputWidgets({ui->videoDisplay});
     m_mediaBackend.setUseSilenceDetection(false);
-    m_mediaBackend.setMuted(true);
-    if (m_mediaFilename.endsWith(".zip", Qt::CaseInsensitive)) {
-        MzArchive archive(m_mediaFilename);
-        if ((archive.checkCDG()) && (archive.checkAudio())) {
-            if (archive.checkAudio()) {
-                if (!archive.extractAudio(m_tmpDir.path(), "tmp" + archive.audioExtension())) {
-                    // Both files are needed by the CDG preview playback pipeline.
-                    m_logger->warn("{} Bad karaoke file - Failed to extract audio file from archive: {}",
-                                   m_loggingPrefix, m_mediaFilename);
-                    QMessageBox::warning(nullptr, tr("Bad karaoke file"), tr("Failed to extract audio file."),
-                                         QMessageBox::Ok);
-                    QTimer::singleShot(250, [&] () { if (ui) close(); });
-                    return;
-                }
-                if (!archive.extractCdg(m_tmpDir.path(), "tmp.cdg")) {
-                    m_logger->warn("{} Bad karaoke file - Failed to extract CDG file from archive: {}", m_loggingPrefix,
-                                   m_mediaFilename);
-                    QMessageBox::warning(nullptr, tr("Bad karaoke file"), tr("Failed to extract CDG file."),
-                                         QMessageBox::Ok);
-                    QTimer::singleShot(250, [&] () { if (ui) close(); });
-                    return;
-                }
-                m_logger->info("{} Decompression successful - starting preview playback of: {}", m_loggingPrefix,
-                               m_mediaFilename);
-                playCdg(m_tmpDir.filePath("tmp.cdg"), m_tmpDir.filePath("tmp" + archive.audioExtension()));
-            }
-        } else {
-            QMessageBox::warning(nullptr, tr("Bad karaoke file"),
-                                 tr("Zip file does not contain a valid karaoke track.  CDG or audio file missing or corrupt."),
-                                 QMessageBox::Ok);
-            QTimer::singleShot(250, [&] () { if (ui) close(); });
-            return;
-        }
-    } else if (m_mediaFilename.endsWith(".cdg", Qt::CaseInsensitive)) {
-        QFile cdgFile(m_mediaFilename);
-        if (cdgFile.size() == 0) {
-            m_logger->warn("{} Bad karaoke file - CDG file contains no data - {}", m_loggingPrefix, m_mediaFilename);
-            QMessageBox::warning(nullptr, tr("Bad karaoke file"), tr("CDG file contains no data"), QMessageBox::Ok);
-            QTimer::singleShot(250, [&] () { if (ui) close(); });
-            return;
-        }
-        QString audioFilePath = findMatchingAudioFile(m_mediaFilename);
-        if (audioFilePath == "") {
-            m_logger->warn("{} Bad karaoke file - No matching audio file found - {}", m_loggingPrefix, m_mediaFilename);
-            QMessageBox::warning(nullptr, tr("Bad karaoke file"), tr("Audio file missing."), QMessageBox::Ok);
-            QTimer::singleShot(250, [&] () { if (ui) close(); });
-            return;
-        }
-        QFile audioFile(audioFilePath);
-        if (audioFile.size() == 0) {
-            m_logger->warn("{} Bad karaoke file - Audio file contains no data - {}", m_loggingPrefix, m_mediaFilename);
-            QMessageBox::warning(nullptr, tr("Bad karaoke file"), tr("Audio file contains no data"), QMessageBox::Ok);
-            QTimer::singleShot(250, [&] () { if (ui) close(); });
-            return;
-        }
-        m_logger->info("{} Starting preview playback of media file: {}", m_loggingPrefix, m_mediaFilename);
-        playCdg(m_mediaFilename, audioFilePath);
-    } else {
-        m_logger->info("{} Starting preview playback of media file: {}", m_loggingPrefix, m_mediaFilename);
-        playVideo(m_mediaFilename);
-    }
-}
-
-DlgVideoPreview::~DlgVideoPreview() {
-    m_logger->trace("{} Destructor called, stopping playback", m_loggingPrefix);
-    m_mediaBackend.rawStop();
-    while (m_mediaBackend.state() != MediaBackend::StoppedState)
-        QApplication::processEvents();
-    m_logger->trace("{} Playback stopped successfully", m_loggingPrefix);
-}
-
-void DlgVideoPreview::playCdg(const QString &cdgFilename, const QString &audioFilename) {
-    m_mediaBackend.setMediaCdg(cdgFilename, audioFilename);
-    m_mediaBackend.play();
-}
-
-void DlgVideoPreview::playVideo(const QString &filename) {
-    m_mediaBackend.setMedia(filename);
-    m_mediaBackend.play();
-
-}
-
-void DlgVideoPreview::setPlaybackTimeLimit(int playSecs) {
-    if (playSecs != 0)
-        QTimer::singleShot(playSecs * 1000, [&]() {
-            if (ui)
-                close();
-            else
-                m_logger->warn("{} UI object already destroyed when time limit expired", m_loggingPrefix);
+    Settings settings;
+    const auto output = settings.previewAudioOutputDevice();
+    if (!output.isEmpty() && MediaBackend::getPreviewOutputDevices(activeOutputs).contains(output))
+        m_mediaBackend.setAudioOutputDevice(output);
+    const bool audioAvailable = m_mediaBackend.hasPreviewAudioOutput();
+    ui->toolButtonMute->setEnabled(audioAvailable);
+    ui->sliderVolume->setEnabled(audioAvailable);
+    ui->sliderVolume->setValue(m_mediaBackend.getVolume());
+    connect(ui->sliderVolume, &QSlider::valueChanged, &m_mediaBackend, &MediaBackend::setVolume);
+    connect(&m_mediaBackend, &MediaBackend::mutedChanged, this, &DlgVideoPreview::updateMuteButton);
+    connect(ui->toolButtonMute, &QToolButton::clicked, this, [this] {
+        if (ui->toolButtonMute->isEnabled())
+            m_mediaBackend.setMuted(!m_mediaBackend.isMuted());
+    });
+    m_mediaBackend.setMuted(!audioAvailable || settings.previewStartsMuted());
+    if (audioAvailable) {
+        auto *devices = new QMediaDevices(this);
+        connect(devices, &QMediaDevices::audioOutputsChanged, this, [this, activeOutputs] {
+            validateAudioOutput(activeOutputs);
         });
+    }
+    connect(&m_mediaBackend, &MediaBackend::audioError, this, &DlgVideoPreview::showPlaybackError);
+    connect(&m_mediaBackend, &MediaBackend::stopCompleted, this, [this] {
+        if (m_closeResult && m_mediaBackend.isPlaybackStopped()) {
+            const int result = *m_closeResult;
+            m_closeResult.reset();
+            QDialog::done(result);
+        }
+    }, Qt::QueuedConnection);
+
+    auto *watcher = new QFutureWatcher<PreparedKaraokeMedia>(this);
+    connect(watcher, &QFutureWatcher<PreparedKaraokeMedia>::finished, this, [this, watcher] {
+        watcher->deleteLater();
+        if (m_cancelled->load())
+            return;
+        auto prepared = watcher->future().takeResult();
+        if (!prepared.error.isEmpty()) {
+            showPlaybackError(prepared.error);
+            return;
+        }
+
+        m_preparedDirectory = std::move(prepared.directory);
+        m_mediaLoaded = true;
+        if (prepared.cdgFile.isEmpty())
+            m_mediaBackend.setMedia(prepared.audioFile);
+        else
+            m_mediaBackend.setMediaCdg(prepared.cdgFile, prepared.audioFile);
+        if (!m_failed)
+            m_mediaBackend.play();
+    });
+    watcher->setFuture(QtConcurrent::run([filename = m_mediaFilename, cancelled = m_cancelled] {
+        if (filename.endsWith(".zip", Qt::CaseInsensitive))
+            return prepareKaraokeZip(filename, cancelled);
+        if (filename.endsWith(".cdg", Qt::CaseInsensitive))
+            return prepareKaraokePair(filename, cancelled);
+
+        PreparedKaraokeMedia result;
+        if (cancelled->load())
+            return result;
+        const QFileInfo video(filename);
+        if (!video.isFile() || !video.isReadable())
+            result.error = tr("Video file missing or unreadable.");
+        else if (video.size() == 0)
+            result.error = tr("Video file contains no data.");
+        else
+            result.audioFile = video.absoluteFilePath();
+        return result;
+    }));
 }
 
+DlgVideoPreview::~DlgVideoPreview()
+{
+    m_cancelled->store(true);
+}
+
+void DlgVideoPreview::validateAudioOutput(const QStringList &activeOutputs)
+{
+    if (!ui->toolButtonMute->isEnabled())
+        return;
+    Settings settings;
+    const auto output = m_mediaBackend.activeAudioOutputDevice();
+    if (output == settings.previewAudioOutputDevice() &&
+        MediaBackend::getPreviewOutputDevices(activeOutputs).contains(output))
+        return;
+    ui->toolButtonMute->setEnabled(false);
+    ui->sliderVolume->setEnabled(false);
+    m_mediaBackend.setMuted(true);
+    // Closing also releases the sink so the new route can use the device.
+    close();
+}
+
+void DlgVideoPreview::updateMuteButton(bool muted)
+{
+    auto icon = style()->standardIcon(muted ? QStyle::SP_MediaVolumeMuted : QStyle::SP_MediaVolume)
+                    .pixmap(ui->toolButtonMute->iconSize(), devicePixelRatioF());
+    if (!icon.isNull()) {
+        QPainter painter(&icon);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(QRectF(QPointF(), icon.deviceIndependentSize()), Qt::white);
+    }
+    ui->toolButtonMute->setIcon(QIcon(icon));
+    const auto action = muted ? tr("Unmute preview") : tr("Mute preview");
+    ui->toolButtonMute->setAccessibleName(action);
+    ui->toolButtonMute->setToolTip(ui->toolButtonMute->isEnabled()
+        ? action : tr("Select a separate output in Settings → Audio → Preview, then reopen the preview."));
+}
+
+void DlgVideoPreview::done(int result)
+{
+    if (m_cancelled->exchange(true))
+        return;
+    if (!m_mediaLoaded) {
+        QDialog::done(result);
+        return;
+    }
+    // Keep the dialog and prepared files alive until native playback has stopped.
+    m_closeResult = result;
+    m_mediaBackend.rawStop();
+}
+
+void DlgVideoPreview::showPlaybackError(const QString &error)
+{
+    if (m_cancelled->load() || m_failed)
+        return;
+    m_failed = true;
+    auto *message = new QMessageBox(QMessageBox::Warning, tr("Video Preview"),
+                                    tr("Could not preview this song."), QMessageBox::Ok, this);
+    message->setTextFormat(Qt::PlainText);
+    message->setInformativeText(error + QStringLiteral("\n\n") + m_mediaFilename);
+    message->setAttribute(Qt::WA_DeleteOnClose);
+    connect(message, &QMessageBox::finished, this, &QWidget::close);
+    message->open();
+}
+
+void DlgVideoPreview::setPlaybackTimeLimit(int playSecs)
+{
+    if (playSecs > 0)
+        QTimer::singleShot(std::chrono::seconds(playSecs), this, &QWidget::close);
+}

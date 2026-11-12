@@ -75,6 +75,8 @@ public:
     void setAccelType(const accel &type=accel::XVideo) {}
     void setAudioOutputDevice(const AudioOutputDevice &device);
     void setAudioOutputDevice(const QString &deviceName);
+    QString activeAudioOutputDevice() const { return m_activeOutputDevice; }
+    bool hasPreviewAudioOutput() const;
     // Returns a referenced pad after the karaoke DSP and before live volume.
     GstPad *recordingMusicPad() const;
     void setVideoOutputWidgets(const std::vector<QWidget*>& surfaces);
@@ -90,7 +92,8 @@ public:
     qint64 duration();
     State state();
     bool isPlaybackStopped() const { return m_state == StoppedState && !m_cdgStateBusy; }
-    QStringList getOutputDevices();
+    static QStringList getOutputDevices(QStringList *defaultOutputs = nullptr);
+    static QStringList getPreviewOutputDevices(const QStringList &activeOutputs);
     
     static QString msToMMSS(const qint64 &msec)
     {

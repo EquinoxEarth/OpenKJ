@@ -1,5 +1,6 @@
 #include "mediabackend.h"
 #include "audiofader.h"
+#include "dlgvideopreview.h"
 #include "xbrz.h"
 #include "recordingmix.h"
 #include <QtEndian>
@@ -7,19 +8,27 @@
 #include <numbers>
 #include <QApplication>
 #include <QDataStream>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFile>
+#include <QFileInfo>
+#include <QMessageBox>
 #include <QSlider>
 #include <QSignalSpy>
 #include <QPointer>
 #include <QScopeGuard>
+#include <QSemaphore>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 #include <QUuid>
 #include <cstdio>
+#include <mutex>
 #include <stdexcept>
+#include <spdlog/sinks/callback_sink.h>
+#include <zip.h>
 
 std::ostream &operator<<(std::ostream &stream, const QString &text)
 {
@@ -31,6 +40,19 @@ struct TestAudioDevice { GstDevice parent; };
 struct TestAudioDeviceClass { GstDeviceClass parent; };
 G_DEFINE_TYPE(TestAudioDevice, test_audio_device, GST_TYPE_DEVICE)
 static QStringList created;
+static std::atomic_int silentPreviewBuffers{0};
+static std::atomic_int audiblePreviewBuffers{0};
+
+static void capturePreviewAudio(GstElement *, GstBuffer *buffer, GstPad *, gpointer)
+{
+    GstMapInfo data;
+    if (!gst_buffer_map(buffer, &data, GST_MAP_READ))
+        return;
+    const bool silent = std::all_of(data.data, data.data + data.size, [](guint8 byte) { return byte == 0; });
+    gst_buffer_unmap(buffer, &data);
+    ++(silent ? silentPreviewBuffers : audiblePreviewBuffers);
+}
+
 static GstElement *createOutput(GstDevice *device, const gchar *name)
 {
     auto *displayName = gst_device_get_display_name(device);
@@ -38,6 +60,10 @@ static GstElement *createOutput(GstDevice *device, const gchar *name)
     g_free(displayName);
     auto *sink = gst_element_factory_make("fakesink", name);
     g_object_set(sink, "sync", TRUE, nullptr);
+    if (created.last() == "Test USB") {
+        g_object_set(sink, "signal-handoffs", TRUE, nullptr);
+        g_signal_connect(sink, "handoff", G_CALLBACK(capturePreviewAudio), nullptr);
+    }
     return sink;
 }
 static void test_audio_device_class_init(TestAudioDeviceClass *klass)
@@ -56,8 +82,12 @@ static GList *probeOutputs(GstDeviceProvider *)
     auto *caps = gst_caps_from_string("audio/x-raw");
     if (connected) {
         for (const auto *name : {"Test Speakers", "Test USB"}) {
+            auto *properties = gst_structure_new("test-output", "is-default", G_TYPE_BOOLEAN,
+                                                 qstrcmp(name, "Test Speakers") == 0, nullptr);
             auto *device = GST_DEVICE(g_object_new(test_audio_device_get_type(),
-                "display-name", name, "device-class", "Audio/Sink", "caps", caps, nullptr));
+                "display-name", name, "device-class", "Audio/Sink", "caps", caps,
+                "properties", properties, nullptr));
+            gst_structure_free(properties);
             devices = g_list_append(devices, gst_object_ref_sink(device));
         }
     }
@@ -339,6 +369,192 @@ static void checkSharedVideoFrames(const QString &audioFilename, const QString &
 
 }
 
+static void checkPreviewDialogs(const QString &audioFilename, const QString &cdgFilename, const QString &zipFilename)
+{
+    const auto looseAudio = QFileInfo(cdgFilename).absoluteDir().filePath(QFileInfo(cdgFilename).completeBaseName() + ".wav");
+    require(QFile::copy(audioFilename, looseAudio), "Cannot create a loose CDG pair");
+    auto *zip = zip_open(QFile::encodeName(zipFilename).constData(), ZIP_CREATE, nullptr);
+    require(zip, "Cannot create preview ZIP");
+    auto discard = qScopeGuard([zip] { zip_discard(zip); });
+    for (const auto &[name, path] : {std::pair{"song.wav", audioFilename}, std::pair{"song.cdg", cdgFilename}}) {
+        auto *source = zip_source_file(zip, QFile::encodeName(path).constData(), 0, 0);
+        require(source, "Cannot read preview ZIP fixture");
+        if (zip_file_add(zip, name, source, ZIP_FL_ENC_UTF_8) < 0) {
+            zip_source_free(source);
+            require(false, "Cannot add preview ZIP fixture");
+        }
+    }
+    require(zip_close(zip) == 0, "Cannot save preview ZIP");
+    discard.dismiss();
+
+    struct Extraction {
+        QSemaphore started;
+        QSemaphore resume;
+        std::atomic_bool pauseNext{true};
+        std::mutex mutex;
+        QString directory;
+    };
+    const auto extraction = std::make_shared<Extraction>();
+    // This sink only reads a log message and protects its own state. It must not
+    // hold a logger lock while the test closes or opens another preview.
+    spdlog::callback_logger_st("logger", [extraction](const spdlog::details::log_msg &entry) {
+        const auto text = QString::fromUtf8(entry.payload.data(), entry.payload.size());
+        const QString marker = " audio file to: ";
+        const auto offset = text.indexOf(marker);
+        if (offset < 0)
+            return;
+        {
+            const std::lock_guard lock(extraction->mutex);
+            extraction->directory = QFileInfo(text.mid(offset + marker.size())).absolutePath();
+        }
+        extraction->started.release();
+        if (extraction->pauseNext.exchange(false))
+            extraction->resume.acquire();
+    });
+    const auto releaseLogger = qScopeGuard([extraction] {
+        extraction->resume.release();
+        spdlog::drop("logger");
+    });
+    const auto extractedDirectory = [extraction] {
+        const std::lock_guard lock(extraction->mutex);
+        return extraction->directory;
+    };
+    const auto openPreview = [](const QString &filename) {
+        auto *dialog = new DlgVideoPreview(filename);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        auto *backend = dialog->findChild<MediaBackend *>();
+        require(backend && backend->isMuted(), "Preview must start muted");
+        dialog->show();
+        return QPointer<DlgVideoPreview>(dialog);
+    };
+
+    auto cancelled = openPreview(zipFilename);
+    require(extraction->started.tryAcquire(1, 3000), "ZIP extraction must run on a worker");
+    const auto cancelledDirectory = extractedDirectory();
+    require(QFileInfo(cancelledDirectory).isDir(), "ZIP preparation must own a temporary directory");
+    cancelled->close();
+    waitFor([&] { return cancelled.isNull(); }, 1000, "Close must not wait for an extracting preview");
+
+    auto reopened = openPreview(cdgFilename);
+    extraction->resume.release();
+    waitFor([&] { return !QFileInfo::exists(cancelledDirectory); }, 3000, "Cancelled extraction must release its files");
+    auto *looseBackend = reopened->findChild<MediaBackend *>();
+    waitFor([&] { return looseBackend->state() == MediaBackend::PlayingState; }, 3000,
+            "A loose CDG pair must play after reopening");
+    require(looseBackend->isMuted(), "Playing a loose pair must preserve preview mute");
+    QTest::keyClick(reopened, Qt::Key_Escape);
+    waitFor([&] { return reopened.isNull(); }, 3000, "Escape must close a playing preview");
+
+    auto broken = openPreview(zipFilename + ".missing");
+    broken->setPlaybackTimeLimit(1);
+    waitFor([&] { return broken->findChild<QMessageBox *>() != nullptr; }, 3000, "Missing preview must report an error");
+    broken->close();
+    waitFor([&] { return broken.isNull(); }, 1000, "A preview error must allow an immediate close");
+
+    auto playing = openPreview(zipFilename);
+    auto *zipBackend = playing->findChild<MediaBackend *>();
+    QSignalSpy frames(zipBackend, &MediaBackend::frameReady);
+    waitFor([&] { return zipBackend->state() == MediaBackend::PlayingState && !frames.isEmpty(); }, 3000,
+            "A ZIP preview must decode and play");
+    const auto playingDirectory = extractedDirectory();
+    require(QFileInfo(playingDirectory).isDir() && zipBackend->isMuted(), "Playing ZIP must retain its extracted files and mute");
+    QTest::qWait(1100);
+    require(playing && playing->isVisible(), "A closed preview's timer must not affect the reopened preview");
+    playing->close();
+    require(playing && QFileInfo(playingDirectory).isDir(), "Closing a ZIP preview must retain files until stop completion");
+    waitFor([&] { return playing.isNull(); }, 3000, "A playing ZIP preview must close after backend cleanup");
+    require(!QFileInfo::exists(playingDirectory), "A closed preview must release extracted files");
+}
+
+static void checkPreviewAudio(const QString &cdgFilename)
+{
+    Settings settings;
+    auto *storage = settings.findChild<QSettings *>();
+    storage->remove("previewAudioOutputDevice");
+    storage->remove("previewStartsMuted");
+    const auto restore = qScopeGuard([&] {
+        storage->remove("previewAudioOutputDevice");
+        storage->remove("previewStartsMuted");
+        storage->sync();
+    });
+    require(settings.previewAudioOutputDevice().isEmpty() && settings.previewStartsMuted(),
+            "Preview must default to None and Start previews muted");
+    settings.setAudioOutputDevice("Default");
+    settings.setAudioOutputDeviceBm("Test Speakers");
+    require(MediaBackend::getPreviewOutputDevices({}) == QStringList{"Test USB"},
+            "The system default and assigned Break Music output must be excluded");
+    require(MediaBackend::getPreviewOutputDevices({"Test USB"}).isEmpty(),
+            "An output still in use during a pending change must be excluded");
+    settings.setAudioOutputDeviceBm("Test USB");
+    require(MediaBackend::getPreviewOutputDevices({}).isEmpty(),
+            "An independent Break Music output must also be excluded");
+    settings.setAudioOutputBmFollowsKaraoke(true);
+    require(MediaBackend::getPreviewOutputDevices({}) == QStringList{"Test USB"},
+            "Follow Karaoke must reserve the effective Break Music device");
+
+    const auto play = [&](bool usable, bool startsMuted, bool disconnect = false) {
+        DlgVideoPreview dialog(cdgFilename);
+        auto *backend = dialog.findChild<MediaBackend *>();
+        auto *button = dialog.findChild<QToolButton *>("toolButtonMute");
+        auto *volume = dialog.findChild<QSlider *>("sliderVolume");
+        require(backend && button && button->isEnabled() == usable && backend->isMuted() == startsMuted,
+                "The preview controls must reflect the available output and saved mute default");
+        require(volume && volume->isEnabled() == usable && volume->value() == 100,
+                "The preview volume slider must reflect output availability and start at full volume");
+        if (disconnect)
+            connected = true;
+        dialog.show();
+        waitFor([&] { return backend->state() == MediaBackend::PlayingState; }, 3000,
+                "Preview video must play even without an audio device");
+        if (!usable) {
+            button->click();
+            require(backend->isMuted(), "A disabled mute button must leave the preview silent");
+            return;
+        }
+        if (startsMuted) {
+            waitFor([] { return silentPreviewBuffers > 0; }, 3000, "The preview sink must receive muted audio");
+            require(audiblePreviewBuffers == 0, "Start muted must prevent any audible samples at startup");
+            button->click();
+        }
+        waitFor([] { return audiblePreviewBuffers > 0; }, 3000, "Unmuted preview must reach the chosen output");
+        const int beforeZero = silentPreviewBuffers;
+        volume->setValue(0);
+        waitFor([&] { return silentPreviewBuffers > beforeZero; }, 3000, "Zero preview volume must silence the sink");
+        require(!backend->isMuted(), "Moving the preview volume slider must not toggle mute");
+        const int beforeRestore = audiblePreviewBuffers;
+        volume->setValue(100);
+        waitFor([&] { return audiblePreviewBuffers > beforeRestore; }, 3000, "Raising preview volume must restore audio");
+        const int beforeMute = silentPreviewBuffers;
+        button->click();
+        waitFor([&] { return silentPreviewBuffers > beforeMute; }, 3000, "Muting must silence the chosen output");
+        settings.setPreviewAudioOutputDevice({});
+        dialog.validateAudioOutput({});
+        require(!button->isEnabled() && !volume->isEnabled() && backend->isMuted(),
+                "Changing routes must disable audio in an open preview");
+        waitFor([&] { return !dialog.isVisible() && backend->isPlaybackStopped(); }, 3000,
+                "The preview must release its audio sink when the route changes");
+        settings.setPreviewAudioOutputDevice("Test USB");
+    };
+
+    play(false, true);
+    settings.setPreviewAudioOutputDevice("Test Speakers");
+    settings.setPreviewStartsMuted(false);
+    play(false, true);
+    settings.setPreviewAudioOutputDevice("Test USB");
+    connected = false;
+    play(false, true, true);
+    settings.setPreviewStartsMuted(true);
+    silentPreviewBuffers = audiblePreviewBuffers = 0;
+    play(true, true);
+    settings.setPreviewStartsMuted(false);
+    settings.sync();
+    Settings reloaded;
+    require(reloaded.previewAudioOutputDevice() == "Test USB" && !reloaded.previewStartsMuted(),
+            "The selected device and start-muted preference must survive reopening settings");
+    silentPreviewBuffers = audiblePreviewBuffers = 0;
+    play(true, false);
+}
+
 #ifdef Q_OS_MACOS
 static void checkKaraokeMixUsesPreVolumeAudio(const QString &filename, const QString &output)
 {
@@ -498,7 +714,9 @@ int main(int argc, char **argv)
             require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
         }
         checkSharedVideoFrames(filename, cdgFilename);
-        std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and shared CDG checks passed");
+        checkPreviewDialogs(filename, cdgFilename, temporary.filePath("preview.zip"));
+        checkPreviewAudio(cdgFilename);
+        std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and preview checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

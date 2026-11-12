@@ -340,6 +340,60 @@
                 </item>
                </layout>
               </widget>
+              <widget class="QWidget" name="tabPreview">
+               <attribute name="title">
+                <string>Preview</string>
+               </attribute>
+               <layout class="QVBoxLayout" name="previewAudioLayout">
+                <item>
+                 <layout class="QFormLayout" name="previewOutputLayout">
+                  <item row="0" column="0">
+                   <widget class="QLabel" name="labelPreviewAudioOutput">
+                    <property name="text">
+                     <string>Audio output device</string>
+                    </property>
+                    <property name="buddy">
+                     <cstring>comboBoxPreviewAudioDevices</cstring>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="1">
+                   <widget class="QComboBox" name="comboBoxPreviewAudioDevices"/>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <widget class="QLabel" name="labelPreviewAudioNotice">
+                  <property name="text">
+                   <string>Use a separate output for Preview. Sharing an output with Karaoke or Break Music can interfere with playback or send preview audio to the audience.</string>
+                  </property>
+                  <property name="wordWrap">
+                   <bool>true</bool>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QCheckBox" name="checkBoxPreviewStartsMuted">
+                  <property name="text">
+                   <string>Start previews muted</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="previewAudioSpacer">
+                  <property name="orientation">
+                   <enum>Qt::Vertical</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>20</width>
+                    <height>40</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </widget>
              </widget>
             </item>
            </layout>

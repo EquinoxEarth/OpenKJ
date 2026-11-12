@@ -387,7 +387,8 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     add_executable(openkj-audio-outputs-test
         packaging/audio_outputs_test.cpp
         src/mediabackend.cpp src/mzarchive.cpp src/audiofader.cpp src/recordingmix.cpp
-        src/videodisplay.cpp src/xbrz.cpp src/settings.cpp src/simplecrypt.cpp)
+        src/dlgvideopreview.cpp src/dlgvideopreview.ui src/mediapreparation.cpp
+        src/videodisplay.cpp src/volslider.cpp src/xbrz.cpp src/settings.cpp src/simplecrypt.cpp)
     target_link_libraries(openkj-audio-outputs-test PRIVATE ${LIBRARIES} Qt6::Test)
     add_test(NAME audio-outputs COMMAND openkj-audio-outputs-test)
     set_tests_properties(audio-outputs PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

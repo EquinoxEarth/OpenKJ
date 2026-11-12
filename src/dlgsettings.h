@@ -56,6 +56,7 @@ private:
     bool m_pageSetupDone;
     QStringList audioOutputDevices;
     void updateBreakMusicOutput();
+    void updatePreviewAudioOutput();
     void setupHotkeysForm();
     void setupRotationDisplayPage();
     struct KeyboardShortcut
@@ -73,6 +74,7 @@ public:
     ~DlgSettings() override;
 
 signals:
+    void audioOutputRoutingChanged();
     void recordingMixLevelsChanged(int mic, int music);
     void rotationDisplaySettingsChanged();
     void audioUseFaderChanged(bool);
@@ -176,6 +178,8 @@ private slots:
     void on_comboBoxKAudioDevices_currentIndexChanged(int index);
     void on_comboBoxBAudioDevices_currentIndexChanged(int index);
     void on_checkBoxBreakOutputFollowsKaraoke_toggled(bool checked);
+    void on_comboBoxPreviewAudioDevices_currentIndexChanged(int index);
+    void on_checkBoxPreviewStartsMuted_toggled(bool checked);
     void on_checkBoxEnforceAspectRatio_clicked(bool checked);
     void on_pushButtonApplyTickerMsg_clicked();
     void on_pushButtonResetDurationPos_clicked();

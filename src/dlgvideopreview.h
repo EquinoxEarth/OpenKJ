@@ -2,13 +2,10 @@
 #define DLGVIDEOPREVIEW_H
 
 #include <QDialog>
-#include <QTemporaryDir>
-#include <mediabackend.h>
-#include <spdlog/spdlog.h>
-#include <spdlog/async_logger.h>
-#include "logging.h"
-
-std::ostream& operator<<(std::ostream& os, const QString& s);
+#include <atomic>
+#include <memory>
+#include <optional>
+#include "mediabackend.h"
 
 namespace Ui {
 class DlgVideoPreview;
@@ -19,23 +16,29 @@ class DlgVideoPreview : public QDialog
     Q_OBJECT
 
 public:
-    explicit DlgVideoPreview(QString mediaFilePath, QWidget *parent = nullptr);
+    explicit DlgVideoPreview(QString mediaFilePath, QWidget *parent = nullptr,
+                             const QStringList &activeOutputs = {});
     ~DlgVideoPreview() override;
-    // Intended for use with torture testing modes.  Closes the dialog after playing back the specified number
-    // of seconds of playback
+    void validateAudioOutput(const QStringList &activeOutputs);
+    // Used by torture tests to bound how long a preview stays open.
     void setPlaybackTimeLimit(int playSecs);
 
+public slots:
+    void done(int result) override;
+
 private:
-    std::string m_loggingPrefix{"[PreviewDialog]"};
-    std::shared_ptr<spdlog::logger> m_logger;
     std::unique_ptr<Ui::DlgVideoPreview> ui;
-    QTemporaryDir m_tmpDir;
-    QString m_mediaFilename;
-    MediaBackend m_mediaBackend { this, "PREVIEW", MediaBackend::VideoPreview };
+    const QString m_mediaFilename;
+    std::shared_ptr<std::atomic_bool> m_cancelled = std::make_shared<std::atomic_bool>(false);
+    // Destroy the backend before releasing any files it can still be using.
+    std::shared_ptr<QTemporaryDir> m_preparedDirectory;
+    std::optional<int> m_closeResult;
+    bool m_mediaLoaded{false};
+    bool m_failed{false};
+    MediaBackend m_mediaBackend{this, "PREVIEW", MediaBackend::VideoPreview};
 
-    void playCdg(const QString &cdgFilename, const QString &audioFilename);
-    void playVideo(const QString &filename);
-
+    void updateMuteButton(bool muted);
+    void showPlaybackError(const QString &error);
 };
 
 #endif // DLGVIDEOPREVIEW_H

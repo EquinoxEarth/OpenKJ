@@ -1235,6 +1235,26 @@ void Settings::setAudioOutputDeviceBm(QString device)
     settings->setValue("audioOutputDeviceBm", device);
 }
 
+QString Settings::previewAudioOutputDevice()
+{
+    return settings->value("previewAudioOutputDevice").toString();
+}
+
+void Settings::setPreviewAudioOutputDevice(const QString &device)
+{
+    settings->setValue("previewAudioOutputDevice", device);
+}
+
+bool Settings::previewStartsMuted()
+{
+    return settings->value("previewStartsMuted", true).toBool();
+}
+
+void Settings::setPreviewStartsMuted(bool muted)
+{
+    settings->setValue("previewStartsMuted", muted);
+}
+
 int Settings::audioBackend()
 {
     return settings->value("audioBackend", 0).toInt();

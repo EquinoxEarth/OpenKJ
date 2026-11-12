@@ -31,6 +31,41 @@
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
      <item>
+      <widget class="QToolButton" name="toolButtonMute">
+       <property name="autoRaise">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="VolSlider" name="sliderVolume">
+       <property name="maximumSize">
+        <size>
+         <width>112</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>80</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="accessibleName">
+        <string>Preview volume</string>
+       </property>
+       <property name="toolTip">
+        <string>Preview volume</string>
+       </property>
+       <property name="maximum">
+        <number>100</number>
+       </property>
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
@@ -73,6 +108,11 @@
    <extends>QWidget</extends>
    <header location="global">videodisplay.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>VolSlider</class>
+   <extends>QSlider</extends>
+   <header location="global">volslider.h</header>
   </customwidget>
 </customwidgets>
  <resources>

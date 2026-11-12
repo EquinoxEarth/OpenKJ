@@ -1744,6 +1744,12 @@ void MainWindow::actionSettingsTriggered() {
     connect(settingsDialog, &DlgSettings::enforceAspectRatioChanged, &m_mediaBackendBm, &MediaBackend::setEnforceAspectRatio);
     connect(settingsDialog, &DlgSettings::karaokeAutoAdvanceChanged, ui->actionAutoplay_mode, &QAction::setChecked);
     connect(settingsDialog, &DlgSettings::recordingMixLevelsChanged, &audioRecorder, &AudioRecorder::setMixLevels);
+    connect(settingsDialog, &DlgSettings::audioOutputRoutingChanged, this, [this] {
+        const QStringList activeOutputs{m_mediaBackendKar.activeAudioOutputDevice(),
+                                        m_mediaBackendBm.activeAudioOutputDevice()};
+        for (auto *preview : findChildren<DlgVideoPreview *>())
+            preview->validateAudioOutput(activeOutputs);
+    });
     connect(settingsDialog, &DlgSettings::audioUseFaderChanged, &m_mediaBackendKar, &MediaBackend::setUseFader);
     connect(settingsDialog, &DlgSettings::audioSilenceDetectChanged, &m_mediaBackendKar,
             &MediaBackend::setUseSilenceDetection);
@@ -2267,12 +2273,8 @@ void MainWindow::toggleQueuePlayed() {
 void MainWindow::previewKaraokeSong(const QString &path) {
     if (path.isEmpty())
         return;
-    if (!QFile::exists(path)) {
-        QMessageBox::warning(this, tr("Missing File!"),
-                             "Specified karaoke file missing, preview aborted!\n\n" + path, QMessageBox::Ok);
-        return;
-    }
-    auto *videoPreview = new DlgVideoPreview(path, this);
+    auto *videoPreview = new DlgVideoPreview(path, this,
+        {m_mediaBackendKar.activeAudioOutputDevice(), m_mediaBackendBm.activeAudioOutputDevice()});
     if (m_testMode)
         videoPreview->setPlaybackTimeLimit(3);
     videoPreview->setAttribute(Qt::WA_DeleteOnClose);
@@ -4149,16 +4151,7 @@ void MainWindow::tableViewHistoryContextMenu(const QPoint &pos) {
         if (index.isValid()) {
             QMenu contextMenu(this);
             contextMenu.addAction("Preview", [&]() {
-                QString filename = index.sibling(index.row(), 2).data().toString();
-                if (!QFile::exists(filename)) {
-                    QMessageBox::warning(this, tr("Missing File!"),
-                                         "Specified karaoke file missing, preview aborted!\n\n" + m_dbRtClickFile,
-                                         QMessageBox::Ok);
-                    return;
-                }
-                auto *videoPreview = new DlgVideoPreview(filename, this);
-                videoPreview->setAttribute(Qt::WA_DeleteOnClose);
-                videoPreview->show();
+                previewKaraokeSong(index.siblingAtColumn(TableModelHistorySongs::PATH).data().toString());
             });
             contextMenu.addAction("Play", this, &MainWindow::buttonHistoryPlayClicked);
             contextMenu.addAction("Add to queue", this, &MainWindow::buttonHistoryToQueueClicked);

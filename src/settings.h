@@ -213,6 +213,10 @@ public:
     QString effectiveAudioOutputDeviceBm();
     void setAudioOutputDevice(QString device);
     void setAudioOutputDeviceBm(QString device);
+    QString previewAudioOutputDevice();
+    void setPreviewAudioOutputDevice(const QString &device);
+    bool previewStartsMuted();
+    void setPreviewStartsMuted(bool muted);
     int audioBackend();
     void setAudioBackend(int index);
     bool recordingUsesOpenKjMix();

@@ -47,6 +47,7 @@ namespace Ui {
     class DlgCdg;
 }
 
+class QMediaPlayer;
 class DlgCdg : public QDialog {
 Q_OBJECT
 
@@ -64,8 +65,10 @@ private:
     MediaBackend &m_bmb;
     std::unique_ptr<TransparentWidget> m_tWidget;
     Settings m_settings;
+    QMediaPlayer *m_backgroundPlayer{nullptr};
 
     void makeWidescreen();
+    void updateBackgroundVideo(const QString &path);
 
 public:
     explicit DlgCdg(MediaBackend &KaraokeBackend, MediaBackend &BreakBackend, QWidget *parent = nullptr,

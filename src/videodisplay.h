@@ -34,6 +34,7 @@ class VideoDisplay : public QWidget
 private:
     Settings m_settings{this};
     QPixmap m_currentBg;
+    QPixmap m_idleImage;
     bool m_useDefaultBg{true};
     bool m_hasActiveVideo { false };
     bool m_fillOnPaint { false };
@@ -46,10 +47,12 @@ private:
 
 public:
     explicit VideoDisplay(QWidget *parent = nullptr);
+    static bool isBackgroundVideo(const QString &path);
     [[nodiscard]] bool hasActiveVideo() const { return m_hasActiveVideo; }
     QVideoSink* videoSink() const { return m_videoSink; }
     void updateSharedFrame(const std::shared_ptr<VideoDisplayFrame> &frame);
     void setTransparentIdleBackground(bool enabled);
+    void setIdleImage(const QPixmap &image);
     void setTransparentFramePadding(bool enabled);
 
 signals:

@@ -8,6 +8,7 @@
 class QAction;
 class TableModelRotation;
 class VideoDisplay;
+class QMediaPlayer;
 
 class RotationDisplay : public QWidget
 {
@@ -45,10 +46,15 @@ private:
     QStringList m_names;
     QString m_currentSinger;
     QColor m_textColor;
+    int m_rowAlpha{0};
+    int m_firstRowAlpha{0};
     QColor m_accentColor;
     QColor m_backgroundColor;
+    int m_backgroundDimAlpha{0};
     QString m_backgroundImagePath;
     QPixmap m_backgroundImage;
+    bool m_backgroundIsVideo{false};
+    QMediaPlayer *m_backgroundPlayer{nullptr};
     VideoDisplay *m_videoDisplay{nullptr};
     QRectF m_singerArea;
     bool m_showHeading{true};
@@ -61,6 +67,7 @@ private:
     void rememberWindowedGeometry();
     void saveWindowedGeometry();
     void updateContentGeometry();
+    void updateBackgroundPlayback();
     [[nodiscard]] QString displayName(const QString &name) const;
 };
 

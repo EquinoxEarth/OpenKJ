@@ -581,6 +581,39 @@ void Settings::setRotationDisplayBackgroundImage(const QString &path)
         settings->setValue("rotationDisplay/backgroundImage", path);
 }
 
+int Settings::rotationDisplayBackgroundDimming() const
+{
+    return qBound(0, settings->value("rotationDisplay/backgroundDimming", 0).toInt(), 100);
+}
+
+void Settings::setRotationDisplayBackgroundDimming(int percent)
+{
+    settings->setValue("rotationDisplay/backgroundDimming", qBound(0, percent, 100));
+}
+
+int Settings::rotationDisplayRowOpacity() const
+{
+    return qBound(0, settings->value("rotationDisplay/rowOpacity", 4).toInt(), 100);
+}
+
+void Settings::setRotationDisplayRowOpacity(int percent)
+{
+    settings->setValue("rotationDisplay/rowOpacity", qBound(0, percent, 100));
+}
+
+QString Settings::rotationDisplayIdleImage() const
+{
+    return settings->value("rotationDisplay/idleImage").toString();
+}
+
+void Settings::setRotationDisplayIdleImage(const QString &path)
+{
+    if (path.isEmpty())
+        settings->remove("rotationDisplay/idleImage");
+    else
+        settings->setValue("rotationDisplay/idleImage", path);
+}
+
 void Settings::saveWindowState(QWidget *window)
 {
     settings->beginGroup(window->objectName());

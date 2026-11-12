@@ -431,48 +431,71 @@ void DlgSettings::setupRotationDisplayPage()
     addColour(tr("Text colour"), &Settings::rotationDisplayTextColor, &Settings::setRotationDisplayTextColor);
     addColour(tr("Accent colour"), &Settings::rotationDisplayAccentColor, &Settings::setRotationDisplayAccentColor);
     addColour(tr("Background colour"), &Settings::rotationDisplayBackgroundColor, &Settings::setRotationDisplayBackgroundColor);
-    auto *imageRow = new QHBoxLayout;
-    auto *imagePath = new QLineEdit(appearance);
-    imagePath->setReadOnly(true);
-    imagePath->setAccessibleName(tr("Background image"));
-    imagePath->setPlaceholderText(tr("None"));
-    auto *browseImage = new QPushButton(tr("Browse…"), appearance);
-    auto *clearImage = new QPushButton(tr("Clear"), appearance);
-    imageRow->addWidget(imagePath, 1);
-    imageRow->addWidget(browseImage);
-    imageRow->addWidget(clearImage);
-    appearanceLayout->addRow(tr("Background image"), imageRow);
-    const auto showImagePath = [imagePath, clearImage](const QString &path) {
-        imagePath->setText(path);
-        imagePath->setToolTip(path);
-        clearImage->setEnabled(!path.isEmpty());
+    const auto addPercentage = [&](const QString &label, int value, auto setter) {
+        auto *control = new QSpinBox(appearance);
+        control->setRange(0, 100);
+        control->setSuffix(tr("%"));
+        control->setValue(value);
+        appearanceLayout->addRow(label, control);
+        connect(control, &QSpinBox::valueChanged, this, [this, setter](int percent) {
+            (m_settings.*setter)(percent);
+            emit rotationDisplaySettingsChanged();
+        });
     };
-    showImagePath(m_settings.rotationDisplayBackgroundImage());
-    connect(browseImage, &QPushButton::clicked, this, [this, showImagePath] {
-        const auto currentPath = m_settings.rotationDisplayBackgroundImage();
-        const auto directory = currentPath.isEmpty()
-            ? QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
-            : QFileInfo(currentPath).absolutePath();
-        QStringList patterns;
-        for (const auto &format : QImageReader::supportedImageFormats())
-            patterns.append(QStringLiteral("*.%1").arg(QString::fromLatin1(format)));
-        const auto path = QFileDialog::getOpenFileName(this, tr("Select Rotation Display background image"),
-                                                       directory, tr("Images (%1)").arg(patterns.join(' ')));
-        if (path.isEmpty())
-            return;
-        if (QImageReader(path).read().isNull()) {
-            QMessageBox::warning(this, tr("Image load error"), tr("Could not open the selected background image."));
-            return;
-        }
-        m_settings.setRotationDisplayBackgroundImage(path);
-        showImagePath(path);
-        emit rotationDisplaySettingsChanged();
-    });
-    connect(clearImage, &QPushButton::clicked, this, [this, showImagePath] {
-        m_settings.setRotationDisplayBackgroundImage({});
-        showImagePath({});
-        emit rotationDisplaySettingsChanged();
-    });
+    addPercentage(tr("Singer row opacity"), m_settings.rotationDisplayRowOpacity(), &Settings::setRotationDisplayRowOpacity);
+    const auto addImage = [&](const QString &label, auto getter, auto setter, bool allowVideo = false) {
+        auto *imageRow = new QHBoxLayout;
+        auto *imagePath = new QLineEdit(appearance);
+        imagePath->setReadOnly(true);
+        imagePath->setAccessibleName(label);
+        imagePath->setPlaceholderText(tr("None"));
+        auto *browseImage = new QPushButton(tr("Browse…"), appearance);
+        auto *clearImage = new QPushButton(tr("Clear"), appearance);
+        imageRow->addWidget(imagePath, 1);
+        imageRow->addWidget(browseImage);
+        imageRow->addWidget(clearImage);
+        appearanceLayout->addRow(label, imageRow);
+        const auto showImagePath = [imagePath, clearImage](const QString &path) {
+            imagePath->setText(path);
+            imagePath->setToolTip(path);
+            clearImage->setEnabled(!path.isEmpty());
+        };
+        showImagePath((m_settings.*getter)());
+        connect(browseImage, &QPushButton::clicked, this, [this, showImagePath, getter, setter, allowVideo] {
+            const auto currentPath = (m_settings.*getter)();
+            const auto directory = currentPath.isEmpty()
+                ? QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
+                : QFileInfo(currentPath).absolutePath();
+            QStringList patterns;
+            for (const auto &format : QImageReader::supportedImageFormats())
+                patterns.append(QStringLiteral("*.%1").arg(QString::fromLatin1(format)));
+            if (allowVideo)
+                patterns.append({"*.mp4", "*.mov", "*.m4v"});
+            const auto title = allowVideo ? tr("Select Rotation Display background") : tr("Select Rotation Display image");
+            const auto filter = allowVideo ? tr("Images and videos (%1)") : tr("Images (%1)");
+            const auto path = QFileDialog::getOpenFileName(this, title, directory, filter.arg(patterns.join(' ')));
+            if (path.isEmpty())
+                return;
+            const bool video = allowVideo && VideoDisplay::isBackgroundVideo(path);
+            if (!video && QImageReader(path).read().isNull()) {
+                QMessageBox::warning(this, tr("Image load error"), tr("Could not open the selected image."));
+                return;
+            }
+            (m_settings.*setter)(path);
+            showImagePath(path);
+            emit rotationDisplaySettingsChanged();
+        });
+        connect(clearImage, &QPushButton::clicked, this, [this, showImagePath, setter] {
+            (m_settings.*setter)({});
+            showImagePath({});
+            emit rotationDisplaySettingsChanged();
+        });
+    };
+    addImage(tr("Background image or video"), &Settings::rotationDisplayBackgroundImage,
+             &Settings::setRotationDisplayBackgroundImage, true);
+    addPercentage(tr("Background dimming"), m_settings.rotationDisplayBackgroundDimming(),
+                  &Settings::setRotationDisplayBackgroundDimming);
+    addImage(tr("Idle image (lyrics/video pane)"), &Settings::rotationDisplayIdleImage, &Settings::setRotationDisplayIdleImage);
     layout->addWidget(appearance);
     layout->addStretch();
     auto *tab = new QWidget(ui->tabWidgetMain);
@@ -726,18 +749,17 @@ void DlgSettings::on_groupBoxRequestServer_toggled(bool arg1) {
 
 void DlgSettings::on_pushButtonBrowse_clicked() {
 #ifdef Q_OS_LINUX
-    QString imageFile = QFileDialog::getOpenFileName(this, QString("Select image file"),
+    QString imageFile = QFileDialog::getOpenFileName(this, tr("Select background image or video"),
                                                      QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
-                                                     QString("Images (*.png *.jpg *.jpeg *.gif)"), nullptr,
+                                                     tr("Images and videos (*.png *.jpg *.jpeg *.gif *.mp4 *.mov *.m4v)"), nullptr,
                                                      QFileDialog::DontUseNativeDialog);
 #else
-    QString imageFile = QFileDialog::getOpenFileName(this, QString("Select image file"),
+    QString imageFile = QFileDialog::getOpenFileName(this, tr("Select background image or video"),
                                                      QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
-                                                     QString("Images (*.png *.jpg *.jpeg *.gif)"), nullptr);
+                                                     tr("Images and videos (*.png *.jpg *.jpeg *.gif *.mp4 *.mov *.m4v)"), nullptr);
 #endif
     if (imageFile != "") {
-        QImage image(imageFile);
-        if (!image.isNull()) {
+        if (VideoDisplay::isBackgroundVideo(imageFile) || !QImage(imageFile).isNull()) {
             m_settings.setCdgDisplayBackgroundImage(imageFile);
             emit cdgBgImageChanged();
             ui->lineEditCdgBackground->setText(imageFile);

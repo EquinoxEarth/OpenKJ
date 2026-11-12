@@ -567,7 +567,7 @@
                     <item>
                      <widget class="QRadioButton" name="rbBgImage">
                       <property name="text">
-                       <string>Background Image</string>
+                       <string>Background image or video</string>
                       </property>
                      </widget>
                     </item>

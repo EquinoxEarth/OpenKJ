@@ -150,6 +150,12 @@ public:
     void setRotationDisplayBackgroundColor(const QColor &color);
     [[nodiscard]] QString rotationDisplayBackgroundImage() const;
     void setRotationDisplayBackgroundImage(const QString &path);
+    [[nodiscard]] int rotationDisplayBackgroundDimming() const;
+    void setRotationDisplayBackgroundDimming(int percent);
+    [[nodiscard]] QString rotationDisplayIdleImage() const;
+    [[nodiscard]] int rotationDisplayRowOpacity() const;
+    void setRotationDisplayRowOpacity(int percent);
+    void setRotationDisplayIdleImage(const QString &path);
     void saveWindowState(QWidget *window);
     void restoreWindowState(QWidget *window);
     void saveColumnWidths(QTreeView *treeView);

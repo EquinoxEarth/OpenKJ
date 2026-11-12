@@ -51,6 +51,8 @@ private slots:
         settings.setRotationDisplayShowHeading(true);
         settings.setRotationDisplayBackgroundColor(QColor("#101820"));
         settings.setRotationDisplayBackgroundImage({});
+        settings.setRotationDisplayBackgroundDimming(0);
+        settings.setRotationDisplayIdleImage({});
         settings.setRotationDisplayTextColor(QColor("#f1f5f9"));
         QFont font = QApplication::font();
         font.setPointSize(48);
@@ -500,7 +502,34 @@ private slots:
         const QPoint videoSample(video->x() + video->width() / 4, video->geometry().center().y());
         const QPoint paddingSample(video->x() + 2, videoSample.y());
         const QPoint frameCenter = video->geometry().center();
-        QCOMPARE(colourAt(videoSample), QColor(Qt::red));
+        const auto defaultLogo = display.grab().toImage();
+        const auto logoArea = video->geometry();
+        bool logoVisible = false;
+        for (int y = logoArea.top(); y <= logoArea.bottom() && !logoVisible; ++y)
+            for (int x = logoArea.left(); x <= logoArea.right() && !logoVisible; ++x)
+                logoVisible = defaultLogo.pixelColor(QPoint(x, y) * defaultLogo.devicePixelRatio()) == QColor(Qt::white);
+        QVERIFY(logoVisible);
+        const auto idlePath = directory.filePath("idle logo.png");
+        QImage logo(100, 100, QImage::Format_RGB32);
+        logo.fill(Qt::magenta);
+        QVERIFY(logo.save(idlePath));
+        settings.setRotationDisplayIdleImage(idlePath);
+        settings.sync();
+        QCOMPARE(Settings().rotationDisplayIdleImage(), idlePath);
+        display.applySettings();
+        QCOMPARE(colourAt(frameCenter), QColor(Qt::magenta));
+        QCOMPARE(colourAt(paddingSample), QColor(Qt::red));
+        settings.setRotationDisplayBackgroundDimming(50);
+        settings.sync();
+        QCOMPARE(Settings().rotationDisplayBackgroundDimming(), 50);
+        display.applySettings();
+        QCOMPARE(colourAt({0, 0}), QColor(127, 0, 0));
+        QCOMPARE(colourAt(frameCenter), QColor(Qt::magenta));
+        settings.setRotationDisplayBackgroundDimming(100);
+        display.applySettings();
+        QCOMPARE(colourAt({0, 0}), QColor(Qt::black));
+        settings.setRotationDisplayBackgroundDimming(0);
+        display.applySettings();
         QImage frame(600, 300, QImage::Format_RGB32);
         frame.fill(Qt::yellow);
         video->updateFrame(frame);
@@ -513,7 +542,10 @@ private slots:
         QCOMPARE(colourAt(frameCenter), QColor(Qt::yellow));
         QCOMPARE(colourAt(paddingSample), QColor(Qt::red));
         video->clearFrame();
-        QCOMPARE(colourAt(videoSample), QColor(Qt::red));
+        QCOMPARE(colourAt(frameCenter), QColor(Qt::magenta));
+        settings.setRotationDisplayIdleImage({});
+        display.applySettings();
+        QCOMPARE(display.grab().toImage(), defaultLogo);
 
         settings.setRotationDisplayBackgroundImage(directory.filePath("missing.png"));
         display.applySettings();
@@ -568,6 +600,17 @@ private slots:
         const auto full = cardHeights();
         QCOMPARE(full.size(), 20);
         QVERIFY(full.first() < single.first());
+        const auto restoreOpacity = qScopeGuard([&settings, opacity = settings.rotationDisplayRowOpacity()] {
+            settings.setRotationDisplayRowOpacity(opacity);
+        });
+        settings.setRotationDisplayRowOpacity(0);
+        settings.sync();
+        QCOMPARE(Settings().rotationDisplayRowOpacity(), 0);
+        display.applySettings();
+        QVERIFY(cardHeights().isEmpty());
+        settings.setRotationDisplayRowOpacity(100);
+        display.applySettings();
+        QCOMPARE(cardHeights().size(), full.size());
     }
 
     void videoPanelCanSwapSidesAndRetainPausedFrames()

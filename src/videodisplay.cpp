@@ -1,4 +1,5 @@
 #include "videodisplay.h"
+#include <QFileInfo>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QSvgRenderer>
@@ -70,6 +71,12 @@ void VideoDisplay::setBackground(const QPixmap &pixmap)
     update();
 }
 
+bool VideoDisplay::isBackgroundVideo(const QString &path)
+{
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    return suffix == "mp4" || suffix == "mov" || suffix == "m4v";
+}
+
 void VideoDisplay::useDefaultBackground()
 {
     m_useDefaultBg = true;
@@ -94,10 +101,18 @@ void VideoDisplay::setTransparentFramePadding(bool enabled)
     update();
 }
 
+void VideoDisplay::setIdleImage(const QPixmap &image)
+{
+    m_idleImage = image;
+    updateBackgroundAttributes();
+    update();
+}
+
 void VideoDisplay::updateBackgroundAttributes()
 {
     const bool hasFrame = m_hasActiveVideo && m_currentFrame;
-    const bool opaque = hasFrame ? !m_transparentFramePadding : !m_transparentIdleBackground;
+    const bool opaque = hasFrame ? !m_transparentFramePadding
+                                 : !m_transparentIdleBackground && m_idleImage.isNull();
     if (testAttribute(Qt::WA_OpaquePaintEvent) == opaque)
         return;
     setAttribute(Qt::WA_OpaquePaintEvent, opaque);
@@ -113,7 +128,7 @@ void VideoDisplay::setHasActiveVideo(const bool &value)
         {
             m_currentFrame.reset();
         }
-        if (m_transparentIdleBackground || m_transparentFramePadding)
+        if (m_transparentIdleBackground || m_transparentFramePadding || !m_idleImage.isNull())
             updateBackgroundAttributes();
         update();
     }
@@ -128,7 +143,7 @@ void VideoDisplay::updateSharedFrame(const std::shared_ptr<VideoDisplayFrame> &f
 {
     m_currentFrame = frame;
     m_hasActiveVideo = true;
-    if (m_transparentIdleBackground || m_transparentFramePadding)
+    if (m_transparentIdleBackground || m_transparentFramePadding || !m_idleImage.isNull())
         updateBackgroundAttributes();
     update();
 }
@@ -137,15 +152,13 @@ void VideoDisplay::clearFrame()
 {
     m_currentFrame.reset();
     m_hasActiveVideo = false;
-    if (m_transparentIdleBackground || m_transparentFramePadding)
+    if (m_transparentIdleBackground || m_transparentFramePadding || !m_idleImage.isNull())
         updateBackgroundAttributes();
     update();
 }
 
 void VideoDisplay::paintEvent(QPaintEvent *event)
 {
-    if (m_transparentIdleBackground && !m_currentFrame)
-        return;
     QPainter painter(this);
 
     if (m_hasActiveVideo && m_currentFrame)
@@ -158,17 +171,28 @@ void VideoDisplay::paintEvent(QPaintEvent *event)
         int y = (height() - scaled.height()) / 2;
         painter.drawImage(x, y, scaled);
     }
+    else if (!m_idleImage.isNull())
+    {
+        const QSize fitted = m_idleImage.size().scaled(size(), Qt::KeepAspectRatio);
+        QRect target(QPoint(), fitted);
+        target.moveCenter(rect().center());
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(target, m_idleImage, m_idleImage.rect());
+    }
     else
     {
-        // stopped - draw background image
-        painter.fillRect(event->rect(), Qt::black);
+        if (!m_transparentIdleBackground)
+            painter.fillRect(event->rect(), Qt::black);
         if (m_useDefaultBg)
         {
-            QSvgRenderer renderer(QString(":icons/Icons/okjlogo.svg"));
+            const auto logo = m_transparentIdleBackground
+                ? QStringLiteral(":/icons/Icons/openkj-splash-logo.svg")
+                : QStringLiteral(":/icons/Icons/okjlogo.svg");
+            QSvgRenderer renderer(logo);
             renderer.setAspectRatioMode(Qt::KeepAspectRatio);
             renderer.render(&painter);
         }
-        else
+        else if (!m_transparentIdleBackground)
         {
             painter.drawPixmap(rect(), m_currentBg, m_currentBg.rect());
         }

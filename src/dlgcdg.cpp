@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QDir>
 #include <QImageReader>
+#include <QMediaPlayer>
 #include <QScreen>
 #include <QGuiApplication>
 #include <QtMath>
@@ -215,10 +216,17 @@ void DlgCdg::alertTxtColorChanged(const QColor &color)
 
 void DlgCdg::applyBackgroundImageMode()
 {
-    if (m_settings.bgMode() == Settings::BgMode::BG_MODE_IMAGE && QFile::exists(m_settings.cdgDisplayBackgroundImage()))
+    const auto path = m_settings.cdgDisplayBackgroundImage();
+    const bool singleBackground = m_settings.bgMode() == Settings::BgMode::BG_MODE_IMAGE && QFile::exists(path);
+    const bool video = singleBackground && VideoDisplay::isBackgroundVideo(path);
+    updateBackgroundVideo(video ? path : QString{});
+    if (singleBackground)
     {
         m_timerSlideShow.stop();
-        ui->videoDisplayKar->setBackground(QPixmap(m_settings.cdgDisplayBackgroundImage()));
+        if (video)
+            ui->videoDisplayKar->useDefaultBackground();
+        else
+            ui->videoDisplayKar->setBackground(QPixmap(path));
     }
     else if (m_settings.bgMode() == Settings::BgMode::BG_MODE_SLIDESHOW && QDir(m_settings.bgSlideShowDir()).exists())
     {
@@ -230,6 +238,32 @@ void DlgCdg::applyBackgroundImageMode()
         m_timerSlideShow.stop();
         ui->videoDisplayKar->useDefaultBackground();
     }
+}
+
+void DlgCdg::updateBackgroundVideo(const QString &path)
+{
+    const auto source = isVisible() && !path.isEmpty() ? QUrl::fromLocalFile(path) : QUrl{};
+    if (!m_backgroundPlayer) {
+        if (source.isEmpty())
+            return;
+        m_backgroundPlayer = new QMediaPlayer(this);
+        auto *sink = new QVideoSink(m_backgroundPlayer);
+        m_backgroundPlayer->setVideoSink(sink);
+        m_backgroundPlayer->setLoops(QMediaPlayer::Infinite);
+        connect(m_backgroundPlayer, &QMediaPlayer::tracksChanged, this, [this] {
+            m_backgroundPlayer->setActiveAudioTrack(-1);
+        });
+        connect(sink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+            if (isVisible() && !m_backgroundPlayer->source().isEmpty() && frame.isValid())
+                ui->videoDisplayKar->setIdleImage(QPixmap::fromImage(frame.toImage()));
+        });
+    }
+    if (m_backgroundPlayer->source() != source) {
+        m_backgroundPlayer->setSource(source);
+        ui->videoDisplayKar->setIdleImage({});
+    }
+    if (!source.isEmpty())
+        m_backgroundPlayer->play();
 }
 
 void DlgCdg::timerSlideShowTimeout()
@@ -371,6 +405,7 @@ void DlgCdg::closeEvent([[maybe_unused]]QCloseEvent *event)
 void DlgCdg::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);
+    applyBackgroundImageMode();
     m_settings.restoreWindowState(this);
     m_settings.setShowCdgWindow(true);
     if (m_settings.cdgWindowFullscreen())
@@ -391,6 +426,7 @@ void DlgCdg::showEvent(QShowEvent *event)
 
 void DlgCdg::hideEvent(QHideEvent *event)
 {
+    updateBackgroundVideo({});
     m_settings.saveWindowState(this);
     QWidget::hideEvent(event);
 }

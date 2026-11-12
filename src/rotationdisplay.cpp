@@ -7,6 +7,8 @@
 #include <QGuiApplication>
 #include <QHideEvent>
 #include <QImageReader>
+#include <QMediaPlayer>
+#include <QVideoSink>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -108,21 +110,67 @@ void RotationDisplay::applySettings()
 {
     setFont(m_settings.rotationDisplayFont());
     m_textColor = m_settings.rotationDisplayTextColor();
+    const qreal opacity = m_settings.rotationDisplayRowOpacity() / 100.0;
+    m_rowAlpha = qRound(255 * opacity);
+    // Keep the first row highlighted while allowing fully transparent or opaque rows.
+    m_firstRowAlpha = qRound(255 * (1 - qPow(1 - opacity, 2.4)));
     m_accentColor = m_settings.rotationDisplayAccentColor();
     m_backgroundColor = m_settings.rotationDisplayBackgroundColor();
+    m_backgroundDimAlpha = qRound(m_settings.rotationDisplayBackgroundDimming() * 255.0 / 100);
     const auto backgroundPath = m_settings.rotationDisplayBackgroundImage();
-    if (backgroundPath != m_backgroundImagePath || (!backgroundPath.isEmpty() && m_backgroundImage.isNull())) {
+    if (backgroundPath != m_backgroundImagePath ||
+        (!m_backgroundIsVideo && !backgroundPath.isEmpty() && m_backgroundImage.isNull())) {
         m_backgroundImagePath = backgroundPath;
-        QImageReader reader(backgroundPath);
-        reader.setAutoTransform(true);
-        m_backgroundImage = backgroundPath.isEmpty() ? QPixmap() : QPixmap::fromImage(reader.read());
+        m_backgroundIsVideo = VideoDisplay::isBackgroundVideo(backgroundPath);
+        m_backgroundImage = {};
+        if (!m_backgroundIsVideo && !backgroundPath.isEmpty()) {
+            QImageReader reader(backgroundPath);
+            reader.setAutoTransform(true);
+            m_backgroundImage = QPixmap::fromImage(reader.read());
+        }
+        updateBackgroundPlayback();
     }
     m_videoDisplay->setTransparentIdleBackground(!m_backgroundImage.isNull());
+    QImageReader idleImage(m_settings.rotationDisplayIdleImage());
+    idleImage.setAutoTransform(true);
+    m_videoDisplay->setIdleImage(idleImage.fileName().isEmpty() ? QPixmap{} : QPixmap::fromImage(idleImage.read()));
     m_showHeading = m_settings.rotationDisplayShowHeading();
     m_hideNameNotes = m_settings.rotationDisplayHideNameNotes();
     m_videoDisplay->setVisible(m_settings.rotationDisplayVideoEnabled());
     updateContentGeometry();
     refresh();
+}
+
+void RotationDisplay::updateBackgroundPlayback()
+{
+    const auto source = isVisible() && m_backgroundIsVideo
+        ? QUrl::fromLocalFile(m_backgroundImagePath) : QUrl{};
+    if (!m_backgroundPlayer) {
+        if (source.isEmpty())
+            return;
+        m_backgroundPlayer = new QMediaPlayer(this);
+        auto *sink = new QVideoSink(m_backgroundPlayer);
+        m_backgroundPlayer->setVideoSink(sink);
+        m_backgroundPlayer->setLoops(QMediaPlayer::Infinite);
+        connect(m_backgroundPlayer, &QMediaPlayer::tracksChanged, this, [this] {
+            m_backgroundPlayer->setActiveAudioTrack(-1);
+        });
+        connect(sink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+            if (!isVisible() || !m_backgroundIsVideo || !frame.isValid())
+                return;
+            m_backgroundImage = QPixmap::fromImage(frame.toImage());
+            m_videoDisplay->setTransparentIdleBackground(!m_backgroundImage.isNull());
+            update();
+        });
+    }
+    if (m_backgroundPlayer->source() != source)
+        m_backgroundPlayer->setSource(source);
+    if (!source.isEmpty())
+        m_backgroundPlayer->play();
+    else if (m_backgroundIsVideo) {
+        m_backgroundImage = {};
+        m_videoDisplay->setTransparentIdleBackground(false);
+    }
 }
 
 void RotationDisplay::updateContentGeometry()
@@ -236,6 +284,7 @@ void RotationDisplay::closeEvent(QCloseEvent *event)
 void RotationDisplay::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    updateBackgroundPlayback();
     if (!m_shuttingDown && !m_changingState)
         m_settings.setRotationDisplayVisible(true);
     if (!m_changingState)
@@ -249,6 +298,7 @@ void RotationDisplay::hideEvent(QHideEvent *event)
     if (!m_shuttingDown && !m_changingState)
         m_settings.setRotationDisplayVisible(false);
     QWidget::hideEvent(event);
+    updateBackgroundPlayback();
     if (!m_changingState)
         emit visibilityChanged(false);
 }
@@ -284,6 +334,8 @@ void RotationDisplay::paintEvent(QPaintEvent *event)
         target.moveCenter(QRectF(rect()).center());
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
         painter.drawPixmap(target, m_backgroundImage, m_backgroundImage.rect());
+        if (m_backgroundDimAlpha > 0)
+            painter.fillRect(rect(), QColor(0, 0, 0, m_backgroundDimAlpha));
     }
     if (!event->region().intersects(m_singerArea.toAlignedRect()))
         return;
@@ -366,7 +418,7 @@ void RotationDisplay::paintEvent(QPaintEvent *event)
         const QRectF rowRect(content.left(), content.top() + row * rowHeight,
                              content.width(), rowHeight - gap);
         QColor fill = m_textColor;
-        fill.setAlpha(row == 0 ? 24 : 10);
+        fill.setAlpha(row == 0 ? m_firstRowAlpha : m_rowAlpha);
         painter.setPen(Qt::NoPen);
         painter.setBrush(fill);
         painter.drawRoundedRect(rowRect, qMin(12.0, rowHeight * 0.15), qMin(12.0, rowHeight * 0.15));

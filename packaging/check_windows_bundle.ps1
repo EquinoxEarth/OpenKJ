@@ -1,5 +1,5 @@
 param(
-    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-preview',
+    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-portable',
     [string]$MediaDirectory = ''
 )
 $ErrorActionPreference = 'Stop'

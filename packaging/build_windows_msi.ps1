@@ -1,5 +1,5 @@
 param(
-    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-preview',
+    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-portable',
     [string]$OutputDirectory = 'dist',
     [string]$Version,
     [string]$Wix = 'build-windows-msi/tools/wix.exe'

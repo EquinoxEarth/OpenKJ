@@ -1,4 +1,4 @@
-# OpenKJ Linux x86_64 Flatpak preview
+# OpenKJ Linux x86_64 Flatpak
 
 This experimental package targets Linux x86_64 distributions with Flatpak,
 including Aurora, Fedora, Ubuntu, Debian, Arch and openSUSE. The same bundle
@@ -10,22 +10,24 @@ The KDE runtime is downloaded through Flathub at installation if needed.
 
 ## Install on Linux (including Aurora)
 
-Download the `OpenKJ-Linux-x86_64-flatpak-preview` GitHub Actions artifact and
-extract it. From the extracted folder:
+Download the versioned Flatpak from GitHub Releases and run these commands
+from the download folder. For a GitHub Actions build, extract the
+`OpenKJ-Linux-x86_64-flatpak` artifact and use `OpenKJ-Linux-x86_64.flatpak`
+as the bundle filename.
 
 ```bash
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user ./OpenKJ-Linux-x86_64-preview.flatpak
-flatpak run org.openkj.OpenKJ//preview
+flatpak install --user ./OpenKJ-3.0.0-linux-x86_64.flatpak
+flatpak run org.openkj.OpenKJ//stable
 ```
 
-The application also appears in the desktop launcher. The preview is a locally
+The application also appears in the desktop launcher. The bundle is a locally
 built, unsigned Flatpak bundle; it is not a Flathub publication. To install a
-newer preview of the same branch, run the install command with `--reinstall`.
+newer build of the same branch, run the install command with `--reinstall`.
 The `.flatpak.sha256` file supplies the download checksum:
 
 ```bash
-sha256sum --check OpenKJ-Linux-x86_64-preview.flatpak.sha256
+sha256sum --check OpenKJ-3.0.0-linux-x86_64.flatpak.sha256
 ```
 
 The package supports Wayland and X11/XWayland, sound playback and microphone
@@ -61,7 +63,7 @@ bash packaging/build_flatpak.sh
 
 This packages **committed HEAD**, excluding local build trees and user files.
 It downloads the KDE SDK/runtime and Rust SDK extension, builds the additional
-plugins and app, installs the preview per user, tests its Platform runtime, and
+plugins and app, installs the bundle per user, tests its Platform runtime, and
 writes the bundle/checksum/manifest to `releases/flatpak/`. CI uses the same
 script in the official KDE SDK build container. The exported bundle is then
 installed and tested in clean Ubuntu and Fedora containers with the Platform
@@ -73,5 +75,5 @@ GStreamer ABI. It uses the existing `pitch` element and SoundTouch 2.4.1; DSP
 pipelines/settings are unchanged. Rust CDG uses pinned gst-plugins-rs 0.15.3,
 as tested in the Windows and Fedora development builds. Static C++ dependencies
 and CPM itself are supplied as pinned sources; Cargo uses the upstream lockfile
-and network access at build time. This preview recipe is not yet an offline
+and network access at build time. This recipe is not yet an offline
 Flathub submission. Included library notices are in `/app/share/licenses/openkj`.

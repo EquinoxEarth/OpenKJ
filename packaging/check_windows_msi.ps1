@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$Installer,
     [Parameter(Mandatory)][string]$PreviousInstaller,
-    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-preview'
+    [string]$BundleDirectory = 'dist/OpenKJ-Windows-x64-portable'
 )
 $ErrorActionPreference = 'Stop'
 $msi = (Resolve-Path $Installer).Path

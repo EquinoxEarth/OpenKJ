@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -22,23 +23,35 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.commit = 'a' * 40
         self.version = release.re.search(r'OKJ_VERSION_STRING "([^"\n]+)"',
             (Path(__file__).parents[2] / 'src/okjversion.h').read_text())[1]
-        self.tag = f'v{self.version}-beta.1'
-        for name in ('macos', 'windows-zip', 'windows-msi', 'linux'):
+        self.tag = f'v{self.version}'
+        for name in ('macos', 'windows-zip', 'windows-msi', 'linux', 'linux-portable'):
             (self.inputs / name).mkdir(parents=True)
-        self.zip = self.inputs / 'windows-zip/OpenKJ-Windows-x64-preview.zip'
+        self.zip = self.inputs / 'windows-zip/OpenKJ-Windows-x64-portable.zip'
         with zipfile.ZipFile(self.zip, 'w') as archive:
-            archive.writestr('OpenKJ-Windows-x64-preview/manifest.json', json.dumps({'commit': self.commit}))
+            archive.writestr('OpenKJ-Windows-x64-portable/manifest.json', json.dumps({'commit': self.commit}))
         self.package = self.inputs / f'windows-msi/OpenKJ-{self.version}-windows-x64.msi'
-        files = [self.zip, self.package,
+        self.portable = self.inputs / 'linux-portable/OpenKJ-Fedora44-x86_64-portable.tar.gz'
+        self.write_portable(self.commit)
+        files = [self.zip, self.package, self.portable,
                  self.inputs / f'macos/OpenKJ-{self.version}-macos-arm64.dmg',
-                 self.inputs / 'linux/OpenKJ-Linux-x86_64-preview.flatpak']
+                 self.inputs / 'linux/OpenKJ-Linux-x86_64.flatpak']
         for path in files:
             if not path.exists():
                 path.write_bytes(b'package fixture')
             Path(str(path) + '.sha256').write_text(f'{release.digest(path)}  {path.name}\n')
         (self.inputs / 'linux/build-manifest.json').write_text(json.dumps({'openkj-source-commit': self.commit}))
+        self.branch = self.inputs / 'linux/branch.txt'
+        self.branch.write_text('stable\n')
         (self.inputs / 'linux/runtime-versions.txt').write_text('org.kde.Platform 6.11\n')
         (self.inputs / 'macos/RELEASE_NOTES.md').write_text('https://github.com/EquinoxEarth/OpenKJ/commit/' + self.commit)
+
+    def write_portable(self, commit):
+        source_commit = self.root / 'source-commit.txt'
+        source_commit.write_text(commit + '\n')
+        with tarfile.open(self.portable, 'w:gz') as archive:
+            archive.add(source_commit, arcname='./source-commit.txt')
+        Path(str(self.portable) + '.sha256').write_text(
+            f'{release.digest(self.portable)}  {self.portable.name}\n')
 
     def stage(self):
         release.prepare(self.inputs, self.output, self.tag, self.commit)
@@ -49,6 +62,8 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.assertTrue((self.output / f'OpenKJ-{self.version}-linux-x86_64.flatpak').exists())
         info = json.loads((self.output / f'OpenKJ-{self.version}-build-info.json').read_text())
         self.assertEqual(info['tag'], self.tag)
+        self.assertEqual(len(info['packages']), 5)
+        self.assertIn(f'OpenKJ-{self.version}-linux-fedora44-x86_64-portable.tar.gz', info['packages'])
         for line in (self.output / 'SHA256SUMS').read_text().splitlines():
             expected, name = line.split()
             self.assertEqual(expected, hashlib.sha256((self.output / name).read_bytes()).hexdigest())
@@ -60,7 +75,8 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_legacy_preview_tags_remain_supported(self):
-        for channel in ('prerelease', 'preview'):
+        self.branch.write_text('preview\n')
+        for channel in ('prerelease', 'preview', 'beta'):
             with self.subTest(channel=channel):
                 self.tag = f'v{self.version}-{channel}.1'
                 self.output = self.root / channel
@@ -71,13 +87,25 @@ class ReleaseIntegrityTests(unittest.TestCase):
         for suffix in ('beta', 'beta.x', 'stable.1'):
             with self.subTest(suffix=suffix):
                 self.tag = f'v{self.version}-{suffix}'
-                with self.assertRaisesRegex(ValueError, 'Expected a beta or preview tag'):
+                with self.assertRaisesRegex(ValueError, 'Expected a stable or prerelease tag'):
                     self.stage()
                 self.assertFalse(self.output.exists())
 
     def test_mixed_source_commits_never_staged(self):
         (self.inputs / 'linux/build-manifest.json').write_text(json.dumps({'openkj-source-commit': 'b' * 40}))
         with self.assertRaisesRegex(ValueError, 'source commit'):
+            self.stage()
+        self.assertFalse(self.output.exists())
+
+    def test_mixed_portable_commit_never_staged(self):
+        self.write_portable('b' * 40)
+        with self.assertRaisesRegex(ValueError, 'Linux portable source commit'):
+            self.stage()
+        self.assertFalse(self.output.exists())
+
+    def test_wrong_flatpak_branch_never_staged(self):
+        self.branch.write_text('preview\n')
+        with self.assertRaisesRegex(ValueError, 'Flatpak branch'):
             self.stage()
         self.assertFalse(self.output.exists())
 

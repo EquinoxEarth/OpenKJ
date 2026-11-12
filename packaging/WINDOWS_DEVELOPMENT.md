@@ -63,7 +63,7 @@ after testing the portable runtime on a machine without the development SDK.
 
 ## Portable preview ZIP
 
-The `OpenKJ-Windows-x64-preview` CI artifact contains a ZIP and its SHA-256 hash.
+The `OpenKJ-Windows-x64-portable` CI artifact contains a ZIP and its SHA-256 hash.
 Extract the whole ZIP, then double-click `openkj.exe` inside the extracted
 folder. This bundle includes Qt, the GStreamer plugins/scanner, FFmpeg,
 SoundTouch and their native DLL dependencies; it does not need an MSYS2 install.
@@ -79,7 +79,7 @@ python packaging/generate_media_fixtures.py build-windows-dev/media-fixtures
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/check_windows_bundle.ps1 -MediaDirectory build-windows-dev/media-fixtures
 ```
 
-Staging requires a fresh `dist/OpenKJ-Windows-x64-preview` destination. It copies
+Staging requires a fresh `dist/OpenKJ-Windows-x64-portable` destination. It copies
 the deployed Qt plugins and the explicit `GSTREAMER_PLUGINS` set in
 `package_windows.py`, follows PE imports recursively, and fails on unresolved
 dependencies or MSYS runtime binaries.
@@ -138,7 +138,7 @@ dotnet tool install wix --version 5.0.2 --tool-path build-windows-msi/tools
 ```
 
 The resulting `dist/OpenKJ-X.Y.Z-windows-x64.msi` and SHA-256 file are uploaded
-as `OpenKJ-Windows-x64-msi-preview` after the installation checks pass. Install
+as `OpenKJ-Windows-x64-msi` after the installation checks pass. Install
 it normally on Windows to check the interactive wizard and real audio/displays.
 The portable ZIP remains available separately. Neither package is code signed.
 WiX 5.0.2 is pinned before the maintenance-fee terms introduced with WiX 6;

@@ -148,8 +148,9 @@ def stage(build, prefix, destination):
     version_header = (root / "src/okjversion.h").read_text(encoding="utf-8")
     version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', version_header)[1]
     channel = re.search(r'OKJ_VERSION_BRANCH "([^"\n]+)"', version_header)[1]
+    release_label = "stable" if channel == "stable" else f"{channel}, experimental"
     (destination / "README.txt").write_text(
-        f"OpenKJ {version} Windows x64 {channel} (experimental, unsigned)\n\n"
+        f"OpenKJ {version} Windows x64 ({release_label}, unsigned)\n\n"
         "Extract the entire ZIP into a writable folder, then open openkj.exe.\n"
         "Keep all DLLs and plugin folders together. MSYS2 is not required.\n"
         "Use your normal Windows user account; administrator rights are not needed.\n"
@@ -175,7 +176,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=Path("build-windows-dev"))
     parser.add_argument("--prefix", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=Path("dist/OpenKJ-Windows-x64-preview"))
+    parser.add_argument("--output", type=Path, default=Path("dist/OpenKJ-Windows-x64-portable"))
     arguments = parser.parse_args()
     try:
         stage(arguments.build_dir.resolve(), arguments.prefix.resolve(), arguments.output.resolve())

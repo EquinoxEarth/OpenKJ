@@ -32,6 +32,11 @@
         <binary>openkj</binary>
     </provides>
     <releases>
+        <release version="3.0.0" date="2026-11-12" type="stable">
+            <description>
+                <p>Stable cross-platform release with improved karaoke playback, a customizable Rotation Display, dedicated song preview audio, and more reliable library and queue updates.</p>
+            </description>
+        </release>
         <release version="2.2.8" date="2026-11-10" type="development">
             <description>
                 <ul>

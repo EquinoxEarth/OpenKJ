@@ -1,39 +1,10 @@
-# OpenKJ 2.2.8 — Windows x64 Beta
+# OpenKJ 3.0.0 Windows
 
-Experimental, unsigned Windows x64 beta using Qt 6 and GStreamer.
+The MSI installs OpenKJ on Windows x64. For portable use, extract the entire ZIP
+and run `openkj.exe` with the bundled DLLs and plugins in place. Both packages
+include Qt, GStreamer, FFmpeg and SoundTouch. Windows may prompt because the
+packages are unsigned.
 
-Changes since 2.2.7:
-
-- Clear Search button beside Search, with automatic focus back to the search field.
-- Redesigned OpenKJ splash with version information and an animated loading bar.
-- Background media initialization keeps startup feedback responsive.
-- Splash stays above the opening main window for at least three seconds.
-- Improved startup error reporting and clean shutdown during initialization.
-
-- Native Windows playback, full-library import and singer rotation have been
-  tested by the maintainer.
-- Correct Windows local-file URLs, including spaces and Unicode filenames.
-- Audio format/rate conversion between the existing SoundTouch/EQ chain and
-  native output devices.
-- Portable ZIP with Qt, GStreamer, FFmpeg, SoundTouch and runtime DLLs;
-  MSYS2 is not required on the destination computer.
-- Isolated checks cover SQLite, ZIP I/O, file playback, DSP/output negotiation,
-  CDG decoding and bundled plugin discovery without development SDK paths.
-
-Extract the **entire ZIP**, then open `openkj.exe`. Keep all DLLs and plugin
-folders together. This uses your normal OpenKJ settings/library; back up your
-existing data before trying a preview. Windows may prompt because the build is
-unsigned.
-
-Alternatively, run the **MSI installer** for a Start Menu entry, optional desktop
-shortcut and uninstall support. Installation requires administrator approval;
-settings, the song database and media are retained when uninstalling. MSI
-upgrades apply to this installer family, not older Inno Setup installations.
-No automatic updater is included.
-
-Automated tests use offscreen windows and fake audio/video outputs; they do not
-certify every audio device, microphone or multi-monitor configuration. Please
-report playback, display, recording or library issues with the application log.
-
-The archive includes dependency versions, license notices and a file manifest.
-Source and build scripts: [EquinoxEarth/OpenKJ](https://github.com/EquinoxEarth/OpenKJ).
+Back up your settings and song library before upgrading. See the
+[full OpenKJ 3.0.0 changelog](https://github.com/EquinoxEarth/OpenKJ/releases/tag/v3.0.0)
+for playback, library and display changes.

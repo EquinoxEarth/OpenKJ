@@ -1,7 +1,7 @@
 # Fedora Qt 6 development
 
 For an installable package on Aurora or another Flatpak desktop, use the
-[Linux Flatpak preview](flatpak/README.md). That package includes the extra
+[Linux Flatpak](flatpak/README.md). That package includes the extra
 media plugins and does not require host development packages or `env.sh`.
 
 The first Linux target on `master` is **Fedora 44 x86_64**. This uses
@@ -65,13 +65,13 @@ builds the app and runs isolated Qt, ZIP, SQLite, file-URI, audio negotiation,
 SoundTouch/EQ and CDG checks. CI installs codecs into its disposable container;
 it does not change a user's machine or publish a release.
 
-The resulting `OpenKJ-Fedora44-x86_64-development` artifact contains a tarball
+The resulting `OpenKJ-Fedora44-x86_64-portable` artifact contains a tarball
 with the executable, desktop metadata, the local CDG plugin if one was built,
 and an RPM version inventory. Extract it and run `./run-openkj.sh` on Fedora 44
 with the dependencies above installed. It is **not a self-contained AppImage**.
 The existing optional AppImage CMake path is not used by this workflow.
 
-Before a Linux prerelease, test real MP3+G ZIPs and MP4s, pause/seek, Stop and
+Before a Linux release, test real MP3+G ZIPs and MP4s, pause/seek, Stop and
 song changes, pitch/tempo, both EQ tabs, break music/crossfades, autoplay,
 microphone recording, a full library import/search and singer rotation. Test
 the video/singer windows on the actual Wayland/X11 desktop and external screens;

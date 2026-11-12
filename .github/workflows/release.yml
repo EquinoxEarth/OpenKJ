@@ -15,11 +15,14 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
       - name: Check release integrity gates
         run: python3 -m unittest discover -s packaging/tests -p 'test_prepare_release.py' -v
       - name: Validate version and release channel
+        id: version
         env:
           RELEASE_REF: ${{ github.ref }}
         run: |
@@ -30,73 +33,94 @@ jobs:
           parts = [re.search(r'OKJ_VERSION_' + part + r' (\d+)', header)[1]
                    for part in ('MAJOR', 'MINOR', 'BUILD')]
           channel = re.search(r'OKJ_VERSION_BRANCH "([^"\n]+)"', header)[1]
-          if '.'.join(parts) != version or channel not in ('prerelease', 'beta'):
+          if '.'.join(parts) != version or channel not in ('stable', 'prerelease', 'beta'):
               raise SystemExit('Source version/release channel metadata disagree')
           ref = os.environ['RELEASE_REF']
           if ref.startswith('refs/tags/'):
-              match = re.fullmatch(r'refs/tags/v(\d+\.\d+\.\d+)-(prerelease|preview|beta)\.\d+', ref)
+              tag = ref.removeprefix('refs/tags/')
+              match = re.fullmatch(r'v(\d+\.\d+\.\d+)(?:-(prerelease|preview|beta)\.\d+)?', tag)
               if not match or match[1] != version:
-                  raise SystemExit('Expected v' + version + '-beta.N, -prerelease.N or -preview.N')
-              expected_channel = 'beta' if match[2] == 'beta' else 'prerelease'
+                  raise SystemExit('Expected v' + version + ' or a matching prerelease tag')
+              expected_channel = {'beta': 'beta', None: 'stable'}.get(match[2], 'prerelease')
               if channel != expected_channel:
                   raise SystemExit('Release tag and source channel do not match')
+          else:
+              tag = 'v' + version + ('' if channel == 'stable' else f'-{channel}.1')
           for name in ('RELEASE_NOTES.md', 'WINDOWS_RELEASE_NOTES.md'):
-              if not pathlib.Path('packaging', name).read_text().startswith('# OpenKJ ' + version + ' —'):
+              heading = pathlib.Path('packaging', name).read_text().splitlines()[0]
+              if heading.split()[:3] != ['#', 'OpenKJ', version]:
                   raise SystemExit('Update ' + name)
           release = ET.parse('src/org.openkj.OpenKJ.metainfo.xml').find('./releases/release')
-          if release is None or release.get('version') != version or release.get('type') != 'development':
-              raise SystemExit('Update Linux AppStream development release metadata')
+          expected_type = 'stable' if channel == 'stable' else 'development'
+          if release is None or release.get('version') != version or release.get('type') != expected_type:
+              raise SystemExit('Update Linux AppStream release metadata')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              print('tag=' + tag, file=out)
           PY
 
   macos:
+    name: macOS Build
     needs: validate
     uses: ./.github/workflows/macos-build.yml
     permissions:
       contents: write
 
   windows:
+    name: Windows Build
     needs: validate
     uses: ./.github/workflows/windows-test.yml
     permissions:
       contents: write
 
   linux:
+    name: Linux Build
     needs: validate
-    uses: ./.github/workflows/linux-flatpak.yml
+    uses: ./.github/workflows/linux-test.yml
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: [validate, macos, windows, linux]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: OpenKJ-macos-arm64
           path: downloads/macos
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          name: OpenKJ-Windows-x64-preview
+          name: OpenKJ-Windows-x64-portable
           path: downloads/windows-zip
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          name: OpenKJ-Windows-x64-msi-preview
+          name: OpenKJ-Windows-x64-msi
           path: downloads/windows-msi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          name: OpenKJ-Linux-x86_64-flatpak-preview
+          name: OpenKJ-Linux-x86_64-flatpak
           path: downloads/linux
+      - uses: actions/download-artifact@v7
+        with:
+          name: OpenKJ-Fedora44-x86_64-portable
+          path: downloads/linux-portable
       - name: Verify checksums, versions, and source provenance
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: python3 packaging/prepare_release.py --artifacts downloads --output release --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
+      - name: Upload staged release for review
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: OpenKJ-release-candidate
+          path: release/
+          if-no-files-found: error
       - name: Publish all platforms together
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           cd release
           sha256sum --check SHA256SUMS
@@ -106,10 +130,14 @@ jobs:
           fi
           VERSION="${RELEASE_TAG#v}"
           VERSION="${VERSION%%-*}"
-          TITLE="$VERSION - Cross Platform Preview"
+          TITLE="OpenKJ $VERSION Preview"
           RELEASE_FLAGS=(--prerelease)
           MARK_LATEST=false
-          if [[ "$RELEASE_TAG" == *-beta.* ]]; then
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            TITLE="OpenKJ $VERSION"
+            RELEASE_FLAGS=(--prerelease=false)
+            MARK_LATEST=true
+          elif [[ "$RELEASE_TAG" == *-beta.* ]]; then
             TITLE="$VERSION Beta"
             RELEASE_FLAGS=(--prerelease=false)
             MARK_LATEST=true

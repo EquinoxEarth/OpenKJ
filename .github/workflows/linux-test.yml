@@ -1,4 +1,4 @@
-name: Fedora Qt 6 build test
+name: Linux Build
 
 on:
   push:
@@ -6,16 +6,17 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: fedora-qt6-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-fedora-qt6-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  portable:
     runs-on: ubuntu-24.04
     container: fedora:44
     timeout-minutes: 60
@@ -38,7 +39,7 @@ jobs:
         run: |
           source build-linux-deps/env.sh
           ctest --test-dir build-linux-dev --output-on-failure -V
-      - name: Stage native Fedora development build
+      - name: Stage Fedora portable archive
         run: |
           cmake --install build-linux-dev --prefix "$PWD/build-linux-dev/stage/usr"
           cp -R build-linux-deps/plugins build-linux-dev/stage/runtime
@@ -59,16 +60,28 @@ jobs:
           exec "$directory/usr/bin/openkj" "$@"
           LAUNCHER
           chmod +x build-linux-dev/stage/run-openkj.sh
-          tar -C build-linux-dev/stage -czf build-linux-dev/OpenKJ-Fedora44-x86_64-development.tar.gz .
-      - name: Upload Fedora development build
-        uses: actions/upload-artifact@v4
+          git rev-parse HEAD > build-linux-dev/stage/source-commit.txt
+          archive=OpenKJ-Fedora44-x86_64-portable.tar.gz
+          tar -C build-linux-dev/stage -czf "build-linux-dev/$archive" .
+          (
+            cd build-linux-dev
+            sha256sum "$archive" > "$archive.sha256"
+            mkdir -p portable-check
+            tar -xf "$archive" -C portable-check
+            GST_PLUGIN_PATH_1_0="$PWD/portable-check/runtime" QT_QPA_PLATFORM=offscreen \
+              portable-check/usr/libexec/openkj-runtime-smoke
+          )
+      - name: Upload Fedora portable archive
+        uses: actions/upload-artifact@v6
         with:
-          name: OpenKJ-Fedora44-x86_64-development
-          path: build-linux-dev/OpenKJ-Fedora44-x86_64-development.tar.gz
+          name: OpenKJ-Fedora44-x86_64-portable
+          path: |
+            build-linux-dev/OpenKJ-Fedora44-x86_64-portable.tar.gz
+            build-linux-dev/OpenKJ-Fedora44-x86_64-portable.tar.gz.sha256
           if-no-files-found: error
       - name: Upload diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: OpenKJ-Fedora44-diagnostics
           path: |
@@ -76,3 +89,7 @@ jobs:
             build-linux-deps/*.txt
             build-linux-dev/Testing/Temporary/LastTest.log
             build-linux-dev/CMakeFiles/CMakeConfigureLog.yaml
+
+  flatpak:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/linux-flatpak.yml

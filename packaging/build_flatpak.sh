@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build an installable preview from committed sources, then test its runtime.
+# Build an installable Flatpak from committed sources, then test its runtime.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
-    echo 'Build this preview on Linux x86_64.' >&2; exit 1;
+    echo 'Build this package on Linux x86_64.' >&2; exit 1;
 }
 for tool in git tar flatpak flatpak-builder python3; do
     command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
@@ -12,13 +12,18 @@ scope=(--user)
 if [[ ${OPENKJ_FLATPAK_SYSTEM:-0} == 1 ]]; then scope=(); fi
 flatpak "${scope[@]}" remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
+branch=preview
+if grep -qx '#define OKJ_VERSION_BRANCH "stable"' src/okjversion.h; then
+    branch=stable
+fi
+
 # Do not copy local build trees, media, databases or caches into the sandbox.
 rm -rf build-flatpak-source
 mkdir build-flatpak-source
 git archive --format=tar HEAD --output=build-flatpak-source.tar
 tar -xf build-flatpak-source.tar -C build-flatpak-source
 flatpak-builder "${scope[@]}" --install-deps-from=flathub --force-clean --disable-rofiles-fuse \
-    --default-branch=preview --repo=build-flatpak-repo --install \
+    --default-branch="$branch" --repo=build-flatpak-repo --install \
     build-flatpak-app packaging/flatpak/org.openkj.OpenKJ.json
 
 # Test the installed/exported app using the Platform runtime, not the SDK.
@@ -26,15 +31,16 @@ flatpak-builder "${scope[@]}" --install-deps-from=flathub --force-clean --disabl
 env -u GST_PLUGIN_PATH -u GST_PLUGIN_PATH_1_0 -u GST_PLUGIN_SYSTEM_PATH -u GST_PLUGIN_SYSTEM_PATH_1_0 \
     flatpak run "${scope[@]}" --env=QT_QPA_PLATFORM=offscreen \
     --env=GST_REGISTRY_1_0=/tmp/openkj-flatpak-check-registry.bin \
-    --command=/app/libexec/openkj-runtime-smoke org.openkj.OpenKJ//preview
+    --command=/app/libexec/openkj-runtime-smoke "org.openkj.OpenKJ//$branch"
 
 mkdir -p releases/flatpak
 flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-    build-flatpak-repo releases/flatpak/OpenKJ-Linux-x86_64-preview.flatpak org.openkj.OpenKJ preview
+    build-flatpak-repo releases/flatpak/OpenKJ-Linux-x86_64.flatpak org.openkj.OpenKJ "$branch"
+printf '%s\n' "$branch" > releases/flatpak/branch.txt
 python3 - <<'PY'
 import hashlib, json, pathlib, subprocess
 folder = pathlib.Path('releases/flatpak')
-bundle = folder / 'OpenKJ-Linux-x86_64-preview.flatpak'
+bundle = folder / 'OpenKJ-Linux-x86_64.flatpak'
 digest = hashlib.file_digest(bundle.open('rb'), 'sha256').hexdigest()
 bundle.with_suffix('.flatpak.sha256').write_text(f'{digest}  {bundle.name}\n')
 manifest = json.loads(pathlib.Path('packaging/flatpak/org.openkj.OpenKJ.json').read_text())

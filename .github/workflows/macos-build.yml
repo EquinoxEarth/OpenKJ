@@ -1,4 +1,4 @@
-name: Apple Silicon build and release
+name: macOS Build
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-build-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-macos-build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -31,9 +31,9 @@ jobs:
           ref = os.environ['RELEASE_REF']
           if ref.startswith('refs/tags/'):
               tag = ref.removeprefix('refs/tags/')
-              match = re.fullmatch(r'(?:macos-)?v(\d+\.\d+\.\d+)-(?:prerelease|preview|beta)\.\d+', tag)
+              match = re.fullmatch(r'(?:macos-)?v(\d+\.\d+\.\d+)(?:-(?:prerelease|preview|beta)\.\d+)?', tag)
               if not match:
-                  raise SystemExit('Expected vX.Y.Z-beta.N, -prerelease.N, -preview.N, or a macos-prefixed platform tag')
+                  raise SystemExit('Expected vX.Y.Z, an optional beta/preview suffix, or a macos-prefixed platform tag')
               header = pathlib.Path('src/okjversion.h').read_text()
               version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', header).group(1)
               parts = [re.search(r'OKJ_VERSION_' + part + r' (\d+)', header).group(1)
@@ -41,7 +41,7 @@ jobs:
               if version != match[1] or '.'.join(parts) != version:
                   raise SystemExit('Release tag and source version do not match')
               notes = pathlib.Path('packaging/RELEASE_NOTES.md').read_text()
-              if not notes.startswith('# OpenKJ ' + version + ' —'):
+              if notes.splitlines()[0].split()[:3] != ['#', 'OpenKJ', version]:
                   raise SystemExit('Update packaging/RELEASE_NOTES.md for this version')
           PYTHON
       - name: Set up native development dependencies
@@ -50,7 +50,7 @@ jobs:
         run: |
           source build-macos-deps/env.sh
           cmake -S . -B build-macos-dev -DOPENKJ_BUILD_SMOKE_TESTS=ON
-          cmake --build build-macos-dev --target openkj-runtime-smoke openkj-queue-append-test openkj-audio-outputs-test openkj-add-song-dialog-test openkj-rotation-display-test openkj-simplecrypt-compat-test openkj-directory-listing-test openkj-logging-test openkj-library-sort-test openkj-break-song-lookups-test openkj-playlist-import-test openkj-table-layout-test openkj-break-music-scan-test --parallel 4
+          cmake --build build-macos-dev --parallel 4
           ctest --test-dir build-macos-dev --output-on-failure
       - name: Build and sign standalone app
         run: |
@@ -71,12 +71,12 @@ jobs:
           notes += f'\nSource: [release commit]({source}).\n\nDMG SHA-256: `{digest}`\n'
           pathlib.Path('releases/RELEASE_NOTES.md').write_text(notes)
           PYTHON
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: OpenKJ-macos-arm64
           path: releases/
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: macos-build-environment
@@ -90,7 +90,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: OpenKJ-macos-arm64
           path: release

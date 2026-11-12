@@ -1,24 +1,13 @@
-name: Linux Flatpak preview
+name: Linux Flatpak build
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - '.github/workflows/linux-flatpak.yml'
-      - 'packaging/flatpak/**'
-      - 'packaging/build_flatpak.sh'
-      - 'src/**'
-      - 'CMakeLists.txt'
-      - 'cmake/**'
-      - 'packaging/runtime_smoke.cpp'
-  workflow_dispatch:
   workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: flatpak-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-flatpak-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,14 +22,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: .flatpak-builder
           key: flatpak-kde611-${{ runner.arch }}-${{ hashFiles('packaging/flatpak/org.openkj.OpenKJ.json') }}-${{ github.run_id }}
           restore-keys: |
             flatpak-kde611-${{ runner.arch }}-${{ hashFiles('packaging/flatpak/org.openkj.OpenKJ.json') }}-
             flatpak-kde611-${{ runner.arch }}-
-      - name: Build and test installable Flatpak preview
+      - name: Build and test installable Flatpak
         env:
           OPENKJ_FLATPAK_SYSTEM: '1'
         run: |
@@ -50,21 +39,21 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           dbus-uuidgen --ensure=/etc/machine-id
           dbus-run-session -- bash packaging/build_flatpak.sh 2>&1 | tee build-flatpak.log
-      - name: Upload installable Linux preview
-        uses: actions/upload-artifact@v4
+      - name: Upload installable Linux Flatpak
+        uses: actions/upload-artifact@v6
         with:
-          name: OpenKJ-Linux-x86_64-flatpak-preview
+          name: OpenKJ-Linux-x86_64-flatpak
           path: releases/flatpak/
           if-no-files-found: error
       - name: Upload Flatpak build diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: OpenKJ-flatpak-diagnostics
           path: |
             build-flatpak.log
             packaging/flatpak/org.openkj.OpenKJ.json
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v5
         if: always()
         with:
           path: .flatpak-builder
@@ -96,24 +85,26 @@ jobs:
           dbus-uuidgen --ensure=/etc/machine-id
           mkdir -p /run/dbus
           dbus-daemon --system --fork --nopidfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          name: OpenKJ-Linux-x86_64-flatpak-preview
-          path: preview
+          name: OpenKJ-Linux-x86_64-flatpak
+          path: flatpak-bundle
       - name: Install bundle and test its Platform runtime without an SDK
         run: |
-          cd preview
-          sha256sum --check OpenKJ-Linux-x86_64-preview.flatpak.sha256
+          cd flatpak-bundle
+          sha256sum --check OpenKJ-Linux-x86_64.flatpak.sha256
           # Minimal containers have no login session. Supply the standard
           # runtime directory and system bus expected by older Flatpak hosts.
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
+          export OPENKJ_BRANCH="$(cat branch.txt)"
+          [[ "$OPENKJ_BRANCH" == stable || "$OPENKJ_BRANCH" == preview ]]
           dbus-run-session -- bash -euo pipefail -c '
             flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-            flatpak install --user --assumeyes --noninteractive ./OpenKJ-Linux-x86_64-preview.flatpak
-            flatpak info --user org.openkj.OpenKJ//preview
+            flatpak install --user --assumeyes --noninteractive ./OpenKJ-Linux-x86_64.flatpak
+            flatpak info --user "org.openkj.OpenKJ//$OPENKJ_BRANCH"
             flatpak run --user --env=QT_QPA_PLATFORM=offscreen \
               --env=GST_REGISTRY_1_0=/tmp/openkj-clean-install-registry.bin \
-              --command=/app/libexec/openkj-runtime-smoke org.openkj.OpenKJ//preview
+              --command=/app/libexec/openkj-runtime-smoke "org.openkj.OpenKJ//$OPENKJ_BRANCH"
           '

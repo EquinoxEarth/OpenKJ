@@ -23,6 +23,33 @@ QString renameSongFile(const QString &source, const QString &destination)
     return file.rename(destination) ? QString() : file.errorString();
 }
 
+QString pathWithDirectoryEntrySpelling(const QFileInfo &file)
+{
+    const auto path = file.absoluteFilePath();
+    if (!file.exists())
+        return path;
+
+    // On case-insensitive volumes the audio lookup can find "track.MP3"
+    // through "track.mp3". Read the stored spelling without following links.
+    const auto directory = file.absoluteDir();
+    const auto name = file.fileName();
+    const auto entries = directory.entryList(QDir::AllEntries | QDir::Hidden | QDir::System |
+                                                 QDir::NoDotAndDotDot,
+                                             QDir::NoSort);
+    if (entries.contains(name))
+        return path;
+
+    QString matchingName;
+    for (const auto &entry : entries) {
+        if (entry.compare(name, Qt::CaseInsensitive) != 0)
+            continue;
+        if (!matchingName.isEmpty())
+            return path;
+        matchingName = entry;
+    }
+    return matchingName.isEmpty() ? path : directory.filePath(matchingName);
+}
+
 } // namespace
 
 QString okj::saveSongEdit(QSqlDatabase &database, int songId, const QString &oldPath,
@@ -41,7 +68,7 @@ QString okj::saveSongEdit(QSqlDatabase &database, int songId, const QString &old
             return tr("The new filename must be within the song's folder.");
 
         const auto planMove = [&](const QString &path) {
-            const QFileInfo source(path);
+            const QFileInfo source(pathWithDirectoryEntrySpelling(QFileInfo(path)));
             const QString suffix = source.suffix();
             const QString filename = suffix.isEmpty() ? edit.filenameBase : edit.filenameBase + u'.' + suffix;
             return FileMove{source.absoluteFilePath(), source.absoluteDir().filePath(filename)};
@@ -52,17 +79,9 @@ QString okj::saveSongEdit(QSqlDatabase &database, int songId, const QString &old
             moves.append(song);
         }
         if (QFileInfo(oldPath).suffix().compare("cdg", Qt::CaseInsensitive) == 0) {
-            auto audioPath = findMatchingAudioFile(oldPath);
+            const auto audioPath = findMatchingAudioFile(oldPath);
             if (audioPath.isEmpty())
                 return tr("The CDG file's matching audio file is missing.");
-            // The lookup may find "track.MP3" by probing "track.mp3" on macOS.
-            // Preserve the directory entry's spelling without following a symlink.
-            const QFileInfo audioSource(audioPath);
-            if (!audioSource.isSymLink()) {
-                const auto actualName = QFileInfo(audioSource.canonicalFilePath()).fileName();
-                if (!actualName.isEmpty())
-                    audioPath = audioSource.absoluteDir().filePath(actualName);
-            }
             const auto audio = planMove(audioPath);
             pairedAudioDestination = audio.destination;
             if (audio.source != audio.destination)
@@ -76,7 +95,7 @@ QString okj::saveSongEdit(QSqlDatabase &database, int songId, const QString &old
                 return tr("The source file is missing or unwritable.\n%1").arg(move.source);
             // A case-only rename can resolve to the same directory entry.
             if (destination.isSymLink() ||
-                (destination.exists() && destination.canonicalFilePath() != source.canonicalFilePath()))
+                (destination.exists() && pathWithDirectoryEntrySpelling(destination) != move.source))
                 return tr("A file already exists at the destination.\n%1").arg(move.destination);
         }
     }
@@ -143,7 +162,8 @@ QString okj::saveSongEdit(QSqlDatabase &database, int songId, const QString &old
     if (!pairedAudioDestination.isEmpty()) {
         const auto actualAudio = findMatchingAudioFile(newPath);
         if (actualAudio.isEmpty() ||
-            QFileInfo(actualAudio).canonicalFilePath() != QFileInfo(pairedAudioDestination).canonicalFilePath())
+            QFileInfo(pathWithDirectoryEntrySpelling(QFileInfo(actualAudio))).canonicalFilePath() !=
+                QFileInfo(pairedAudioDestination).canonicalFilePath())
             return fail(tr("The renamed CDG would use a different audio file.\n%1").arg(actualAudio));
     }
 

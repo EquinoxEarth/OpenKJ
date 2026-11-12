@@ -58,6 +58,7 @@ private slots:
     void cleanup()
     {
         Settings::setSafeStartupMode(false);
+        Settings::setSkipLegacyUiRestoreOnUpgrade(false);
     }
 
     void recoverySkipsSavedUiStateAcrossSettingsInstances()
@@ -140,10 +141,13 @@ private slots:
         recovered.setDisplayVisible(newConsumer.rotationDisplayVisible());
         QVERIFY(!recovered.isVisible());
         QCOMPARE(recovered.size(), QSize(600, 720));
+        recovered.saveForShutdown();
 
         Settings::setSafeStartupMode(false);
         QVERIFY(existingConsumer.showCdgWindow());
         QVERIFY(newConsumer.cdgWindowFullscreen());
+        QVERIFY(newConsumer.rotationDisplayVisible());
+        QVERIFY(newConsumer.rotationDisplayFullscreen());
         existingConsumer.restoreWindowState(&mainWindow);
         newConsumer.restoreWindowState(&dialog);
         QVERIFY(newConsumer.restoreColumnWidths(&table));
@@ -163,10 +167,42 @@ private slots:
         normal.close();
 
         Settings::setSafeStartupMode(true);
-        recovered.setDisplayVisible(true);
-        QTRY_VERIFY(recovered.isVisible());
-        QVERIFY(!recovered.isFullScreen());
-        recovered.close();
+        TableModelRotation recoveryModel;
+        RotationDisplay manuallyOpened(recoveryModel);
+        manuallyOpened.setDisplayVisible(true);
+        QTRY_VERIFY(manuallyOpened.isVisible());
+        QVERIFY(!manuallyOpened.isFullScreen());
+        manuallyOpened.close();
+    }
+
+    void upgradeRestoresRotationDisplayWithLegacyRestoreDisabled()
+    {
+        Settings settings;
+        TableModelRotation model;
+        {
+            RotationDisplay previous(model);
+            previous.resize(515, 421);
+            previous.setDisplayVisible(true);
+            previous.setFullscreen(true);
+            previous.saveForShutdown();
+        }
+
+        Settings::setSkipLegacyUiRestoreOnUpgrade(true);
+        QWidget legacyWindow;
+        legacyWindow.setObjectName("upgradeTestLegacyWindow");
+        legacyWindow.resize(480, 360);
+        settings.saveWindowState(&legacyWindow);
+        legacyWindow.resize(320, 240);
+        settings.restoreWindowState(&legacyWindow);
+        QCOMPARE(legacyWindow.size(), QSize(320, 240));
+
+        RotationDisplay upgraded(model);
+        QCOMPARE(upgraded.size(), QSize(515, 421));
+        upgraded.setDisplayVisible(settings.rotationDisplayVisible());
+        QTRY_VERIFY(upgraded.isVisible() && upgraded.isFullScreen());
+        upgraded.saveForShutdown();
+        QVERIFY(settings.rotationDisplayVisible());
+        QVERIFY(settings.rotationDisplayFullscreen());
     }
 
     void orderWrapsOnceAndLimitFollowsFiltering()
@@ -373,6 +409,49 @@ private slots:
         QVERIFY(display.currentSingerName().isEmpty());
     }
 
+    void singerRowsHaveAHeightLimitAndFitFullRotations()
+    {
+        Settings settings;
+        settings.setRotationDisplaySingerCount(20);
+        TableModelRotation model;
+        auto rotation = singers().mid(0, 1);
+        model.onRotationLoaded(rotation);
+        RotationDisplay display(model);
+        display.resize(640, 720);
+        display.setDisplayVisible(true);
+        const auto cardHeights = [&] {
+            const auto image = display.grab().toImage();
+            const auto background = settings.rotationDisplayBackgroundColor();
+            QList<qreal> heights;
+            int run = 0;
+            for (int y = 0; y < image.height(); ++y) {
+                if (image.pixelColor(image.width() / 2, y) != background) {
+                    ++run;
+                } else {
+                    if (run > 4 * image.devicePixelRatio())
+                        heights.append(run / image.devicePixelRatio());
+                    run = 0;
+                }
+            }
+            return heights;
+        };
+        const auto single = cardHeights();
+        QCOMPARE(single.size(), 1);
+        QVERIFY(single.first() <= 96);
+
+        for (int i = 1; i < 20; ++i) {
+            auto singer = rotation.first();
+            singer.id += i;
+            singer.position = i;
+            rotation.append(singer);
+        }
+        model.onRotationLoaded(rotation);
+        QTRY_COMPARE(display.singerNames().size(), 20);
+        const auto full = cardHeights();
+        QCOMPARE(full.size(), 20);
+        QVERIFY(full.first() < single.first());
+    }
+
     void videoPanelCanSwapSidesAndRetainPausedFrames()
     {
         TableModelRotation model;
@@ -388,6 +467,9 @@ private slots:
         QTRY_VERIFY(video->isVisible());
         QVERIFY(video->geometry().center().x() < display.width() / 2);
         QVERIFY(display.rect().contains(video->geometry()));
+        const qreal margin = qBound(12.0, display.width() * 0.055, 64.0);
+        const qreal panelWidth = display.width() - 2 * margin - margin * 0.75;
+        QVERIFY(qAbs(video->width() - 0.7 * panelWidth) <= 2);
         QVERIFY(video->testAttribute(Qt::WA_TransparentForMouseEvents));
         QImage frame(300, 216, QImage::Format_RGB888);
         frame.fill(Qt::green);
@@ -401,6 +483,7 @@ private slots:
         settings.setRotationDisplayVideoOnLeft(false);
         display.applySettings();
         QVERIFY(video->geometry().center().x() > display.width() / 2);
+        QVERIFY(qAbs(video->width() - 0.7 * panelWidth) <= 2);
         QCOMPARE(display.singerNames(), names);
         QCOMPARE(frameColour(), QColor(Qt::green));
         settings.setRotationDisplayVideoEnabled(false);

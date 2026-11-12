@@ -120,7 +120,7 @@ void RotationDisplay::updateContentGeometry()
     if (!m_videoDisplay || m_videoDisplay->isHidden())
         return;
     const qreal gap = margin * 0.75;
-    const qreal videoWidth = (m_singerArea.width() - gap) * 0.6;
+    const qreal videoWidth = (m_singerArea.width() - gap) * 0.7;
     QRectF videoArea = m_singerArea;
     videoArea.setWidth(videoWidth);
     if (m_settings.rotationDisplayVideoOnLeft()) {
@@ -325,7 +325,8 @@ void RotationDisplay::paintEvent(QPaintEvent *)
         painter.drawText(content, Qt::AlignCenter | Qt::TextWordWrap, tr("Waiting for singers"));
         return;
     }
-    const qreal rowHeight = content.height() / m_names.size();
+    constexpr qreal maxRowHeight = 96.0;
+    const qreal rowHeight = qMin(maxRowHeight, content.height() / m_names.size());
     const qreal gap = qMin(12.0, rowHeight * 0.12);
     displayFont.setPixelSize(qMin(maxPixels, qMax(4, qRound((rowHeight - gap) * 0.46))));
     // Keep the same font size across rows and fit names into a narrow side panel.
@@ -352,7 +353,6 @@ void RotationDisplay::paintEvent(QPaintEvent *)
         QFont rowFont = displayFont;
         rowFont.setBold(row == 0);
         painter.setFont(rowFont);
-        const qreal inset = qMin(24.0, rowHeight * 0.15);
         const qreal numberWidth = QFontMetricsF(rowFont).horizontalAdvance(QString::number(m_names.size())) + inset;
         painter.setPen(row == 0 ? accent : m_textColor);
         painter.drawText(rowRect.adjusted(inset, 0, -inset, 0), Qt::AlignLeft | Qt::AlignVCenter,

@@ -70,6 +70,16 @@ void Settings::setSafeStartupMode(const bool safeMode)
     m_safeStartupMode = safeMode;
 }
 
+void Settings::setSkipLegacyUiRestoreOnUpgrade(bool skip)
+{
+    m_skipLegacyUiRestoreOnUpgrade = skip;
+}
+
+bool Settings::skipLegacyUiRestore()
+{
+    return m_safeStartupMode || m_skipLegacyUiRestoreOnUpgrade;
+}
+
 int Settings::historyDblClickAction() const
 {
     return settings->value("historyDblClickAction", 0).toInt();
@@ -379,7 +389,7 @@ Settings::Settings(QObject *parent) :
 
 bool Settings::cdgWindowFullscreen()
 {
-    if (m_safeStartupMode)
+    if (skipLegacyUiRestore())
         return false;
     return settings->value("cdgWindowFullscreen", false).toBool();
 }
@@ -392,7 +402,7 @@ void Settings::setCdgWindowFullscreen(bool fullScreen)
 
 bool Settings::showCdgWindow()
 {
-    if (m_safeStartupMode)
+    if (skipLegacyUiRestore())
         return false;
     return settings->value("showCdgWindow", false).toBool();
 }
@@ -426,7 +436,8 @@ bool Settings::rotationDisplayVisible() const
 
 void Settings::setRotationDisplayVisible(bool visible)
 {
-    settings->setValue("rotationDisplay/visible", visible);
+    if (!m_safeStartupMode)
+        settings->setValue("rotationDisplay/visible", visible);
 }
 
 bool Settings::rotationDisplayFullscreen() const
@@ -436,7 +447,8 @@ bool Settings::rotationDisplayFullscreen() const
 
 void Settings::setRotationDisplayFullscreen(bool fullscreen)
 {
-    settings->setValue("rotationDisplay/fullscreen", fullscreen);
+    if (!m_safeStartupMode)
+        settings->setValue("rotationDisplay/fullscreen", fullscreen);
 }
 
 QByteArray Settings::rotationDisplayGeometry() const
@@ -446,7 +458,8 @@ QByteArray Settings::rotationDisplayGeometry() const
 
 void Settings::setRotationDisplayGeometry(const QByteArray &geometry)
 {
-    settings->setValue("rotationDisplay/geometry", geometry);
+    if (!m_safeStartupMode)
+        settings->setValue("rotationDisplay/geometry", geometry);
 }
 
 int Settings::rotationDisplaySingerCount() const
@@ -555,7 +568,7 @@ void Settings::saveWindowState(QWidget *window)
 
 void Settings::restoreWindowState(QWidget *window)
 {
-    if (m_safeStartupMode)
+    if (skipLegacyUiRestore())
         return;
     settings->beginGroup(window->objectName());
     if (settings->contains("geometry"))
@@ -594,7 +607,7 @@ void Settings::saveColumnWidths(QTableView *tableView)
 
 void Settings::restoreColumnWidths(QTreeView *treeView)
 {
-    if (m_safeStartupMode)
+    if (skipLegacyUiRestore())
         return;
     settings->beginGroup(treeView->objectName());
     if ((settings->contains("headerState")) && (settings->value("hiddenSections").toInt() == treeView->header()->hiddenSectionCount()) && (settings->value("sections").toInt() == treeView->header()->count()))
@@ -604,7 +617,7 @@ void Settings::restoreColumnWidths(QTreeView *treeView)
 
 bool Settings::restoreColumnWidths(QTableView *tableView)
 {
-    if (m_safeStartupMode || !settings->childGroups().contains(tableView->objectName()))
+    if (skipLegacyUiRestore() || !settings->childGroups().contains(tableView->objectName()))
         return false;
     settings->beginGroup(tableView->objectName());
     QStringList headers = settings->childGroups();
@@ -631,7 +644,7 @@ void Settings::saveSplitterState(QSplitter *splitter)
 
 void Settings::restoreSplitterState(QSplitter *splitter)
 {
-    if (m_safeStartupMode)
+    if (skipLegacyUiRestore())
         return;
     settings->beginGroup(splitter->objectName());
     if (settings->contains("splitterState"))

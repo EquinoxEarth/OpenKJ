@@ -53,6 +53,8 @@ private:
     QSettings *settings;
     // Recovery applies to all settings consumers for this run.
     inline static bool m_safeStartupMode{false};
+    inline static bool m_skipLegacyUiRestoreOnUpgrade{false};
+    static bool skipLegacyUiRestore();
 
 public:
     enum {
@@ -78,6 +80,7 @@ public:
     void setLastRunVersion(const QString &version);
     [[nodiscard]] static bool safeStartupMode();
     static void setSafeStartupMode(bool safeMode);
+    static void setSkipLegacyUiRestoreOnUpgrade(bool skip);
     [[nodiscard]] int historyDblClickAction() const;
     void setHistoryDblClickAction(int index);
     int getSystemRamSize();

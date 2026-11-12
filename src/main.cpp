@@ -270,8 +270,7 @@ int main(int argc, char *argv[]) {
         Settings::setSafeStartupMode(msgBox.exec() == QMessageBox::Yes);
     }
 #ifdef Q_OS_DARWIN
-    if (settings.lastRunVersion() != OKJ_VERSION_STRING)
-        Settings::setSafeStartupMode(true);
+    Settings::setSkipLegacyUiRestoreOnUpgrade(settings.lastRunVersion() != OKJ_VERSION_STRING);
 #endif
     settings.setLastRunVersion(OKJ_VERSION_STRING);
     settings.setStartupOk(false);

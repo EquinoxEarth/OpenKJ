@@ -1191,6 +1191,15 @@ void MainWindow::initDatabaseWorker() {
 
     // Connection: Worker events -> Model slots
     connect(m_dbWorker, &DatabaseWorker::singerAdded, &m_rotModel, &TableModelRotation::onSingerAdded);
+    connect(m_dbWorker, &DatabaseWorker::karaokePlayRecorded, this,
+            [this](const okj::QueueSong &song, const QString &historySinger, int plays, const QDateTime &playedAt) {
+        if (song.dbSongId > 0)
+            m_karaokeSongsModel.applySongPlay(song.dbSongId, plays, playedAt);
+        if (!historySinger.isEmpty() && historySinger == m_historySongsModel.currentSingerName())
+            m_historySongsModel.loadSinger(historySinger);
+        if (song.id > 0 && song.singerId == m_qModel.getSingerId())
+            m_qModel.loadSinger(song.singerId);
+    });
 
     connect(m_dbWorker, &DatabaseWorker::writeFailed, this, [this](int singerId) {
         m_rotModel.loadData();
@@ -1358,12 +1367,15 @@ void MainWindow::recordKaraokeStart(const KaraokePlaybackRequest &request)
 
     const auto &song = request.song;
     const auto singer = m_rotModel.getSinger(song.singerId);
-    if (song.dbSongId > 0)
-        m_karaokeSongsModel.updateSongHistory(song.dbSongId);
-    if (singer.isValid() && (m_settings.treatAllSingersAsRegs() || singer.regular))
-        m_historySongsModel.saveSong(singer.name, song.path, song.artist, song.title, song.songId, song.keyChange);
-    if (song.id > 0)
-        m_qModel.setPlayedForSinger(song.singerId, song.id);
+    const bool saveHistory = singer.isValid() && (m_settings.treatAllSingersAsRegs() || singer.regular)
+        && song.artist != "--Dropped Song--";
+    if (song.dbSongId > 0 || song.id > 0 || saveHistory) {
+        const auto historySinger = saveHistory ? singer.name : QString{};
+        const auto playedAt = QDateTime::currentDateTime();
+        QMetaObject::invokeMethod(m_dbWorker, [worker = m_dbWorker, song, historySinger, playedAt] {
+            worker->recordKaraokePlay(song, historySinger, playedAt);
+        }, Qt::QueuedConnection);
+    }
     m_rotModel.setCurrentSinger(singer.id);
     m_rotDelegate.setCurrentSinger(singer.id);
     if (singer.isValid()) {
@@ -1456,6 +1468,9 @@ MainWindow::~MainWindow() {
     m_playlistImporter.cancel();
     cancelKaraokePlayback();
     if (m_dbThread) {
+        // Save confirmed plays already queued on the worker before stopping its event loop.
+        if (m_dbThread->isRunning())
+            QMetaObject::invokeMethod(m_dbWorker, [] {}, Qt::BlockingQueuedConnection);
         m_dbThread->quit();
         m_dbThread->wait();
     }

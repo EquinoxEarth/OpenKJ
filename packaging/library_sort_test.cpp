@@ -259,8 +259,7 @@ private slots:
             QTest::qWait(150);
             // These fields do not affect a title sort; its result may still be applied.
             model.setSongDuration("/songs/1", 1500);
-            for (int count = 0; count < 5; ++count)
-                model.updateSongHistory(5);
+            model.applySongPlay(5, 5, QDateTime::currentDateTime());
         }
         QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
         QCOMPARE(model.getSong(1).duration, 1500);
@@ -311,7 +310,7 @@ private slots:
             model.loadData();
             model.sort(TableModelKaraokeSongs::COL_DURATION, Qt::DescendingOrder);
             model.setSongDuration("/songs/1", 9000);
-            model.updateSongHistory(5);
+            model.applySongPlay(5, 1, QDateTime::currentDateTime());
             exec("UPDATE dbsongs SET title='Changed',searchstring='alpha changed' WHERE songid=3");
             QVERIFY(model.refreshSong(3));
         }

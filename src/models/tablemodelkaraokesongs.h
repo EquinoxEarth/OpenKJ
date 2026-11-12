@@ -57,7 +57,7 @@ public:
     void setSearchType(SearchType type);
     int getIdForPath(const QString &path);
     QString getPath(int songId);
-    void updateSongHistory(int songId);
+    void applySongPlay(int songId, int plays, const QDateTime &playedAt);
     // Requires an existing song ID; throws std::out_of_range if absent.
     okj::KaraokeSong &getSong(int songId);
     void markSongBad(QString path);

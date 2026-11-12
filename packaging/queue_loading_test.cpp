@@ -351,6 +351,39 @@ private slots:
         QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE qsongid = 22").toInt(), 1);
     }
 
+    void karaokePlayCommitsAllWritesOrNone()
+    {
+        exec("CREATE TABLE historySingers (id INTEGER PRIMARY KEY, name TEXT UNIQUE)");
+        exec("CREATE TABLE historySongs (historySinger INT, filepath TEXT, artist TEXT, title TEXT, "
+             "songid TEXT, keychange INT, plays INT, lastplay TEXT)");
+        exec("CREATE TRIGGER fail_played BEFORE UPDATE OF played ON queuesongs "
+             "BEGIN SELECT RAISE(ABORT, 'injected play failure'); END");
+        QSignalSpy saved(worker.get(), &DatabaseWorker::karaokePlayRecorded);
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        const okj::QueueSong song{.id = 11, .singerId = 1, .dbSongId = 1, .keyChange = -2,
+                                 .artist = "Artist A", .title = "Song A", .songId = "A", .path = "/a"};
+        const auto playedAt = QDateTime::currentDateTime();
+        worker->recordKaraokePlay(song, "A", playedAt);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(saved.size(), 0);
+        QCOMPARE(value("SELECT plays FROM dbsongs WHERE songid = 1").toInt(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM historySingers").toInt(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM historySongs").toInt(), 0);
+        QCOMPARE(value("SELECT played FROM queuesongs WHERE qsongid = 11").toInt(), 0);
+
+        exec("DROP TRIGGER fail_played");
+        worker->recordKaraokePlay(song, "A", playedAt);
+        worker->recordKaraokePlay(song, "A", playedAt.addSecs(1));
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(saved.size(), 2);
+        QCOMPARE(saved.last().at(2).toInt(), 2);
+        QCOMPARE(value("SELECT plays FROM dbsongs WHERE songid = 1").toInt(), 2);
+        QCOMPARE(value("SELECT COUNT(*) FROM historySongs").toInt(), 1);
+        QCOMPARE(value("SELECT plays FROM historySongs WHERE filepath = '/a'").toInt(), 2);
+        QCOMPARE(value("SELECT keychange FROM historySongs WHERE filepath = '/a'").toInt(), -2);
+        QCOMPARE(value("SELECT played FROM queuesongs WHERE qsongid = 11").toInt(), 1);
+    }
+
     void queueStatementAndCommitFailuresRollBack()
     {
         QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);

@@ -630,42 +630,23 @@ QString TableModelKaraokeSongs::getPath(const int songId) {
     return song ? song->path : QString{};
 }
 
-void TableModelKaraokeSongs::updateSongHistory(const int songId) {
-    const auto now = QDateTime::currentDateTime();
-    const auto song = findSongById(songId);
-    if (song) {
-        ++song->plays;
-        song->lastPlay = now;
+void TableModelKaraokeSongs::applySongPlay(int songId, int plays, const QDateTime &playedAt)
+{
+    if (isLoading())
+        m_historyDuringLoad.insert(songId, {plays, playedAt});
+    if (const auto song = findSongById(songId)) {
+        song->plays = plays;
+        song->lastPlay = playedAt;
         if (m_searchSnapshot)
             m_snapshotChanges.push_back(snapshotChange(song));
-        if (m_searchBusy && (m_sortColumn == COL_PLAYS || m_sortColumn == COL_LASTPLAY))
-            search(m_lastSearch);
-        if (m_loadBusy || m_loadPending || m_pendingLibrary)
-            m_historyDuringLoad.insert(songId, {song->plays, now});
         const auto row = m_visibleRows.constFind(songId);
         if (row != m_visibleRows.cend()) {
             emit dataChanged(index(row.value(), COL_PLAYS), index(row.value(), COL_LASTPLAY),
                              QVector<int>(Qt::DisplayRole));
         }
     }
-
-    QSqlQuery query;
-    query.prepare("UPDATE dbSongs set plays = plays + :incVal, lastplay = :curTs WHERE songid = :songid");
-    query.bindValue(":curTs", now);
-    query.bindValue(":songid", songId);
-    query.bindValue(":incVal", 1);
-    query.exec();
-    if (!song && isLoading()) {
-        // Playback from an existing queue can begin before the initial library
-        // is installed. Read back its committed count for the pending snapshot.
-        query.prepare("SELECT plays, lastplay FROM dbsongs WHERE songid = :songid");
-        query.bindValue(":songid", songId);
-        if (query.exec() && query.next()) {
-            m_historyDuringLoad.insert(songId, {query.value(0).toInt(), query.value(1).toDateTime()});
-            if (m_searchBusy && (m_sortColumn == COL_PLAYS || m_sortColumn == COL_LASTPLAY))
-                search(m_lastSearch);
-        }
-    }
+    if (m_searchBusy && (m_sortColumn == COL_PLAYS || m_sortColumn == COL_LASTPLAY))
+        search(m_lastSearch);
 }
 
 okj::KaraokeSong &TableModelKaraokeSongs::getSong(const int songId) {

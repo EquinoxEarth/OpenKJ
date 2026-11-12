@@ -90,9 +90,14 @@ void DatabaseWorker::init()
         return;
     }
     
-    // Set fast SQLite pragmas
     QSqlQuery query(m_db);
-    query.exec("PRAGMA synchronous=OFF");
+    if (!query.exec("PRAGMA synchronous=FULL")) {
+        const auto error = query.lastError().text();
+        query.finish();
+        m_db.close();
+        emit errorOccurred(error);
+        return;
+    }
     query.exec("PRAGMA cache_size=300000");
     query.exec("PRAGMA temp_store=2");
 }
@@ -379,6 +384,74 @@ void DatabaseWorker::setQueueSongPlayed(int singerId, int songId, bool played)
     })) return;
     emit queueUpdated(singerId);
     loadRotation();
+}
+
+void DatabaseWorker::recordKaraokePlay(const okj::QueueSong &song, const QString &historySinger,
+                                       const QDateTime &playedAt)
+{
+    int plays = 0;
+    if (!write(song.singerId, [&] {
+        QSqlQuery query(m_db);
+        if (song.dbSongId > 0) {
+            query.prepare("UPDATE dbSongs SET plays = COALESCE(plays, 0) + 1, lastplay = :time "
+                          "WHERE songid = :id");
+            query.bindValue(":time", playedAt);
+            query.bindValue(":id", song.dbSongId);
+            execute(query);
+            require(query.numRowsAffected() == 1, "The played song is no longer in the library.");
+            query.prepare("SELECT plays FROM dbSongs WHERE songid = :id");
+            query.bindValue(":id", song.dbSongId);
+            execute(query);
+            require(query.next(), "Could not read the saved play count.");
+            plays = query.value(0).toInt();
+            query.finish();
+        }
+
+        if (!historySinger.isEmpty()) {
+            query.prepare("INSERT INTO historySingers (name) SELECT :name "
+                          "WHERE NOT EXISTS (SELECT 1 FROM historySingers WHERE name = :name)");
+            query.bindValue(":name", historySinger);
+            execute(query);
+            query.prepare("UPDATE historySongs SET artist = :artist, title = :title, songid = :songid, "
+                          "keychange = :key, plays = COALESCE(plays, 0) + 1, lastplay = :time "
+                          "WHERE filepath = :path AND historySinger = (SELECT id FROM historySingers WHERE name = :name)");
+            const auto bindHistory = [&] {
+                query.bindValue(":artist", song.artist);
+                query.bindValue(":title", song.title);
+                query.bindValue(":songid", song.songId);
+                query.bindValue(":key", song.keyChange);
+                query.bindValue(":time", playedAt);
+                query.bindValue(":path", song.path);
+                query.bindValue(":name", historySinger);
+            };
+            bindHistory();
+            execute(query);
+            if (query.numRowsAffected() == 0) {
+                query.prepare("INSERT INTO historySongs (historySinger, filepath, artist, title, songid, keychange, plays, lastplay) "
+                              "SELECT id, :path, :artist, :title, :songid, :key, 1, :time "
+                              "FROM historySingers WHERE name = :name");
+                bindHistory();
+                execute(query);
+                require(query.numRowsAffected() == 1, "Could not save the singer's play history.");
+            }
+        }
+
+        if (song.id > 0) {
+            query.prepare("UPDATE queueSongs SET played = 1 WHERE qsongid = :id AND singer = :singer AND song = :song");
+            query.bindValue(":id", song.id);
+            query.bindValue(":singer", song.singerId);
+            query.bindValue(":song", song.dbSongId);
+            execute(query);
+            require(query.numRowsAffected() == 1, "The played song is no longer in the singer's queue.");
+        }
+    }))
+        return;
+
+    emit karaokePlayRecorded(song, historySinger, plays, playedAt);
+    if (song.id > 0) {
+        emit queueUpdated(song.singerId);
+        loadRotation();
+    }
 }
 
 void DatabaseWorker::removeAllQueueSongs(int singerId)

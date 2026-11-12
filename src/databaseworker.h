@@ -36,6 +36,8 @@ public slots:
     void deleteQueueSong(int singerId, int queueSongId);
     void setQueueSongKey(int singerId, int songId, int key);
     void setQueueSongPlayed(int singerId, int songId, bool played);
+    void recordKaraokePlay(const okj::QueueSong &song, const QString &historySinger,
+                           const QDateTime &playedAt);
     void removeAllQueueSongs(int singerId);
     void commitRotation(const QList<okj::RotationSinger> &singers, const QList<okj::RotationSinger> &expected);
     void commitQueue(int singerId, const QList<okj::QueueSong> &songs, const QList<okj::QueueSong> &expected);
@@ -46,6 +48,8 @@ signals:
     void singerAdded(int singerId, const QString &name, int positionHint);
     void rotationUpdated();
     void queueUpdated(int singerId);
+    void karaokePlayRecorded(const okj::QueueSong &song, const QString &historySinger,
+                             int plays, const QDateTime &playedAt);
     void writeFailed(int singerId); // -1 means rotation; reload optimistic GUI state.
     void errorOccurred(const QString &errorMsg);
 

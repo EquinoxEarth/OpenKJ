@@ -101,7 +101,7 @@
                 <item>
                  <widget class="QCheckBox" name="checkBoxSilenceDetection">
                   <property name="toolTip">
-                   <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;If enabled, the program will monitor for silent periods of greater than 2 seconds after the last draw instruction has been rendered, stopping the audio track immediately. (Avoids long silences before fading break music back in)&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                   <string>End CD+G songs shortly after the last graphics instruction when the song is near its end, so break music can fade in sooner. Karaoke videos play to the end.</string>
                   </property>
                   <property name="text">
                    <string>Silence detection</string>

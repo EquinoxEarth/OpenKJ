@@ -386,6 +386,12 @@ void MediaBackend::handleBusMessage(GstMessage *msg) {
             emit audioError(QString::fromUtf8(err->message));
             g_clear_error(&err);
             g_free(debug_info);
+            if (m_type == Karaoke && m_rateControlledVideo) {
+                // A failed source can queue downstream errors for the same playback.
+                // Close the pipeline and flush its bus before those messages are dispatched.
+                rawStop();
+                break;
+            }
             m_state = StoppedState;
             emit stateChanged(m_state);
             break;
@@ -858,7 +864,9 @@ if (m_cdgPipeline &&
     if (m_state == PlayingState) {
         emit positionChanged(position());
 
-        if (m_silenceDetect && !m_silenceDetectedEmitted) {
+        // Karaoke videos have no CDG draw instructions, so let them finish at end of stream.
+        const bool karaokeVideo = m_type == Karaoke && m_rateControlledVideo;
+        if (m_silenceDetect && !m_silenceDetectedEmitted && !karaokeVideo) {
             qint64 pos = position();
             if (dur > 10000 && pos > 10000) {
                 qint64 remaining = dur - pos;

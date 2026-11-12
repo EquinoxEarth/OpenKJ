@@ -19,6 +19,7 @@
 */
 
 #include "dlgdatabase.h"
+#include "databasecleanup.h"
 #include "ui_dlgdatabase.h"
 #include <QDebug>
 #include <QFileDialog>
@@ -334,23 +335,28 @@ void DlgDatabase::finishScan(const DbUpdater::ScanResult &result)
 
 void DlgDatabase::on_btnClearDatabase_clicked()
 {
-    QMessageBox msgBox;
-    msgBox.setText(tr("Are you sure?"));
-    msgBox.setInformativeText(tr("Clearing the song database will also clear the rotation and all saved regular singer data.  If you have not already done so, you may want to export your regular singers before performing this operation.  This operation can not be undone."));
-    msgBox.setIcon(QMessageBox::Warning);
-    msgBox.addButton(QMessageBox::Cancel);
-    QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-    msgBox.exec();
-    if (msgBox.clickedButton() == yesButton) {
-        QSqlQuery query;
-        query.exec("DELETE FROM dbSongs");
-        query.exec("DELETE FROM regularsongs");
-        query.exec("DELETE FROM regularsingers");
-        query.exec("DELETE FROM queuesongs");
-        query.exec("DELETE FROM rotationsingers");
-        emit databaseCleared();
-        QMessageBox::information(this, tr("Database cleared"), tr("Song database, regular singers, and all rotation data has been cleared."));
+    if (m_scanState)
+        return;
+    const auto answer = QMessageBox::warning(this, tr("Clear Karaoke Database"),
+        tr("This permanently clears the karaoke library, rotation, regular singer records, and saved queues. "
+           "Singer play history, source folders, and media files will be kept."),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes)
+        return;
+    if (m_scanState) {
+        QMessageBox::warning(this, tr("Database update in progress"),
+                             tr("Wait for the current library update to finish before clearing the database."));
+        return;
     }
+    auto database = QSqlDatabase::database();
+    const auto error = okj::clearKaraokeLibrary(database);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, tr("Could not clear karaoke database"), error);
+        return;
+    }
+    emit databaseCleared();
+    QMessageBox::information(this, tr("Database cleared"),
+        tr("The karaoke library, rotation, regular singer records, and saved queues were cleared."));
 }
 
 void DlgDatabase::on_btnCustomPatterns_clicked()
@@ -400,6 +406,7 @@ void DlgDatabase::on_foldersSelectionChanged(const QItemSelection &selected, con
 void DlgDatabase::updateButtonsState()
 {
     ui->groupBox->setEnabled(!m_scanState);
+    ui->btnClearDatabase->setEnabled(!m_scanState);
     bool hasSelectedRow = ui->tableViewFolders->selectionModel()->selectedRows().count() > 0;
     ui->buttonUpdate->setEnabled(hasSelectedRow);
     ui->buttonDelete->setEnabled(hasSelectedRow);

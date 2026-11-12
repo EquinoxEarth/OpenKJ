@@ -1,4 +1,5 @@
 #include "../src/databaseschema.h"
+#include "../src/databasecleanup.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -72,6 +73,63 @@ private slots:
         m_database.close();
         m_database = {};
         QSqlDatabase::removeDatabase("database-schema-test");
+    }
+
+    void clearKaraokeLibraryRollsBackAndKeepsHistory()
+    {
+        migrate();
+        exec("INSERT INTO dbSongs (songid, path) VALUES (1, '/music/song.zip')");
+        exec("INSERT INTO regularSingers (regsingerid, name) VALUES (1, 'Singer')");
+        exec("INSERT INTO regularSongs (regsingerid, songid) VALUES (1, 1)");
+        exec("INSERT INTO rotationSingers (singerid, name, position, regularid) VALUES (1, 'Singer', 0, 1)");
+        exec("INSERT INTO queueSongs (singer, song) VALUES (1, 1)");
+        exec("INSERT INTO historySingers (id, name) VALUES (1, 'Singer')");
+        exec("INSERT INTO historySongs (historySinger, filepath) VALUES (1, '/music/song.zip')");
+        exec("INSERT INTO sourceDirs (path) VALUES ('/music')");
+        exec("INSERT INTO bmplaylists (title) VALUES ('Break')");
+        exec("CREATE TRIGGER block_clear BEFORE DELETE ON dbSongs "
+             "BEGIN SELECT RAISE(ABORT, 'clear blocked'); END");
+
+        const QStringList cleared{"dbSongs", "regularSingers", "regularSongs", "rotationSingers", "queueSongs"};
+        const auto error = okj::clearKaraokeLibrary(m_database);
+        QVERIFY2(error.contains("clear blocked"), qPrintable(error));
+        for (const auto &table : cleared)
+            QCOMPARE(value("SELECT COUNT(*) FROM " + table).toInt(), 1);
+
+        exec("DROP TRIGGER block_clear");
+        const auto retry = okj::clearKaraokeLibrary(m_database);
+        QVERIFY2(retry.isEmpty(), qPrintable(retry));
+        for (const auto &table : cleared)
+            QCOMPARE(value("SELECT COUNT(*) FROM " + table).toInt(), 0);
+        for (const auto &table : {"historySingers", "historySongs", "sourceDirs", "bmplaylists"})
+            QCOMPARE(value(QString("SELECT COUNT(*) FROM ") + table).toInt(), 1);
+    }
+
+    void deleteBreakPlaylistRollsBackWhenDefaultCannotBeCreated()
+    {
+        migrate();
+        exec("INSERT INTO bmplaylists (playlistid, title) VALUES (1, 'First'), (2, 'Last')");
+        exec("INSERT INTO bmplsongs (playlist, path) VALUES (1, '/first.mp3'), (2, '/last.mp3')");
+
+        const auto first = okj::deleteBreakPlaylist(m_database, 1);
+        QVERIFY2(first.isEmpty(), qPrintable(first));
+        QCOMPARE(value("SELECT title FROM bmplaylists").toString(), QString("Last"));
+        QCOMPARE(value("SELECT path FROM bmplsongs").toString(), QString("/last.mp3"));
+
+        exec("CREATE TRIGGER block_default BEFORE INSERT ON bmplaylists "
+             "BEGIN SELECT RAISE(ABORT, 'default blocked'); END");
+        const auto error = okj::deleteBreakPlaylist(m_database, 2);
+        QVERIFY2(error.contains("default blocked"), qPrintable(error));
+        QCOMPARE(value("SELECT title FROM bmplaylists").toString(), QString("Last"));
+        QCOMPARE(value("SELECT path FROM bmplsongs").toString(), QString("/last.mp3"));
+
+        exec("DROP TRIGGER block_default");
+        const auto retry = okj::deleteBreakPlaylist(m_database, 2);
+        QVERIFY2(retry.isEmpty(), qPrintable(retry));
+        QCOMPARE(value("SELECT title FROM bmplaylists").toString(), QString("Default"));
+        QCOMPARE(value("SELECT COUNT(*) FROM bmplsongs").toInt(), 0);
+        QVERIFY(!okj::deleteBreakPlaylist(m_database, 2).isEmpty());
+        QCOMPARE(value("SELECT title FROM bmplaylists").toString(), QString("Default"));
     }
 
     void freshDatabase()

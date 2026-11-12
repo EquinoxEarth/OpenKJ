@@ -23,6 +23,7 @@
 #include "mediapreparation.h"
 #include "dlgeditsong.h"
 #include "songedit.h"
+#include "databasecleanup.h"
 #include "soundfxbutton.h"
 #include "src/models/tableviewtooltipfilter.h"
 #include "dbupdater.h"
@@ -1526,6 +1527,7 @@ void MainWindow::restartLazyDurationScan() {
 void MainWindow::databaseCleared() {
     m_lazyDurationUpdater->stopWork();
     m_karaokeSongsModel.loadData();
+    requestsDialog->databaseUpdateComplete();
     m_rotModel.loadData();
     m_qModel.loadSinger(-1);
     ui->tableViewQueue->reset();
@@ -2842,28 +2844,29 @@ void MainWindow::actionPlaylistExportTriggered() {
 }
 
 void MainWindow::actionPlaylistDeleteTriggered() {
-    QMessageBox msgBox;
-    msgBox.setText("Are you sure?");
-    msgBox.setInformativeText(
-            "Are you sure you want to delete the current playlist?  If you have not exported it, you will not be able to undo this action!");
-    msgBox.setIcon(QMessageBox::Warning);
-    msgBox.addButton(QMessageBox::Cancel);
-    QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
-    msgBox.exec();
-    if (msgBox.clickedButton() == yesButton) {
-        QSqlQuery query;
-        query.exec("DELETE FROM bmplsongs WHERE playlist == " +
-                   QString::number(m_tableModelPlaylistSongs.currentPlaylist()));
-        query.exec(
-                "DELETE FROM bmplaylists WHERE playlistid == " +
-                QString::number(m_tableModelPlaylistSongs.currentPlaylist()));
-        m_tableModelPlaylists->select();
-        if (m_tableModelPlaylists->rowCount() == 0) {
-            bmAddPlaylist("Default");
-        }
-        ui->comboBoxBmPlaylists->setCurrentIndex(0);
-        m_tableModelPlaylistSongs.setCurrentPlaylist(m_tableModelPlaylists->index(0, 0).data().toInt());
+    const int playlistId = m_tableModelPlaylistSongs.currentPlaylist();
+    if (playlistId <= 0 || m_playlistImporter.isRunning() || bmDbDialog->isUpdating())
+        return;
+    if (QMessageBox::warning(this, tr("Delete Playlist"),
+                            tr("Permanently delete the selected break music playlist?"),
+                            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+        return;
+    if (m_playlistImporter.isRunning() || bmDbDialog->isUpdating()) {
+        QMessageBox::warning(this, tr("Break Music update in progress"),
+                             tr("Wait for the current update to finish before deleting the playlist."));
+        return;
     }
+    const auto error = okj::deleteBreakPlaylist(m_database, playlistId);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, tr("Could not delete playlist"), error);
+        return;
+    }
+    if (!m_tableModelPlaylists->select()) {
+        QMessageBox::warning(this, tr("Could not refresh playlists"), m_tableModelPlaylists->lastError().text());
+        return;
+    }
+    ui->comboBoxBmPlaylists->setCurrentIndex(0);
+    m_tableModelPlaylistSongs.setCurrentPlaylist(m_tableModelPlaylists->index(0, 0).data().toInt());
 }
 
 void MainWindow::actionAboutTriggered() {

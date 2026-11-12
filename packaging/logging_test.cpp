@@ -42,7 +42,7 @@ void checkStartupLogFallback()
     const auto recovered = okj::openFileLog({disconnected, standard, fallback}, filename,
                                              spdlog::level::critical, "%v");
     require(recovered.sink && recovered.path == QDir(fallback).filePath(filename) &&
-                recovered.diagnostic.contains(disconnected),
+                recovered.diagnostic.contains(QDir::toNativeSeparators(disconnected)),
             "An unavailable custom directory should fall back with a useful diagnostic");
     require(!QFile::exists(test.filePath("removed-volume")), "A missing custom volume should stay absent");
     okj::reportLogFallback(recovered);

@@ -12,4 +12,9 @@ public static class OpenKJErrorMode {
 '@
 [void][OpenKJErrorMode]::SetErrorMode(0x8003)
 & ctest --test-dir $BuildDirectory --output-on-failure
-exit $LASTEXITCODE
+$result = $LASTEXITCODE
+$songEditLog = Join-Path $BuildDirectory 'song-edit-results.txt'
+if ($result -ne 0 -and (Test-Path $songEditLog)) {
+    Get-Content $songEditLog
+}
+exit $result

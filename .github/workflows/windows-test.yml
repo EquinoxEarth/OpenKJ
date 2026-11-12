@@ -129,6 +129,7 @@ jobs:
             build-windows-dev/platforms/
             build-windows-dev/sqldrivers/
             build-windows-dev/environment.txt
+            build-windows-dev/song-edit-results.txt
             build-windows-dev/Testing/Temporary/LastTest.log
             build-windows-dev/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: warn

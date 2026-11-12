@@ -60,7 +60,7 @@ jobs:
           exec "$directory/usr/bin/openkj" "$@"
           LAUNCHER
           chmod +x build-linux-dev/stage/run-openkj.sh
-          git rev-parse HEAD > build-linux-dev/stage/source-commit.txt
+          git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD > build-linux-dev/stage/source-commit.txt
           archive=OpenKJ-Fedora44-x86_64-portable.tar.gz
           tar -C build-linux-dev/stage -czf "build-linux-dev/$archive" .
           (

@@ -69,7 +69,7 @@ int main(int argc, char **argv)
         first.start(QCoreApplication::applicationFilePath(), {"--hold", key, quitPath});
         require(first.waitForStarted(3000), "Cannot start first instance");
         QByteArray output;
-        while (!output.contains("ready\n")) {
+        while (!output.contains("ready\n") && !output.contains("ready\r\n")) {
             require(first.waitForReadyRead(3000), "First instance did not enter its event loop");
             output += first.readAllStandardOutput();
         }

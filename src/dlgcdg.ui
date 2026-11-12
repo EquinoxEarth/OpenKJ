@@ -285,7 +285,7 @@
     <widget class="QWidget" name="fsToggleWidget" native="true">
      <layout class="QHBoxLayout" name="horizontalLayout_2">
       <property name="spacing">
-       <number>0</number>
+       <number>6</number>
       </property>
       <property name="topMargin">
        <number>1</number>
@@ -307,6 +307,16 @@
        <widget class="QPushButton" name="btnToggleFullscreen">
         <property name="text">
          <string>Make Fullscreen</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnMakeWidescreen">
+        <property name="toolTip">
+         <string>Resize the window to a 16:9 aspect ratio</string>
+        </property>
+        <property name="text">
+         <string>Make 16:9</string>
         </property>
        </widget>
       </item>

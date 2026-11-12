@@ -6,6 +6,7 @@
 #include <QImageReader>
 #include <QScreen>
 #include <QGuiApplication>
+#include <QtMath>
 
 
 VideoDisplay *DlgCdg::getVideoDisplay()
@@ -57,6 +58,7 @@ DlgCdg::DlgCdg(MediaBackend &KaraokeBackend, MediaBackend &BreakBackend, QWidget
     cdgOffsetsChanged();
     connect(ui->videoDisplayKar, &VideoDisplay::mouseMoveEvent, this, &DlgCdg::mouseMove);
     connect(ui->btnToggleFullscreen, &QPushButton::clicked, this, &DlgCdg::btnToggleFullscreenClicked);
+    connect(ui->btnMakeWidescreen, &QPushButton::clicked, this, &DlgCdg::makeWidescreen);
     connect(&m_timerSlideShow, &QTimer::timeout, this, &DlgCdg::timerSlideShowTimeout);
     connect(&m_timer1s, &QTimer::timeout, this, &DlgCdg::timer1sTimeout);
     connect(&m_timerAlertCountdown, &QTimer::timeout, this, &DlgCdg::timerCountdownTimeout);
@@ -314,6 +316,39 @@ void DlgCdg::btnToggleFullscreenClicked()
     m_settings.saveWindowState(this);
     m_settings.setCdgWindowFullscreenMonitor(QGuiApplication::screens().indexOf(screen()));
     cdgOffsetsChanged();
+}
+
+void DlgCdg::makeWidescreen()
+{
+    if (isFullScreen())
+        return;
+    if (isMaximized())
+        showNormal();
+
+    const QRect available = screen()->availableGeometry();
+    const QSize frameExtra = frameGeometry().size() - size();
+    const QSize room = (available.size() - frameExtra).boundedTo(maximumSize());
+    const QSize minimum = minimumSize().expandedTo(minimumSizeHint());
+    constexpr int ratioWidth = 16;
+    constexpr int ratioHeight = 9;
+    const int minUnits = qMax(1, qMax(qCeil(qreal(minimum.width()) / ratioWidth),
+                                      qCeil(qreal(minimum.height()) / ratioHeight)));
+    const int maxUnits = qMin(room.width() / ratioWidth, room.height() / ratioHeight);
+    const int units = qBound(minUnits, qRound(qreal(width()) / ratioWidth), qMax(minUnits, maxUnits));
+    resize(units * ratioWidth, units * ratioHeight);
+
+    const QRect frame = frameGeometry();
+    const int maxX = qMax(available.left(), available.right() - frame.width() + 1);
+    const int maxY = qMax(available.top(), available.bottom() - frame.height() + 1);
+    move(qBound(available.left(), frame.left(), maxX), qBound(available.top(), frame.top(), maxY));
+    m_settings.saveWindowState(this);
+}
+
+void DlgCdg::changeEvent(QEvent *event)
+{
+    QDialog::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange)
+        ui->btnMakeWidescreen->setEnabled(!isFullScreen());
 }
 
 void DlgCdg::cdgOffsetsChanged()

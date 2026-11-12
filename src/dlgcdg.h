@@ -65,6 +65,8 @@ private:
     std::unique_ptr<TransparentWidget> m_tWidget;
     Settings m_settings;
 
+    void makeWidescreen();
+
 public:
     explicit DlgCdg(MediaBackend &KaraokeBackend, MediaBackend &BreakBackend, QWidget *parent = nullptr,
                     Qt::WindowFlags f = QFlags<Qt::WindowType>());
@@ -100,6 +102,7 @@ public slots:
     void setSlideshowInterval(int secs);
 
 protected:
+    void changeEvent(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;

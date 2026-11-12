@@ -144,8 +144,12 @@ public:
     void setRotationDisplayFont(const QFont &font);
     [[nodiscard]] QColor rotationDisplayTextColor() const;
     void setRotationDisplayTextColor(const QColor &color);
+    [[nodiscard]] QColor rotationDisplayAccentColor() const;
+    void setRotationDisplayAccentColor(const QColor &color);
     [[nodiscard]] QColor rotationDisplayBackgroundColor() const;
     void setRotationDisplayBackgroundColor(const QColor &color);
+    [[nodiscard]] QString rotationDisplayBackgroundImage() const;
+    void setRotationDisplayBackgroundImage(const QString &path);
     void saveWindowState(QWidget *window);
     void restoreWindowState(QWidget *window);
     void saveColumnWidths(QTreeView *treeView);

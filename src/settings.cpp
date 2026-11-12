@@ -546,6 +546,17 @@ void Settings::setRotationDisplayTextColor(const QColor &color)
         settings->setValue("rotationDisplay/textColor", color);
 }
 
+QColor Settings::rotationDisplayAccentColor() const
+{
+    return settings->value("rotationDisplay/accentColor", QColor("#57d9b2")).value<QColor>();
+}
+
+void Settings::setRotationDisplayAccentColor(const QColor &color)
+{
+    if (color.isValid())
+        settings->setValue("rotationDisplay/accentColor", color);
+}
+
 QColor Settings::rotationDisplayBackgroundColor() const
 {
     return settings->value("rotationDisplay/backgroundColor", QColor("#101820")).value<QColor>();
@@ -555,6 +566,19 @@ void Settings::setRotationDisplayBackgroundColor(const QColor &color)
 {
     if (color.isValid())
         settings->setValue("rotationDisplay/backgroundColor", color);
+}
+
+QString Settings::rotationDisplayBackgroundImage() const
+{
+    return settings->value("rotationDisplay/backgroundImage").toString();
+}
+
+void Settings::setRotationDisplayBackgroundImage(const QString &path)
+{
+    if (path.isEmpty())
+        settings->remove("rotationDisplay/backgroundImage");
+    else
+        settings->setValue("rotationDisplay/backgroundImage", path);
 }
 
 void Settings::saveWindowState(QWidget *window)

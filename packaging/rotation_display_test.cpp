@@ -14,6 +14,7 @@
 #include <QScopeGuard>
 #include <QPainter>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTest>
 #include <spdlog/sinks/null_sink.h>
 #include <algorithm>
@@ -49,6 +50,7 @@ private slots:
         settings.setRotationDisplayVideoOnLeft(true);
         settings.setRotationDisplayShowHeading(true);
         settings.setRotationDisplayBackgroundColor(QColor("#101820"));
+        settings.setRotationDisplayBackgroundImage({});
         settings.setRotationDisplayTextColor(QColor("#f1f5f9"));
         QFont font = QApplication::font();
         font.setPointSize(48);
@@ -407,6 +409,122 @@ private slots:
         QCOMPARE(display.singerNames(), originalNames);
         display.setCurrentSinger(records[0].name, false);
         QVERIFY(display.currentSingerName().isEmpty());
+    }
+
+    void accentColourUpdatesCurrentSingerAndFirstNumber()
+    {
+        Settings settings;
+        auto *storage = settings.findChild<QSettings *>();
+        const QString key = "rotationDisplay/accentColor";
+        const auto saved = storage->value(key);
+        const auto restore = qScopeGuard([&] {
+            if (saved.isValid())
+                storage->setValue(key, saved);
+            else
+                storage->remove(key);
+            settings.sync();
+        });
+        storage->remove(key);
+        const QColor original("#57d9b2");
+        const QColor custom("#e87839");
+        QCOMPARE(settings.rotationDisplayAccentColor(), original);
+
+        TableModelRotation model;
+        model.onRotationLoaded(singers());
+        RotationDisplay display(model);
+        display.resize(640, 720);
+        display.setDisplayVisible(true);
+        const auto countColour = [](const QImage &image, QColor colour) {
+            int count = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    count += image.pixel(x, y) == colour.rgb();
+            return count;
+        };
+        QVERIFY(countColour(display.grab().toImage(), original) > 0);
+        display.setCurrentSinger("Alex", true);
+        const auto before = display.grab().toImage();
+
+        settings.setRotationDisplayAccentColor(custom);
+        settings.sync();
+        QCOMPARE(Settings().rotationDisplayAccentColor(), custom);
+        display.applySettings();
+        const auto after = display.grab().toImage();
+        QCOMPARE(countColour(after, original), 0);
+        QCOMPARE(countColour(after, settings.rotationDisplayTextColor()),
+                 countColour(before, settings.rotationDisplayTextColor()));
+        const int withCurrentSinger = countColour(after, custom);
+        display.setCurrentSinger("Alex", false);
+        const int firstNumberOnly = countColour(display.grab().toImage(), custom);
+        QVERIFY(firstNumberOnly > 0);
+        QVERIFY(withCurrentSinger > firstNumberOnly);
+    }
+
+    void backgroundImageFillsWindowAndShowsAroundFrames()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath("rotation background.png");
+        QImage source(300, 100, QImage::Format_RGB32);
+        source.fill(Qt::green);
+        QPainter painter(&source);
+        painter.fillRect(QRect(0, 0, 100, 100), Qt::red);
+        painter.fillRect(QRect(200, 0, 100, 100), Qt::blue);
+        painter.end();
+        QVERIFY(source.save(path));
+
+        Settings settings;
+        TableModelRotation model;
+        RotationDisplay display(model);
+        display.setDisplayVisible(true);
+        display.resize(360, 600);
+        const auto colourAt = [&display](QPoint point) {
+            const auto pixmap = display.grab();
+            return pixmap.toImage().pixelColor(point * pixmap.devicePixelRatio());
+        };
+        QCOMPARE(colourAt({0, 0}), settings.rotationDisplayBackgroundColor());
+
+        settings.setRotationDisplayBackgroundImage(path);
+        settings.sync();
+        QCOMPARE(Settings().rotationDisplayBackgroundImage(), path);
+        display.applySettings();
+        QCOMPARE(colourAt({0, 0}), QColor(Qt::green));
+        QCOMPARE(colourAt(display.rect().bottomRight()), QColor(Qt::green));
+
+        display.resize(900, 300);
+        QCOMPARE(colourAt({0, 0}), QColor(Qt::red));
+        QCOMPARE(colourAt(display.rect().bottomRight()), QColor(Qt::blue));
+        settings.setRotationDisplayVideoEnabled(true);
+        display.applySettings();
+        auto *video = display.videoDisplay();
+        const QPoint videoSample(video->x() + video->width() / 4, video->geometry().center().y());
+        const QPoint paddingSample(video->x() + 2, videoSample.y());
+        const QPoint frameCenter = video->geometry().center();
+        QCOMPARE(colourAt(videoSample), QColor(Qt::red));
+        QImage frame(600, 300, QImage::Format_RGB32);
+        frame.fill(Qt::yellow);
+        video->updateFrame(frame);
+        QCOMPARE(colourAt(videoSample), QColor(Qt::yellow));
+        QCOMPARE(colourAt(paddingSample), QColor(Qt::red));
+
+        QImage cdgFrame(300, 216, QImage::Format_RGB32);
+        cdgFrame.fill(Qt::yellow);
+        video->updateFrame(cdgFrame);
+        QCOMPARE(colourAt(frameCenter), QColor(Qt::yellow));
+        QCOMPARE(colourAt(paddingSample), QColor(Qt::red));
+        video->clearFrame();
+        QCOMPARE(colourAt(videoSample), QColor(Qt::red));
+
+        settings.setRotationDisplayBackgroundImage(directory.filePath("missing.png"));
+        display.applySettings();
+        QCOMPARE(colourAt({0, 0}), settings.rotationDisplayBackgroundColor());
+        settings.setRotationDisplayBackgroundImage({});
+        display.applySettings();
+        QVERIFY(Settings().rotationDisplayBackgroundImage().isEmpty());
+        QCOMPARE(colourAt({0, 0}), settings.rotationDisplayBackgroundColor());
+        video->updateFrame(cdgFrame);
+        QCOMPARE(colourAt(frameCenter), QColor(Qt::yellow));
+        QCOMPARE(colourAt(paddingSample), settings.rotationDisplayBackgroundColor());
     }
 
     void singerRowsHaveAHeightLimitAndFitFullRotations()

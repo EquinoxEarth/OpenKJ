@@ -38,14 +38,19 @@ private:
     bool m_hasActiveVideo { false };
     bool m_fillOnPaint { false };
     bool m_repaintBackgroundOnce { false };
+    bool m_transparentIdleBackground{false};
+    bool m_transparentFramePadding{false};
     std::shared_ptr<VideoDisplayFrame> m_currentFrame;
     QVideoSink *m_videoSink;
+    void updateBackgroundAttributes();
 
 public:
     explicit VideoDisplay(QWidget *parent = nullptr);
     [[nodiscard]] bool hasActiveVideo() const { return m_hasActiveVideo; }
     QVideoSink* videoSink() const { return m_videoSink; }
     void updateSharedFrame(const std::shared_ptr<VideoDisplayFrame> &frame);
+    void setTransparentIdleBackground(bool enabled);
+    void setTransparentFramePadding(bool enabled);
 
 signals:
     void mouseMoveEvent(QMouseEvent *event) override;

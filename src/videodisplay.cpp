@@ -76,6 +76,34 @@ void VideoDisplay::useDefaultBackground()
     update();
 }
 
+void VideoDisplay::setTransparentIdleBackground(bool enabled)
+{
+    if (m_transparentIdleBackground == enabled)
+        return;
+    m_transparentIdleBackground = enabled;
+    updateBackgroundAttributes();
+    update();
+}
+
+void VideoDisplay::setTransparentFramePadding(bool enabled)
+{
+    if (m_transparentFramePadding == enabled)
+        return;
+    m_transparentFramePadding = enabled;
+    updateBackgroundAttributes();
+    update();
+}
+
+void VideoDisplay::updateBackgroundAttributes()
+{
+    const bool hasFrame = m_hasActiveVideo && m_currentFrame;
+    const bool opaque = hasFrame ? !m_transparentFramePadding : !m_transparentIdleBackground;
+    if (testAttribute(Qt::WA_OpaquePaintEvent) == opaque)
+        return;
+    setAttribute(Qt::WA_OpaquePaintEvent, opaque);
+    setAttribute(Qt::WA_NoSystemBackground, opaque);
+}
+
 void VideoDisplay::setHasActiveVideo(const bool &value)
 {
     if (m_hasActiveVideo != value)
@@ -85,6 +113,8 @@ void VideoDisplay::setHasActiveVideo(const bool &value)
         {
             m_currentFrame.reset();
         }
+        if (m_transparentIdleBackground || m_transparentFramePadding)
+            updateBackgroundAttributes();
         update();
     }
 }
@@ -98,6 +128,8 @@ void VideoDisplay::updateSharedFrame(const std::shared_ptr<VideoDisplayFrame> &f
 {
     m_currentFrame = frame;
     m_hasActiveVideo = true;
+    if (m_transparentIdleBackground || m_transparentFramePadding)
+        updateBackgroundAttributes();
     update();
 }
 
@@ -105,16 +137,21 @@ void VideoDisplay::clearFrame()
 {
     m_currentFrame.reset();
     m_hasActiveVideo = false;
+    if (m_transparentIdleBackground || m_transparentFramePadding)
+        updateBackgroundAttributes();
     update();
 }
 
 void VideoDisplay::paintEvent(QPaintEvent *event)
 {
+    if (m_transparentIdleBackground && !m_currentFrame)
+        return;
     QPainter painter(this);
 
     if (m_hasActiveVideo && m_currentFrame)
     {
-        painter.fillRect(event->rect(), Qt::black);
+        if (!m_transparentFramePadding)
+            painter.fillRect(event->rect(), Qt::black);
         const bool prescale = m_currentFrame->isCdgSized() && m_settings.cdgPrescalingEnabled();
         const auto scaled = m_currentFrame->scaled(size(), prescale);
         int x = (width() - scaled.width()) / 2;

@@ -24,6 +24,7 @@
 #include <QFontDialog>
 #include <QColorDialog>
 #include <QFileDialog>
+#include <QImageReader>
 #include <QStandardPaths>
 #include <QMessageBox>
 #include <QSqlQuery>
@@ -408,7 +409,7 @@ void DlgSettings::setupRotationDisplayPage()
             emit rotationDisplaySettingsChanged();
         }
     });
-    for (bool background : {false, true}) {
+    const auto addColour = [&](const QString &label, auto getter, auto setter) {
         auto *button = new QPushButton(appearance);
         const auto updateButton = [button](const QColor &color) {
             QPixmap swatch(20, 20);
@@ -416,29 +417,77 @@ void DlgSettings::setupRotationDisplayPage()
             button->setIcon(QIcon(swatch));
             button->setText(color.name());
         };
-        updateButton(background ? m_settings.rotationDisplayBackgroundColor() : m_settings.rotationDisplayTextColor());
-        appearanceLayout->addRow(background ? tr("Background colour") : tr("Text colour"), button);
-        connect(button, &QPushButton::clicked, this, [this, background, updateButton] {
-            const auto current = background ? m_settings.rotationDisplayBackgroundColor() : m_settings.rotationDisplayTextColor();
-            const auto color = QColorDialog::getColor(current, this);
+        updateButton((m_settings.*getter)());
+        appearanceLayout->addRow(label, button);
+        connect(button, &QPushButton::clicked, this, [this, getter, setter, updateButton] {
+            const auto color = QColorDialog::getColor((m_settings.*getter)(), this);
             if (!color.isValid())
                 return;
-            if (background)
-                m_settings.setRotationDisplayBackgroundColor(color);
-            else
-                m_settings.setRotationDisplayTextColor(color);
+            (m_settings.*setter)(color);
             updateButton(color);
             emit rotationDisplaySettingsChanged();
         });
-    }
+    };
+    addColour(tr("Text colour"), &Settings::rotationDisplayTextColor, &Settings::setRotationDisplayTextColor);
+    addColour(tr("Accent colour"), &Settings::rotationDisplayAccentColor, &Settings::setRotationDisplayAccentColor);
+    addColour(tr("Background colour"), &Settings::rotationDisplayBackgroundColor, &Settings::setRotationDisplayBackgroundColor);
+    auto *imageRow = new QHBoxLayout;
+    auto *imagePath = new QLineEdit(appearance);
+    imagePath->setReadOnly(true);
+    imagePath->setAccessibleName(tr("Background image"));
+    imagePath->setPlaceholderText(tr("None"));
+    auto *browseImage = new QPushButton(tr("Browse…"), appearance);
+    auto *clearImage = new QPushButton(tr("Clear"), appearance);
+    imageRow->addWidget(imagePath, 1);
+    imageRow->addWidget(browseImage);
+    imageRow->addWidget(clearImage);
+    appearanceLayout->addRow(tr("Background image"), imageRow);
+    const auto showImagePath = [imagePath, clearImage](const QString &path) {
+        imagePath->setText(path);
+        imagePath->setToolTip(path);
+        clearImage->setEnabled(!path.isEmpty());
+    };
+    showImagePath(m_settings.rotationDisplayBackgroundImage());
+    connect(browseImage, &QPushButton::clicked, this, [this, showImagePath] {
+        const auto currentPath = m_settings.rotationDisplayBackgroundImage();
+        const auto directory = currentPath.isEmpty()
+            ? QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
+            : QFileInfo(currentPath).absolutePath();
+        QStringList patterns;
+        for (const auto &format : QImageReader::supportedImageFormats())
+            patterns.append(QStringLiteral("*.%1").arg(QString::fromLatin1(format)));
+        const auto path = QFileDialog::getOpenFileName(this, tr("Select Rotation Display background image"),
+                                                       directory, tr("Images (%1)").arg(patterns.join(' ')));
+        if (path.isEmpty())
+            return;
+        if (QImageReader(path).read().isNull()) {
+            QMessageBox::warning(this, tr("Image load error"), tr("Could not open the selected background image."));
+            return;
+        }
+        m_settings.setRotationDisplayBackgroundImage(path);
+        showImagePath(path);
+        emit rotationDisplaySettingsChanged();
+    });
+    connect(clearImage, &QPushButton::clicked, this, [this, showImagePath] {
+        m_settings.setRotationDisplayBackgroundImage({});
+        showImagePath({});
+        emit rotationDisplaySettingsChanged();
+    });
     layout->addWidget(appearance);
     layout->addStretch();
-    auto *scroll = new QScrollArea(ui->tabWidgetMain);
+    auto *tab = new QWidget(ui->tabWidgetMain);
+    auto *tabLayout = new QVBoxLayout(tab);
+    tabLayout->setContentsMargins(0, 0, 0, 0);
+    auto *scroll = new QScrollArea(tab);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(page);
+    // Let the tab pane paint the background behind the scrollable controls.
+    scroll->viewport()->setAutoFillBackground(false);
+    page->setAutoFillBackground(false);
+    tabLayout->addWidget(scroll);
     const int displayTabIndex = ui->tabWidgetMain->indexOf(ui->tabWidgetPage5);
-    ui->tabWidgetMain->insertTab(displayTabIndex + 1, scroll, tr("Rotation Display"));
+    ui->tabWidgetMain->insertTab(displayTabIndex + 1, tab, tr("Rotation Display"));
 }
 
 DlgSettings::~DlgSettings() {

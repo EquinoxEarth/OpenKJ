@@ -6,7 +6,9 @@
 #include <QCloseEvent>
 #include <QGuiApplication>
 #include <QHideEvent>
+#include <QImageReader>
 #include <QMouseEvent>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QScreen>
 #include <QScopedValueRollback>
@@ -28,6 +30,7 @@ RotationDisplay::RotationDisplay(TableModelRotation &rotation, QWidget *parent)
     m_videoDisplay->setObjectName("rotationVideoDisplay");
     m_videoDisplay->setAccessibleName(tr("Karaoke lyrics and video"));
     m_videoDisplay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_videoDisplay->setTransparentFramePadding(true);
     setMinimumSize(320, 240);
     resize(600, 720);
     setToolTip(tr("Double-click or press F11 to toggle fullscreen. Escape leaves fullscreen. Right-click for controls."));
@@ -105,7 +108,16 @@ void RotationDisplay::applySettings()
 {
     setFont(m_settings.rotationDisplayFont());
     m_textColor = m_settings.rotationDisplayTextColor();
+    m_accentColor = m_settings.rotationDisplayAccentColor();
     m_backgroundColor = m_settings.rotationDisplayBackgroundColor();
+    const auto backgroundPath = m_settings.rotationDisplayBackgroundImage();
+    if (backgroundPath != m_backgroundImagePath || (!backgroundPath.isEmpty() && m_backgroundImage.isNull())) {
+        m_backgroundImagePath = backgroundPath;
+        QImageReader reader(backgroundPath);
+        reader.setAutoTransform(true);
+        m_backgroundImage = backgroundPath.isEmpty() ? QPixmap() : QPixmap::fromImage(reader.read());
+    }
+    m_videoDisplay->setTransparentIdleBackground(!m_backgroundImage.isNull());
     m_showHeading = m_settings.rotationDisplayShowHeading();
     m_hideNameNotes = m_settings.rotationDisplayHideNameNotes();
     m_videoDisplay->setVisible(m_settings.rotationDisplayVideoEnabled());
@@ -261,17 +273,25 @@ void RotationDisplay::changeEvent(QEvent *event)
     }
 }
 
-void RotationDisplay::paintEvent(QPaintEvent *)
+void RotationDisplay::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), m_backgroundColor);
+    if (!m_backgroundImage.isNull()) {
+        const QSize imageSize = m_backgroundImage.size().scaled(size(), Qt::KeepAspectRatioByExpanding);
+        QRectF target(QPointF(0, 0), QSizeF(imageSize));
+        target.moveCenter(QRectF(rect()).center());
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(target, m_backgroundImage, m_backgroundImage.rect());
+    }
+    if (!event->region().intersects(m_singerArea.toAlignedRect()))
+        return;
     const qreal margin = qBound(12.0, width() * 0.055, 64.0);
     QRectF content = m_singerArea;
     QFont displayFont = font();
     const int maxPixels = displayFont.pixelSize() > 0 ? displayFont.pixelSize()
         : qMax(8, qRound(displayFont.pointSizeF() * logicalDpiY() / 72.0));
-    const QColor accent("#57d9b2");
     QFont currentHeadingFont = displayFont;
     currentHeadingFont.setPixelSize(qBound(8, qRound(content.height() * 0.035), 28));
     currentHeadingFont.setBold(true);
@@ -292,7 +312,7 @@ void RotationDisplay::paintEvent(QPaintEvent *)
     if (currentWidth > content.width())
         currentFont.setPixelSize(qMax(8, qFloor(currentFont.pixelSize() * content.width() / currentWidth)));
     painter.setFont(currentFont);
-    painter.setPen(m_currentSinger.isEmpty() ? m_textColor : accent);
+    painter.setPen(m_currentSinger.isEmpty() ? m_textColor : m_accentColor);
     const qreal currentHeight = QFontMetricsF(currentFont).height();
     const auto currentText = QFontMetrics(currentFont).elidedText(currentSingerName(), Qt::ElideRight,
                                                                qMax(0, qFloor(content.width())));
@@ -354,7 +374,7 @@ void RotationDisplay::paintEvent(QPaintEvent *)
         rowFont.setBold(row == 0);
         painter.setFont(rowFont);
         const qreal numberWidth = QFontMetricsF(rowFont).horizontalAdvance(QString::number(m_names.size())) + inset;
-        painter.setPen(row == 0 ? accent : m_textColor);
+        painter.setPen(row == 0 ? m_accentColor : m_textColor);
         painter.drawText(rowRect.adjusted(inset, 0, -inset, 0), Qt::AlignLeft | Qt::AlignVCenter,
                          QString::number(row + 1));
         painter.setPen(m_textColor);

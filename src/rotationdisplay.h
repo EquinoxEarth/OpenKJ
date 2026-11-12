@@ -2,6 +2,7 @@
 #define ROTATIONDISPLAY_H
 
 #include "settings.h"
+#include <QPixmap>
 #include <QWidget>
 
 class QAction;
@@ -44,7 +45,10 @@ private:
     QStringList m_names;
     QString m_currentSinger;
     QColor m_textColor;
+    QColor m_accentColor;
     QColor m_backgroundColor;
+    QString m_backgroundImagePath;
+    QPixmap m_backgroundImage;
     VideoDisplay *m_videoDisplay{nullptr};
     QRectF m_singerArea;
     bool m_showHeading{true};

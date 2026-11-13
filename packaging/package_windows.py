@@ -19,7 +19,7 @@ GSTREAMER_PLUGINS = (
     "coreelements", "playback", "typefindfunctions", "app",
     "audioconvert", "audioresample", "videoconvertscale", "deinterlace",
     # Preserve the existing SoundTouch pitch, tempo, EQ and volume chain.
-    "soundtouch", "audiofx", "equalizer", "volume", "autodetect",
+    "soundtouch", "audiofx", "equalizer", "volume", "autodetect", "replaygain",
     # Native Windows outputs and device enumeration, including older fallbacks.
     "wasapi2", "wasapi", "directsound",
     # CDG lyrics and FFmpeg software audio/video decoders.

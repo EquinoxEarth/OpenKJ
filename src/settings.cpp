@@ -1169,6 +1169,26 @@ void Settings::setAudioUseFader(bool fader)
     settings->setValue("audioUseFader", fader);
 }
 
+bool Settings::normalizeKaraokeAudio()
+{
+    return settings->value("normalizeKaraokeAudio", false).toBool();
+}
+
+bool Settings::normalizeBreakMusicAudio()
+{
+    return settings->value("normalizeBreakMusicAudio", false).toBool();
+}
+
+void Settings::setNormalizeKaraokeAudio(bool enabled)
+{
+    settings->setValue("normalizeKaraokeAudio", enabled);
+}
+
+void Settings::setNormalizeBreakMusicAudio(bool enabled)
+{
+    settings->setValue("normalizeBreakMusicAudio", enabled);
+}
+
 void Settings::setAudioUseFaderBm(bool fader)
 {
     settings->setValue("audioUseFaderBm", fader);

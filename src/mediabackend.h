@@ -14,6 +14,7 @@
 #include <vector>
 #include <atomic>
 #include <QFutureWatcher>
+#include <QVariantAnimation>
 #include <deque>
 #include <functional>
 #include <gst/gst.h>
@@ -21,6 +22,7 @@
 #include <gst/video/video.h>
 #include "settings.h"
 #include "audiofader.h"
+#include "trackgaincache.h"
 #include "videodisplay.h"
 #include <spdlog/spdlog.h>
 
@@ -77,6 +79,7 @@ public:
     void setAudioOutputDevice(const QString &deviceName);
     QString activeAudioOutputDevice() const { return m_activeOutputDevice; }
     bool hasPreviewAudioOutput() const;
+    void setAudioNormalizationEnabled(bool enabled);
     // Returns a referenced pad after the karaoke DSP and before live volume.
     GstPad *recordingMusicPad() const;
     void setVideoOutputWidgets(const std::vector<QWidget*>& surfaces);
@@ -159,6 +162,17 @@ private:
     QPointer<AudioFader> m_fader{nullptr};
 
     int m_volume{100};
+    bool m_normalizeAudio{false};
+    QString m_normalizationPath;
+    okj::TrackGainKey m_normalizationKey;
+    std::shared_ptr<std::atomic_bool> m_normalizationCancelled;
+    bool m_normalizationAnalyzed{false};
+    double m_normalizationGain{1.0};
+    QVariantAnimation m_normalizationRamp;
+    void startAudioNormalization(bool beforePlayback = false);
+    void cancelAudioNormalization();
+    void rampAudioNormalization(double gain);
+    void applyOutputGain(double fadeMultiplier);
     bool m_muted{false};
     int m_pitchShift{0};
     int m_tempoPercent{100};
@@ -172,7 +186,7 @@ private:
     QTimer m_videoTempoTimer;
     bool seekVideoRate(qint64 positionMs);
 
-    std::unique_ptr<QTemporaryDir> m_tempDir;
+    std::shared_ptr<QTemporaryDir> m_tempDir;
     State m_state{StoppedState};
 
     bool m_silenceDetect{false};
@@ -245,7 +259,8 @@ public slots:
     void play(bool startSilent = false);
     void pause();
     void setMedia(const QString &filename);
-    void setMediaCdg(const QString &cdgFilename, const QString &audioFilename);
+    void setMediaCdg(const QString &cdgFilename, const QString &audioFilename,
+                     std::optional<okj::TrackGainKey> sourceGainKey = std::nullopt);
     void setMuted(const bool &muted);
     bool isMuted();
     void setPosition(const qint64 &position);

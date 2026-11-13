@@ -1,5 +1,6 @@
 #include "../src/databaseschema.h"
 #include "../src/databasecleanup.h"
+#include "../src/trackgaincache.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -78,6 +79,18 @@ private slots:
     void clearKaraokeLibraryRollsBackAndKeepsHistory()
     {
         migrate();
+        const auto trackPath = QFileInfo(m_path).absoluteDir().filePath("track.zip");
+        {
+            QFile track(trackPath);
+            QVERIFY(track.open(QIODevice::WriteOnly));
+            QCOMPARE(track.write("track"), 5);
+        }
+        const auto key = okj::TrackGainKey::fromFile(trackPath);
+        const auto cachePath = QFileInfo(m_path).absoluteDir().filePath("audio-normalization.sqlite");
+        okj::cacheTrackGain(m_path, key, 0.5);
+        QVERIFY(QFileInfo::exists(cachePath));
+        QCOMPARE(okj::cachedTrackGain(m_path, key).value_or(-1.0), 0.5);
+        const auto generation = okj::trackGainCacheGeneration();
         exec("INSERT INTO dbSongs (songid, path) VALUES (1, '/music/song.zip')");
         exec("INSERT INTO regularSingers (regsingerid, name) VALUES (1, 'Singer')");
         exec("INSERT INTO regularSongs (regsingerid, songid) VALUES (1, 1)");
@@ -93,12 +106,17 @@ private slots:
         const QStringList cleared{"dbSongs", "regularSingers", "regularSongs", "rotationSingers", "queueSongs"};
         const auto error = okj::clearKaraokeLibrary(m_database);
         QVERIFY2(error.contains("clear blocked"), qPrintable(error));
+        QVERIFY(QFileInfo::exists(cachePath));
+        QCOMPARE(okj::trackGainCacheGeneration(), generation);
         for (const auto &table : cleared)
             QCOMPARE(value("SELECT COUNT(*) FROM " + table).toInt(), 1);
 
         exec("DROP TRIGGER block_clear");
         const auto retry = okj::clearKaraokeLibrary(m_database);
         QVERIFY2(retry.isEmpty(), qPrintable(retry));
+        QVERIFY(!QFileInfo::exists(cachePath));
+        QVERIFY(!okj::cachedTrackGain(m_path, key));
+        QVERIFY(okj::trackGainCacheGeneration() != generation);
         for (const auto &table : cleared)
             QCOMPARE(value("SELECT COUNT(*) FROM " + table).toInt(), 0);
         for (const auto &table : {"historySingers", "historySongs", "sourceDirs", "bmplaylists"})

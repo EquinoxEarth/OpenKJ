@@ -198,6 +198,10 @@ public:
     void setRequestServerIgnoreCertErrors(bool ignore);
     bool audioUseFader();
     bool audioUseFaderBm();
+    bool normalizeKaraokeAudio();
+    bool normalizeBreakMusicAudio();
+    void setNormalizeKaraokeAudio(bool enabled);
+    void setNormalizeBreakMusicAudio(bool enabled);
     void setAudioUseFader(bool fader);
     void setAudioUseFaderBm(bool fader);
     int audioVolume();

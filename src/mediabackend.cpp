@@ -1,4 +1,6 @@
 #include "mediabackend.h"
+#include "audionormalization.h"
+#include <QSqlDatabase>
 #include "mzarchive.h"
 #include "localmediauri.h"
 #include <QDir>
@@ -32,16 +34,17 @@ MediaBackend::MediaBackend(QObject *parent, QString objectName, MediaType type)
     }
 
     setupPipeline();
+    m_normalizeAudio = (m_type == Karaoke && m_settings.normalizeKaraokeAudio()) ||
+                       (m_type == BackgroundMusic && m_settings.normalizeBreakMusicAudio());
 
     // Set up AudioFader
     m_fader = new AudioFader(this);
     m_fader->setObjName(objectName);
-    connect(m_fader, &AudioFader::volumeChanged, this, [this](double volMult) {
-        if (m_volumeElement) {
-            int vol = static_cast<int>(m_volume * volMult);
-            if (m_muted) vol = 0;
-            g_object_set(G_OBJECT(m_volumeElement), "volume", (double)vol / 100.0, nullptr);
-        }
+    connect(m_fader, &AudioFader::volumeChanged, this, &MediaBackend::applyOutputGain);
+    m_normalizationRamp.setDuration(500);
+    connect(&m_normalizationRamp, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        m_normalizationGain = value.toDouble();
+        applyOutputGain(m_fader->volume());
     });
     connect(m_fader, &AudioFader::fadeComplete, this, [this]() {
         if (m_stopAfterFade && m_fader->state() == AudioFader::FadedOut) {
@@ -993,6 +996,7 @@ void MediaBackend::play(bool startSilent) {
     if (deferControl([this, startSilent] { play(startSilent); }))
         return;
     applyAudioOutputDevice();
+    startAudioNormalization((m_state == StoppedState || m_state == EndOfMediaState) && !m_cdgStartPending);
     if (!(m_frameGeneration.load() & 1))
         ++m_frameGeneration;
     m_stopAfterFade = false;
@@ -1163,6 +1167,9 @@ void MediaBackend::setMedia(const QString &filename) {
     }
     m_silenceDetectedEmitted = false;
     rawStop();
+    m_normalizationPath.clear();
+    m_normalizationKey = (m_type == Karaoke || m_type == BackgroundMusic)
+        ? okj::TrackGainKey::fromFile(filename) : okj::TrackGainKey{};
     m_appliedVideoRate = 1.0;
     destroyCdgPipeline();
     m_filename = filename;
@@ -1185,7 +1192,7 @@ void MediaBackend::setMedia(const QString &filename) {
         extension == "avi";
 
     if (filename.endsWith(".zip", Qt::CaseInsensitive)) {
-        m_tempDir = std::make_unique<QTemporaryDir>();
+        m_tempDir = std::make_shared<QTemporaryDir>();
         if (m_tempDir->isValid()) {
             MzArchive archive(filename);
             if (archive.isValidKaraokeFile()) {
@@ -1232,6 +1239,7 @@ void MediaBackend::setMedia(const QString &filename) {
     g_object_set(G_OBJECT(m_pipeline), "suburi", nullptr, nullptr);
 
     const auto uri = localMediaUri(playPath);
+    m_normalizationPath = playPath;
     g_object_set(G_OBJECT(m_pipeline), "uri", uri.constData(), nullptr);
     
     if (!m_cdgFilename.isEmpty()) {
@@ -1249,10 +1257,13 @@ void MediaBackend::setMedia(const QString &filename) {
     updateAudioFilters();
 }
 
-void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioFilename) {
+void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioFilename,
+                               std::optional<okj::TrackGainKey> sourceGainKey) {
     if (m_cdgStateBusy) {
         rawStop();
-        deferControl([this, cdgFilename, audioFilename] { setMediaCdg(cdgFilename, audioFilename); });
+        deferControl([this, cdgFilename, audioFilename, sourceGainKey] {
+            setMediaCdg(cdgFilename, audioFilename, sourceGainKey);
+        });
         return;
     }
     QElapsedTimer preparationStage;
@@ -1264,6 +1275,10 @@ void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioF
     };
     m_silenceDetectedEmitted = false;
     rawStop();
+    m_normalizationPath.clear();
+    m_normalizationKey = {};
+    if (m_type == Karaoke || m_type == BackgroundMusic)
+        m_normalizationKey = sourceGainKey ? *sourceGainKey : okj::TrackGainKey::fromFile(audioFilename);
     m_appliedVideoRate = 1.0;
     destroyCdgPipeline();
     m_filename = audioFilename;
@@ -1280,7 +1295,7 @@ void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioF
     QString playAudio = audioFilename;
     const bool preview = m_type == VideoPreview;
     if (!preview) {
-        m_tempDir = std::make_unique<QTemporaryDir>();
+        m_tempDir = std::make_shared<QTemporaryDir>();
         if (!m_tempDir->isValid()) {
             emit audioError("Failed to create temporary directory");
             return;
@@ -1297,6 +1312,7 @@ void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioF
     }
 
     const auto uri = localMediaUri(playAudio);
+    m_normalizationPath = playAudio;
     g_object_set(G_OBJECT(m_pipeline), "uri", uri.constData(), "suburi", nullptr, nullptr);
     if (!setupCdgPipeline(m_cdgFilename) && preview) {
         emit audioError("Unable to initialize CDG playback");
@@ -1647,6 +1663,9 @@ void MediaBackend::rawStop() {
     invalidateVideoFrames(true);
     m_stopAfterFade = false;
     m_fader->immediateOut();
+    cancelAudioNormalization();
+    m_normalizationRamp.stop();
+    m_normalizationGain = 1.0;
     // Prevent outstanding seek from restarting an old song.
     m_seekPhase = SeekPhase::Idle;
     m_resumeAfterSeek = false;
@@ -1816,6 +1835,88 @@ void MediaBackend::setEqLevel(const int &band, const int &level) {
     }
 }
 
+void MediaBackend::setAudioNormalizationEnabled(bool enabled)
+{
+    if ((m_type != Karaoke && m_type != BackgroundMusic) || m_normalizeAudio == enabled)
+        return;
+    m_normalizeAudio = enabled;
+    if (!enabled) {
+        cancelAudioNormalization();
+        rampAudioNormalization(1.0);
+    } else if (m_state == PlayingState || m_state == PausedState || m_cdgStartPending) {
+        startAudioNormalization();
+    }
+}
+
+void MediaBackend::startAudioNormalization(bool beforePlayback)
+{
+    if (!m_normalizeAudio || !m_volumeElement || m_normalizationPath.isEmpty() ||
+        m_normalizationCancelled || m_normalizationAnalyzed)
+        return;
+
+    const auto libraryPath = QSqlDatabase::contains()
+        ? QSqlDatabase::database(QSqlDatabase::defaultConnection, false).databaseName() : QString{};
+    if (const auto gain = okj::cachedTrackGain(libraryPath, m_normalizationKey)) {
+        m_normalizationAnalyzed = true;
+        if (beforePlayback) {
+            m_normalizationRamp.stop();
+            m_normalizationGain = *gain;
+            applyOutputGain(m_fader->volume());
+        } else {
+            rampAudioNormalization(*gain);
+        }
+        return;
+    }
+
+    const auto cacheGeneration = okj::trackGainCacheGeneration();
+    const auto cancelled = std::make_shared<std::atomic_bool>(false);
+    m_normalizationCancelled = cancelled;
+    auto *watcher = new QFutureWatcher<std::optional<double>>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, cancelled, libraryPath, cacheGeneration] {
+        const auto gain = watcher->result();
+        watcher->deleteLater();
+        if (m_normalizationCancelled != cancelled)
+            return;
+        m_normalizationCancelled.reset();
+        m_normalizationAnalyzed = true;
+        if (gain) {
+            rampAudioNormalization(*gain);
+            if (cacheGeneration == okj::trackGainCacheGeneration())
+                okj::cacheTrackGain(libraryPath, m_normalizationKey, *gain);
+        }
+    });
+    watcher->setFuture(QtConcurrent::run(
+        [path = m_normalizationPath, temporaryFiles = m_tempDir, cancelled] {
+            // Keep any extracted audio alive until the analysis pipeline closes it.
+            return okj::analyzeTrackGain(path, *cancelled);
+        }));
+}
+
+void MediaBackend::cancelAudioNormalization()
+{
+    if (m_normalizationCancelled) {
+        m_normalizationCancelled->store(true);
+        m_normalizationCancelled.reset();
+    }
+    m_normalizationAnalyzed = false;
+}
+
+void MediaBackend::rampAudioNormalization(double gain)
+{
+    m_normalizationRamp.stop();
+    m_normalizationRamp.setStartValue(m_normalizationGain);
+    m_normalizationRamp.setEndValue(gain);
+    m_normalizationRamp.start();
+}
+
+void MediaBackend::applyOutputGain(double fadeMultiplier)
+{
+    if (!m_volumeElement)
+        return;
+    const int volume = m_muted ? 0 : static_cast<int>(m_volume * fadeMultiplier);
+    g_object_set(G_OBJECT(m_volumeElement), "volume", volume / 100.0 * m_normalizationGain, nullptr);
+}
+
 void MediaBackend::updateVolume() {
     if (m_type == VideoPreview) {
         if (m_pipeline)
@@ -1824,10 +1925,7 @@ void MediaBackend::updateVolume() {
         return;
     }
     if (!m_volumeElement) return;
-    double volMult = m_fader ? m_fader->volume() : 1.0;
-    int vol = static_cast<int>(m_volume * volMult);
-    if (m_muted) vol = 0;
-    g_object_set(G_OBJECT(m_volumeElement), "volume", (double)vol / 100.0, nullptr);
+    applyOutputGain(m_fader ? m_fader->volume() : 1.0);
     emit volumeChanged(m_volume);
 }
 

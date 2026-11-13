@@ -1,6 +1,8 @@
 #include "mediabackend.h"
 #include "audiofader.h"
+#include "audionormalization.h"
 #include "dlgvideopreview.h"
+#include "mediapreparation.h"
 #include "xbrz.h"
 #include "recordingmix.h"
 #include <QtEndian>
@@ -19,6 +21,7 @@
 #include <QPointer>
 #include <QScopeGuard>
 #include <QSemaphore>
+#include <QSqlDatabase>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -733,22 +736,79 @@ int main(int argc, char **argv)
                 "Disabling follow must restore the independent output");
         QTemporaryDir temporary;
         require(temporary.isValid(), "Cannot create temporary audio directory");
-        const auto filename = temporary.filePath("stop-volume.wav");
-        {
-            QFile file(filename);
+        const auto libraryPath = temporary.filePath("openkj.sqlite");
+        const auto removeDatabase = qScopeGuard([] { QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection); });
+        auto library = QSqlDatabase::addDatabase("QSQLITE");
+        library.setDatabaseName(libraryPath);
+        require(library.open(), "Cannot create temporary library database");
+        const auto makeTestWave = [](const QString &path, int amplitude, quint32 samples = 240000) {
+            QFile file(path);
             require(file.open(QIODevice::WriteOnly), "Cannot create test audio");
             QDataStream wave(&file);
             wave.setByteOrder(QDataStream::LittleEndian);
             wave.writeRawData("RIFF", 4);
-            wave << quint32(480036);
+            wave << quint32(samples * 2 + 36);
             wave.writeRawData("WAVEfmt ", 8);
             wave << quint32(16) << quint16(1) << quint16(1) << quint32(8000) << quint32(16000)
                  << quint16(2) << quint16(16);
             wave.writeRawData("data", 4);
-            wave << quint32(480000);
-            for (int sample = 0; sample < 240000; ++sample)
-                wave << qint16(12000 * std::sin(2.0 * std::numbers::pi * 400.0 * sample / 8000));
-        }
+            wave << quint32(samples * 2);
+            for (quint32 sample = 0; sample < samples; ++sample)
+                wave << qint16(amplitude * std::sin(2.0 * std::numbers::pi * 400.0 * sample / 8000));
+        };
+        const auto filename = temporary.filePath("stop-volume.wav");
+        const auto loud = temporary.filePath("loud café #1.wav");
+        const auto quiet = temporary.filePath("quiet.wav");
+        makeTestWave(filename, 12000);
+        makeTestWave(loud, 28000);
+        makeTestWave(quiet, 500);
+        const std::atomic_bool cancelled{false};
+        const auto loudGain = okj::analyzeTrackGain(loud, cancelled);
+        const auto quietGain = okj::analyzeTrackGain(quiet, cancelled);
+        require(loudGain && *loudGain > 0.0 && *loudGain < 0.7,
+                "ReplayGain must attenuate a loud untagged track");
+        require(quietGain && *quietGain == 1.0, "Normalization must never boost quiet tracks");
+
+        karaoke.setAudioOutputDevice("Test Speakers");
+        karaoke.setAudioNormalizationEnabled(true);
+        karaoke.setVolume(80);
+        karaoke.setMedia(loud);
+        karaoke.play();
+        auto *music = karaoke.recordingMusicPad();
+        require(music, "Karaoke must expose its live volume input");
+        auto *peer = gst_pad_get_peer(music);
+        gst_object_unref(music);
+        require(peer, "Karaoke music must feed the live volume element");
+        auto *volume = gst_pad_get_parent_element(peer);
+        gst_object_unref(peer);
+        require(volume, "Karaoke must have a live volume element");
+        const auto releaseVolume = qScopeGuard([volume] { gst_object_unref(volume); });
+        const auto liveGain = [volume] {
+            double gain = 0;
+            g_object_get(volume, "volume", &gain, nullptr);
+            return gain;
+        };
+        waitFor([&] { return std::abs(liveGain() - 0.8 * *loudGain) < 0.005; }, 3000,
+                "Normalization must multiply the existing playback volume");
+        require(QFileInfo::exists(temporary.filePath("audio-normalization.sqlite")),
+                "Successful analysis must create a cache beside the library database");
+        karaoke.setMedia(loud);
+        karaoke.play();
+        require(std::abs(liveGain() - 0.8 * *loudGain) < 0.005,
+                "A repeat play must apply the cached gain before starting playback");
+        karaoke.setMedia(quiet);
+        karaoke.play();
+        require(std::abs(liveGain() - 0.8) < 0.005, "A new track must not inherit the previous gain");
+        waitFor([&] {
+            return okj::cachedTrackGain(libraryPath, okj::TrackGainKey::fromFile(quiet)) == 1.0;
+        }, 3000, "A successful analysis with no attenuation must still be cached");
+        karaoke.rawStop();
+        makeTestWave(loud, 500, 200000);
+        karaoke.setMedia(loud);
+        karaoke.play();
+        require(std::abs(liveGain() - 0.8) < 0.005,
+                "A replaced track must start without the old file's cached gain");
+        karaoke.rawStop();
         settings.setAudioOutputDevice("Test Speakers");
         settings.setAudioOutputDeviceBm("Test Speakers");
         checkStopAndVolume(filename, MediaBackend::Karaoke);
@@ -777,11 +837,34 @@ int main(int argc, char **argv)
             require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
         }
         checkSharedVideoFrames(filename, cdgFilename);
+        makeTestWave(loud, 28000);
         checkOutputReopen(filename, {}, MediaBackend::Karaoke);
         checkOutputReopen(filename, {}, MediaBackend::BackgroundMusic);
         checkOutputReopen(filename, cdgFilename, MediaBackend::VideoPreview);
-        checkPreviewDialogs(filename, cdgFilename, temporary.filePath("preview.zip"));
+        const auto archivePath = temporary.filePath("preview.zip");
+        checkPreviewDialogs(loud, cdgFilename, archivePath);
         checkPreviewAudio(cdgFilename);
+        spdlog::register_logger(spdlog::default_logger()->clone("logger"));
+        const auto releaseArchiveLogger = qScopeGuard([] { spdlog::drop("logger"); });
+        const auto notCancelled = std::make_shared<std::atomic_bool>(false);
+        const auto playArchive = [&] {
+            const auto prepared = prepareKaraokeZip(archivePath, notCancelled);
+            require(prepared.error.isEmpty() && prepared.archiveGainKey && prepared.directory,
+                    "Cannot prepare the ZIP for karaoke playback");
+            karaoke.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.archiveGainKey);
+            karaoke.play();
+        };
+        const auto archiveKey = okj::TrackGainKey::fromFile(archivePath);
+        playArchive();
+        waitFor([&] { return okj::cachedTrackGain(libraryPath, archiveKey).has_value(); }, 3000,
+                "ZIP playback must cache analysis against the archive path");
+        waitFor([&] { return karaoke.state() == MediaBackend::PlayingState; }, 3000,
+                "Prepared ZIP must start karaoke playback");
+        karaoke.rawStop();
+        playArchive();
+        require(std::abs(liveGain() - 0.8 * *loudGain) < 0.005,
+                "A newly extracted copy must start at the cached archive gain");
+        karaoke.rawStop();
         std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and preview checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());

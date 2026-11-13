@@ -88,6 +88,16 @@
                  </layout>
                 </item>
                 <item>
+                 <widget class="QCheckBox" name="checkBoxNormalizeKaraoke">
+                  <property name="text">
+                   <string>Normalize audio</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>Turn louder karaoke tracks down after measuring their loudness. Quiet tracks keep their original level.</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
                  <widget class="QCheckBox" name="checkBoxFader">
                   <property name="toolTip">
                    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;If the fader is enabled, song transitions (stop, pause, unpause) will be faded out/in to avoid hard transitions.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
@@ -303,6 +313,16 @@
                    </widget>
                   </item>
                  </layout>
+                </item>
+                <item>
+                 <widget class="QCheckBox" name="checkBoxNormalizeBreakMusic">
+                  <property name="text">
+                   <string>Normalize audio</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>Turn louder break music tracks down after measuring their loudness. Quiet tracks keep their original level.</string>
+                  </property>
+                 </widget>
                 </item>
                 <item>
                  <widget class="QCheckBox" name="checkBoxFaderBm">

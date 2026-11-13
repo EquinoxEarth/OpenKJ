@@ -98,6 +98,16 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     ui->checkBoxCdgPrescaling->setChecked(m_settings.cdgPrescalingEnabled());
     ui->checkBoxCurrentSingerTop->setChecked(m_settings.rotationAltSortOrder());
     audioOutputDevices = kAudioBackend.getOutputDevices();
+    ui->checkBoxNormalizeKaraoke->setChecked(m_settings.normalizeKaraokeAudio());
+    ui->checkBoxNormalizeBreakMusic->setChecked(m_settings.normalizeBreakMusicAudio());
+    connect(ui->checkBoxNormalizeKaraoke, &QCheckBox::toggled, this, [this](bool enabled) {
+        m_settings.setNormalizeKaraokeAudio(enabled);
+        kAudioBackend.setAudioNormalizationEnabled(enabled);
+    });
+    connect(ui->checkBoxNormalizeBreakMusic, &QCheckBox::toggled, this, [this](bool enabled) {
+        m_settings.setNormalizeBreakMusicAudio(enabled);
+        bmAudioBackend.setAudioNormalizationEnabled(enabled);
+    });
     const auto outputHint = tr("Output changes take effect after playback is stopped and started again.");
     ui->comboBoxKAudioDevices->setToolTip(outputHint);
     ui->comboBoxBAudioDevices->setToolTip(outputHint);

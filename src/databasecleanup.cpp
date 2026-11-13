@@ -1,4 +1,5 @@
 #include "databasecleanup.h"
+#include "trackgaincache.h"
 
 #include <QCoreApplication>
 #include <QSqlDatabase>
@@ -34,7 +35,7 @@ QString okj::clearKaraokeLibrary(QSqlDatabase &database)
             !query.exec("DELETE FROM regularSingers") ||
             !query.exec("DELETE FROM dbSongs"))
             return query.lastError().text();
-        return QString{};
+        return clearTrackGainCache(database.databaseName());
     });
 }
 

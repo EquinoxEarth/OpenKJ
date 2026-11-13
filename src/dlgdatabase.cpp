@@ -338,7 +338,7 @@ void DlgDatabase::on_btnClearDatabase_clicked()
     if (m_scanState)
         return;
     const auto answer = QMessageBox::warning(this, tr("Clear Karaoke Database"),
-        tr("This permanently clears the karaoke library, rotation, regular singer records, and saved queues. "
+        tr("This permanently clears the karaoke library, rotation, regular singer records, saved queues, and audio normalization cache. "
            "Singer play history, source folders, and media files will be kept."),
         QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
     if (answer != QMessageBox::Yes)
@@ -356,7 +356,7 @@ void DlgDatabase::on_btnClearDatabase_clicked()
     }
     emit databaseCleared();
     QMessageBox::information(this, tr("Database cleared"),
-        tr("The karaoke library, rotation, regular singer records, and saved queues were cleared."));
+        tr("The karaoke library, rotation, regular singer records, saved queues, and audio normalization cache were cleared."));
 }
 
 void DlgDatabase::on_btnCustomPatterns_clicked()

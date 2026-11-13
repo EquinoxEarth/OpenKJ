@@ -108,6 +108,8 @@ set(SOURCE_FILES
         src/bundledruntime.h
         src/dlgaddsong.cpp
         src/mediabackend.cpp
+        src/audionormalization.cpp
+        src/trackgaincache.cpp
         src/mzarchive.cpp
         src/mediapreparation.cpp
         src/breakplaylistimporter.cpp
@@ -303,7 +305,7 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     add_test(NAME logging COMMAND openkj-logging-test)
     set_tests_properties(logging PROPERTIES TIMEOUT 10)
     add_executable(openkj-database-schema-test
-        packaging/database_schema_test.cpp src/databaseschema.cpp src/databasecleanup.cpp)
+        packaging/database_schema_test.cpp src/databaseschema.cpp src/databasecleanup.cpp src/trackgaincache.cpp)
     target_link_libraries(openkj-database-schema-test PRIVATE Qt6::Test Qt6::Sql)
     add_test(NAME database-schema COMMAND openkj-database-schema-test)
     set_tests_properties(database-schema PROPERTIES TIMEOUT 15)
@@ -389,7 +391,8 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
 
     add_executable(openkj-audio-outputs-test
         packaging/audio_outputs_test.cpp
-        src/mediabackend.cpp src/mzarchive.cpp src/audiofader.cpp src/recordingmix.cpp
+        src/mediabackend.cpp src/audionormalization.cpp src/trackgaincache.cpp
+        src/mzarchive.cpp src/audiofader.cpp src/recordingmix.cpp
         src/dlgvideopreview.cpp src/dlgvideopreview.ui src/mediapreparation.cpp
         src/videodisplay.cpp src/volslider.cpp src/xbrz.cpp src/settings.cpp src/simplecrypt.cpp)
     target_link_libraries(openkj-audio-outputs-test PRIVATE ${LIBRARIES} Qt6::Test)

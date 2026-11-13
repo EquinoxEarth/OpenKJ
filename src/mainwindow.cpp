@@ -1410,7 +1410,7 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, boo
             return;
         }
         if (!prepared.cdgFile.isEmpty())
-            m_mediaBackendKar.setMediaCdg(prepared.cdgFile, prepared.audioFile);
+            m_mediaBackendKar.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.archiveGainKey);
         else
             m_mediaBackendKar.setMedia(prepared.audioFile);
         // Binding media can emit a synchronous error before play is requested.
@@ -4037,6 +4037,7 @@ void MainWindow::actionCdgDecodeTorture() {
             return;
         }
         if (karaokeFilePath.endsWith(".zip", Qt::CaseInsensitive)) {
+            const auto archiveGainKey = okj::TrackGainKey::fromFile(karaokeFilePath);
             MzArchive archive(karaokeFilePath);
             if ((archive.checkCDG()) && (archive.checkAudio())) {
                 if (archive.checkAudio()) {
@@ -4051,7 +4052,7 @@ void MainWindow::actionCdgDecodeTorture() {
                     m_logger->info("{} Extracted audio file size: {}", m_loggingPrefix, QFileInfo(audioFile).size());
                     m_logger->info("{} Setting karaoke backend source file to: {}", m_loggingPrefix,
                                    audioFile.toStdString());
-                    m_mediaBackendKar.setMediaCdg(cdgFile, audioFile);
+                    m_mediaBackendKar.setMediaCdg(cdgFile, audioFile, archiveGainKey);
                     //m_mediaBackendKar.testCdgDecode(); // todo: andth
                 }
             } else {
@@ -4072,10 +4073,11 @@ void MainWindow::actionCdgDecodeTorture() {
             if (audioFile.size() == 0) {
                 return;
             }
+            const auto audioGainKey = okj::TrackGainKey::fromFile(audioFilename);
             cdgFile.copy(m_mediaTempDir->path() + QDir::separator() + cdgTmpFile);
             QFile::copy(audioFilename, m_mediaTempDir->path() + QDir::separator() + audTmpFile);
             m_mediaBackendKar.setMediaCdg(m_mediaTempDir->path() + QDir::separator() + cdgTmpFile,
-                                          m_mediaTempDir->path() + QDir::separator() + audTmpFile);
+                                          m_mediaTempDir->path() + QDir::separator() + audTmpFile, audioGainKey);
             // m_mediaBackendKar.testCdgDecode(); // todo: andth
         }
         ui->labelSinger->setText("Torture run (" + QString::number(++runs) + ")");

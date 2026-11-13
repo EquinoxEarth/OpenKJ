@@ -1,6 +1,7 @@
 #ifndef MEDIAPREPARATION_H
 #define MEDIAPREPARATION_H
 
+#include "trackgaincache.h"
 #include <QTemporaryDir>
 #include <QString>
 #include <atomic>
@@ -9,6 +10,7 @@
 struct PreparedKaraokeMedia {
     std::shared_ptr<QTemporaryDir> directory;
     QString audioFile, cdgFile, error;
+    std::optional<okj::TrackGainKey> archiveGainKey;
     qint64 elapsedMs{0};
 };
 

@@ -47,7 +47,7 @@ mkdir -p "$DEST" "$APP/Contents/Helpers" "$APP/Contents/Frameworks"
 # Intentionally flat: the previously tested macOS codesign layout.
 plugins=(
   libgstcoreelements.dylib libgstplayback.dylib libgstaudioconvert.dylib
-  libgstcdg.dylib libgstaudiofx.dylib libgstequalizer.dylib
+  libgstcdg.dylib libgstaudiofx.dylib libgstequalizer.dylib libgstreplaygain.dylib
   libgstvolume.dylib libgstautodetect.dylib libgstapp.dylib
   libgstisomp4.dylib libgstosxaudio.dylib libgsttypefindfunctions.dylib
   libgstaudioparsers.dylib libgstlibav.dylib libgstvideoparsersbad.dylib

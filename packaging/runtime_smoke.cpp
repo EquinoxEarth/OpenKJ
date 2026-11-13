@@ -148,7 +148,7 @@ int main(int argc, char **argv)
         return 1;
     }
     stage("find media elements");
-    for (const auto *name : {"playbin", "pitch", "scaletempo", "equalizer-10bands",
+    for (const auto *name : {"playbin", "pitch", "scaletempo", "equalizer-10bands", "rganalysis",
              "audiopanorama", "volume", "audioconvert", "audioresample", "autoaudiosink", "appsink", "cdgparse",
              "cdgdec", "qtdemux", "avdec_h264",
 #ifdef Q_OS_WIN

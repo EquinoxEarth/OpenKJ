@@ -14,6 +14,7 @@ PreparedKaraokeMedia prepareKaraokeZip(const QString &filename,
     if (cancelled->load())
         return result;
     // Construction, archive access, and extraction all stay on this thread.
+    result.archiveGainKey = okj::TrackGainKey::fromFile(filename);
     MzArchive archive(filename);
     if (!archive.checkCDG() || !archive.checkAudio()) {
         result.error = QStringLiteral("Zip file does not contain a valid karaoke track.  CDG or audio file missing or corrupt.");

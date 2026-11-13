@@ -42,6 +42,41 @@ G_DEFINE_TYPE(TestAudioDevice, test_audio_device, GST_TYPE_DEVICE)
 static QStringList created;
 static std::atomic_int silentPreviewBuffers{0};
 static std::atomic_int audiblePreviewBuffers{0};
+static std::atomic_int selectedOutputOpens{0};
+
+// Match the CoreAudio sink lifecycle without needing a physical output.
+struct TestAudioSink { GstBin parent; gchar *deviceId; };
+struct TestAudioSinkClass { GstBinClass parent; };
+G_DEFINE_TYPE(TestAudioSink, test_audio_sink, GST_TYPE_BIN)
+
+static void test_audio_sink_class_init(TestAudioSinkClass *klass)
+{
+    auto *objectClass = G_OBJECT_CLASS(klass);
+    objectClass->set_property = +[](GObject *object, guint, const GValue *value, GParamSpec *) {
+        auto *sink = reinterpret_cast<TestAudioSink *>(object);
+        g_free(sink->deviceId);
+        sink->deviceId = g_value_dup_string(value);
+    };
+    objectClass->get_property = +[](GObject *object, guint, GValue *value, GParamSpec *) {
+        g_value_set_string(value, reinterpret_cast<TestAudioSink *>(object)->deviceId);
+    };
+    objectClass->finalize = +[](GObject *object) {
+        g_free(reinterpret_cast<TestAudioSink *>(object)->deviceId);
+        G_OBJECT_CLASS(test_audio_sink_parent_class)->finalize(object);
+    };
+    g_object_class_install_property(objectClass, 1, g_param_spec_string("unique-id", "Device ID", "Selected output",
+        nullptr, static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    GST_ELEMENT_CLASS(klass)->change_state = +[](GstElement *element, GstStateChange transition) {
+        auto *sink = reinterpret_cast<TestAudioSink *>(element);
+        if (transition == GST_STATE_CHANGE_READY_TO_NULL)
+            g_clear_pointer(&sink->deviceId, g_free);
+        if (transition == GST_STATE_CHANGE_NULL_TO_READY && sink->deviceId)
+            ++selectedOutputOpens;
+        return GST_ELEMENT_CLASS(test_audio_sink_parent_class)->change_state(element, transition);
+    };
+}
+
+static void test_audio_sink_init(TestAudioSink *) {}
 
 static void capturePreviewAudio(GstElement *, GstBuffer *buffer, GstPad *, gpointer)
 {
@@ -57,6 +92,7 @@ static GstElement *createOutput(GstDevice *device, const gchar *name)
 {
     auto *displayName = gst_device_get_display_name(device);
     created.append(QString::fromUtf8(displayName));
+    auto *output = GST_ELEMENT(g_object_new(test_audio_sink_get_type(), "name", name, "unique-id", displayName, nullptr));
     g_free(displayName);
     auto *sink = gst_element_factory_make("fakesink", name);
     g_object_set(sink, "sync", TRUE, nullptr);
@@ -64,7 +100,11 @@ static GstElement *createOutput(GstDevice *device, const gchar *name)
         g_object_set(sink, "signal-handoffs", TRUE, nullptr);
         g_signal_connect(sink, "handoff", G_CALLBACK(capturePreviewAudio), nullptr);
     }
-    return sink;
+    gst_bin_add(GST_BIN(output), sink);
+    auto *pad = gst_element_get_static_pad(sink, "sink");
+    gst_element_add_pad(output, gst_ghost_pad_new("sink", pad));
+    gst_object_unref(pad);
+    return output;
 }
 static void test_audio_device_class_init(TestAudioDeviceClass *klass)
 {
@@ -270,6 +310,29 @@ static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType 
                 "A break-music slider change must preserve automatic ducking");
         backend.rawStop();
     }
+}
+
+static void checkOutputReopen(const QString &filename, const QString &cdg, MediaBackend::MediaType type)
+{
+    MediaBackend backend(nullptr, "Output reopen test", type);
+    backend.setAudioOutputDevice("Test USB");
+    const auto sinkCount = created.size();
+    for (int play = 0; play < 2; ++play) {
+        const auto opens = selectedOutputOpens.load();
+        const auto buffers = audiblePreviewBuffers.load();
+        if (cdg.isEmpty())
+            backend.setMedia(filename);
+        else
+            backend.setMediaCdg(cdg, filename);
+        backend.setMuted(false);
+        backend.play();
+        waitFor([&] { return audiblePreviewBuffers > buffers; }, 3000,
+                "The selected output must receive samples on each play");
+        require(selectedOutputOpens > opens, "The selected device ID must be restored when reopening the sink");
+        backend.stop(true);
+        waitFor([&] { return backend.isPlaybackStopped(); }, 3000, "The output must close before the next play");
+    }
+    require(created.size() == sinkCount, "Reopening a device must reuse the existing sink");
 }
 
 static void checkSharedVideoFrames(const QString &audioFilename, const QString &cdgFilename)
@@ -714,6 +777,9 @@ int main(int argc, char **argv)
             require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
         }
         checkSharedVideoFrames(filename, cdgFilename);
+        checkOutputReopen(filename, {}, MediaBackend::Karaoke);
+        checkOutputReopen(filename, {}, MediaBackend::BackgroundMusic);
+        checkOutputReopen(filename, cdgFilename, MediaBackend::VideoPreview);
         checkPreviewDialogs(filename, cdgFilename, temporary.filePath("preview.zip"));
         checkPreviewAudio(cdgFilename);
         std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and preview checks passed");

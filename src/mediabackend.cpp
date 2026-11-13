@@ -467,10 +467,26 @@ bool MediaBackend::hasPreviewAudioOutput() const {
     return m_type == VideoPreview && !m_activeOutputDevice.isEmpty() && m_activeOutputDevice != "Default";
 }
 
+namespace {
+QByteArray audioSinkDeviceId(GstElement *sink)
+{
+    if (!sink)
+        return {};
+    const auto *property = g_object_class_find_property(G_OBJECT_GET_CLASS(sink), "unique-id");
+    if (!property || G_PARAM_SPEC_VALUE_TYPE(property) != G_TYPE_STRING ||
+        !(property->flags & G_PARAM_READABLE) || !(property->flags & G_PARAM_WRITABLE))
+        return {};
+    gchar *id = nullptr;
+    g_object_get(sink, "unique-id", &id, nullptr);
+    const QByteArray result(id);
+    g_free(id);
+    return result;
+}
+}
+
 void MediaBackend::applyAudioOutputDevice() {
     const bool preview = m_type == VideoPreview;
-    if (!m_pipeline || (!preview && !m_audioSink) || m_cdgStateBusy ||
-        m_requestedOutputDevice == m_activeOutputDevice)
+    if (!m_pipeline || (!preview && !m_audioSink) || m_cdgStateBusy)
         return;
 
     // Never unlink a running sink. A selection made during playback is applied
@@ -479,6 +495,21 @@ void MediaBackend::applyAudioOutputDevice() {
     gst_element_get_state(m_pipeline, &current, &pending, 0);
     if (current != GST_STATE_NULL || pending > GST_STATE_NULL)
         return;
+
+    if (m_requestedOutputDevice == m_activeOutputDevice) {
+        // CoreAudio's sink clears its device ID on READY -> NULL. The sink
+        // object is still attached, but must be told which device to reopen.
+        if (!m_outputDeviceId.isEmpty()) {
+            auto *sink = m_audioSink;
+            if (preview)
+                g_object_get(m_pipeline, "audio-sink", &sink, nullptr);
+            if (sink && audioSinkDeviceId(sink).isEmpty())
+                g_object_set(sink, "unique-id", m_outputDeviceId.constData(), nullptr);
+            if (preview && sink)
+                gst_object_unref(sink);
+        }
+        return;
+    }
 
     GstElement *replacement = nullptr;
     QString selected = m_requestedOutputDevice;
@@ -514,6 +545,7 @@ void MediaBackend::applyAudioOutputDevice() {
                 return;
             g_object_set(replacement, "sync", TRUE, nullptr);
         }
+        m_outputDeviceId = audioSinkDeviceId(replacement);
         gst_object_ref_sink(replacement);
         g_object_set(m_pipeline, "audio-sink", replacement, nullptr);
         gst_object_unref(replacement);
@@ -539,6 +571,7 @@ void MediaBackend::applyAudioOutputDevice() {
     if (gst_element_link(upstream, replacement)) {
         gst_object_unref(m_audioSink);
         m_audioSink = replacement;
+        m_outputDeviceId = audioSinkDeviceId(replacement);
         m_activeOutputDevice = selected;
         m_logger->info("{} Audio output: {}", m_loggingPrefix, selected.toStdString());
     } else {
@@ -1103,6 +1136,7 @@ void MediaBackend::pause() {
         deferControl([this] { pause(); });
         return;
     }
+    applyAudioOutputDevice();
     if (m_cdgPipeline && m_sharedClock && !m_cdgStartPending && m_state == PlayingState) {
         const auto now = gst_clock_get_time(m_sharedClock);
         const auto base = gst_element_get_base_time(m_pipeline);
@@ -1344,6 +1378,7 @@ void MediaBackend::setPosition(const qint64 &position)
     );
 
     // Pause both pipelines before issuing either seek.
+    applyAudioOutputDevice();
     const GstStateChangeReturn audioResult =
         gst_element_set_state(m_pipeline, GST_STATE_PAUSED);
 

@@ -151,6 +151,7 @@ private:
     QString m_cdgFilename;
     QString m_requestedOutputDevice{"Default"};
     QString m_activeOutputDevice{"Default"};
+    QByteArray m_outputDeviceId;
     void applyAudioOutputDevice();
 
     QTimer m_eventTimer;

@@ -132,6 +132,8 @@ public:
     void setRotationDisplaySingerCount(int count);
     [[nodiscard]] bool rotationDisplayShowEmptySingers() const;
     void setRotationDisplayShowEmptySingers(bool show);
+    [[nodiscard]] bool rotationDisplayShowSummary() const;
+    void setRotationDisplayShowSummary(bool show);
     [[nodiscard]] bool rotationDisplayHideNameNotes() const;
     void setRotationDisplayHideNameNotes(bool hide);
     [[nodiscard]] bool rotationDisplayVideoEnabled() const;

@@ -3596,6 +3596,7 @@ void MainWindow::updateRotationDuration() {
     } else
         text = " Rotation Duration: 0 min";
     m_labelRotationDuration.setText(text);
+    m_rotationDisplay->updateSummary(secs);
 }
 
 void MainWindow::rotationSelectionChanged(const QItemSelection &selected, const QItemSelection &deselected) {

@@ -374,6 +374,14 @@ void DlgSettings::setupRotationDisplayPage()
         m_settings.setRotationDisplayHideNameNotes(checked);
         emit rotationDisplaySettingsChanged();
     });
+    auto *summary = new QCheckBox(tr("Show total singers and estimated rotation duration"), listGroup);
+    summary->setObjectName("checkBoxRotationDisplaySummary");
+    summary->setChecked(m_settings.rotationDisplayShowSummary());
+    listLayout->addRow(summary);
+    connect(summary, &QCheckBox::toggled, this, [this](bool checked) {
+        m_settings.setRotationDisplayShowSummary(checked);
+        emit rotationDisplaySettingsChanged();
+    });
     layout->addWidget(listGroup);
     auto *videoGroup = new QGroupBox(tr("Karaoke display"), page);
     auto *videoLayout = new QFormLayout(videoGroup);

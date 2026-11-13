@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QDialog>
 #include <QHeaderView>
+#include <QLabel>
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -45,6 +46,7 @@ private slots:
         settings.setRotationDisplayFullscreen(false);
         settings.setRotationDisplaySingerCount(5);
         settings.setRotationDisplayShowEmptySingers(false);
+        settings.setRotationDisplayShowSummary(false);
         settings.setRotationDisplayHideNameNotes(false);
         settings.setRotationDisplayVideoEnabled(false);
         settings.setRotationDisplayVideoOnLeft(true);
@@ -611,6 +613,44 @@ private slots:
         settings.setRotationDisplayRowOpacity(100);
         display.applySettings();
         QCOMPARE(cardHeights().size(), full.size());
+    }
+
+    void summaryCountsTheFullRotationAndStaysBelowVideo()
+    {
+        auto records = singers();
+        records[0].cachedNextSongDurationSecs = 305;
+        records[2].cachedNextSongDurationSecs = 180;
+        TableModelRotation model;
+        model.onRotationLoaded(records);
+
+        Settings settings;
+        settings.setRotationDisplaySingerCount(2);
+        settings.setRotationDisplayVideoEnabled(true);
+        settings.setRotationDisplayVideoOnLeft(false);
+        RotationDisplay display(model);
+        display.resize(900, 500);
+        display.show();
+        auto *summary = display.findChild<QLabel *>("rotationSummary");
+        QVERIFY(summary);
+        QVERIFY(summary->isHidden());
+
+        settings.setRotationDisplayShowSummary(true);
+        display.applySettings();
+        QVERIFY(Settings().rotationDisplayShowSummary());
+        QVERIFY(summary->isVisible());
+        QCOMPARE(display.singerNames().size(), 2);
+        QCOMPARE(summary->text(), QString("Singers: 6  |  Est. rotation: 9 min"));
+        QVERIFY(summary->geometry().top() > display.videoDisplay()->geometry().bottom());
+        QVERIFY(summary->geometry().right() == display.videoDisplay()->geometry().right());
+
+        records.removeLast();
+        records[2].cachedNextSongDurationSecs = 0;
+        model.onRotationLoaded(records);
+        QTRY_COMPARE(summary->text(), QString("Singers: 5  |  Est. rotation: 6 min"));
+
+        settings.setRotationDisplayShowSummary(false);
+        display.applySettings();
+        QVERIFY(summary->isHidden());
     }
 
     void videoPanelCanSwapSidesAndRetainPausedFrames()

@@ -7,6 +7,7 @@
 #include <QGuiApplication>
 #include <QHideEvent>
 #include <QImageReader>
+#include <QLabel>
 #include <QMediaPlayer>
 #include <QVideoSink>
 #include <QMouseEvent>
@@ -33,6 +34,12 @@ RotationDisplay::RotationDisplay(TableModelRotation &rotation, QWidget *parent)
     m_videoDisplay->setAccessibleName(tr("Karaoke lyrics and video"));
     m_videoDisplay->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_videoDisplay->setTransparentFramePadding(true);
+    m_summary = new QLabel(this);
+    m_summary->setObjectName("rotationSummary");
+    m_summary->setTextFormat(Qt::PlainText);
+    m_summary->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_summary->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_summary->hide();
     setMinimumSize(320, 240);
     resize(600, 720);
     setToolTip(tr("Double-click or press F11 to toggle fullscreen. Escape leaves fullscreen. Right-click for controls."));
@@ -103,7 +110,25 @@ void RotationDisplay::refresh()
     const auto current = currentSingerName();
     setAccessibleDescription(current.isEmpty() ? upcoming
         : tr("Now singing: %1. %2").arg(current, upcoming));
+    if (!m_summary->isHidden())
+        updateSummary(m_rotation.rotationDuration());
     update();
+}
+
+void RotationDisplay::updateSummary(int durationSeconds)
+{
+    if (m_summary->isHidden())
+        return;
+
+    const int minutes = qCeil(qMax(0, durationSeconds) / 60.0);
+    const auto duration = minutes < 60 ? tr("%L1 min").arg(minutes)
+        : tr("%L1 hr %L2 min").arg(minutes / 60).arg(minutes % 60);
+    const auto text = tr("Singers: %L1  |  Est. rotation: %2").arg(m_rotation.singerCount()).arg(duration);
+    if (m_summary->text() != text) {
+        m_summary->setText(text);
+        updateContentGeometry();
+        update();
+    }
 }
 
 void RotationDisplay::applySettings()
@@ -137,8 +162,12 @@ void RotationDisplay::applySettings()
     m_showHeading = m_settings.rotationDisplayShowHeading();
     m_hideNameNotes = m_settings.rotationDisplayHideNameNotes();
     m_videoDisplay->setVisible(m_settings.rotationDisplayVideoEnabled());
-    updateContentGeometry();
+    auto summaryPalette = m_summary->palette();
+    summaryPalette.setColor(QPalette::WindowText, m_textColor);
+    m_summary->setPalette(summaryPalette);
+    m_summary->setVisible(m_settings.rotationDisplayShowSummary());
     refresh();
+    updateContentGeometry();
 }
 
 void RotationDisplay::updateBackgroundPlayback()
@@ -177,6 +206,18 @@ void RotationDisplay::updateContentGeometry()
 {
     const qreal margin = qBound(12.0, width() * 0.055, 64.0);
     m_singerArea = QRectF(rect()).adjusted(margin, margin, -margin, -margin);
+    if (m_summary && !m_summary->isHidden()) {
+        QFont summaryFont = font();
+        summaryFont.setPixelSize(qBound(12, qRound(height() * 0.027), 32));
+        const qreal textWidth = QFontMetricsF(summaryFont).horizontalAdvance(m_summary->text());
+        if (textWidth > m_singerArea.width())
+            summaryFont.setPixelSize(qMax(8, qFloor(summaryFont.pixelSize() * m_singerArea.width() / textWidth)));
+        m_summary->setFont(summaryFont);
+        const int summaryHeight = QFontMetrics(summaryFont).height();
+        const qreal top = m_singerArea.bottom() - summaryHeight;
+        m_summary->setGeometry(QRectF(m_singerArea.left(), top, m_singerArea.width(), summaryHeight).toAlignedRect());
+        m_singerArea.setBottom(top - margin * 0.4);
+    }
     if (!m_videoDisplay || m_videoDisplay->isHidden())
         return;
     const qreal gap = margin * 0.75;

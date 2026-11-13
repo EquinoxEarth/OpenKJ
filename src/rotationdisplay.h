@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QAction;
+class QLabel;
 class TableModelRotation;
 class VideoDisplay;
 class QMediaPlayer;
@@ -19,6 +20,7 @@ public:
     [[nodiscard]] QString currentSingerName() const;
     [[nodiscard]] VideoDisplay *videoDisplay() const { return m_videoDisplay; }
     void saveForShutdown();
+    void updateSummary(int durationSeconds);
 
 public slots:
     void refresh();
@@ -56,6 +58,7 @@ private:
     bool m_backgroundIsVideo{false};
     QMediaPlayer *m_backgroundPlayer{nullptr};
     VideoDisplay *m_videoDisplay{nullptr};
+    QLabel *m_summary{nullptr};
     QRectF m_singerArea;
     bool m_showHeading{true};
     bool m_hideNameNotes{false};

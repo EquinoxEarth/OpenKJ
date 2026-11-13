@@ -58,6 +58,8 @@ jobs:
           ./packaging/build_macos.sh
       - name: Create and verify DMG
         run: ./packaging/create_dmg.sh
+      - name: Test bundled runtime and mounted DMG
+        run: python3 packaging/check_macos_runtime.py dist/OpenKJ.app releases/OpenKJ-*-macos-arm64.dmg
       - name: Prepare checksum and release notes
         run: |
           source build-macos-deps/env.sh

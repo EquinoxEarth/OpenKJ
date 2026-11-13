@@ -14,6 +14,9 @@
 #include <gst/gst.h>
 #include <zip.h>
 #include <cstdio>
+#include <cmath>
+#include "audionormalization.h"
+#include "trackgaincache.h"
 #include <QDataStream>
 #include <QFile>
 #include "localmediauri.h"
@@ -26,7 +29,7 @@ static void stage(const char *message)
     std::fflush(stderr);
 }
 
-static bool checkZip()
+static bool checkZip(const QByteArray &audio, const QByteArray &graphics)
 {
     QTemporaryDir directory;
     if (!directory.isValid())
@@ -36,11 +39,16 @@ static bool checkZip()
     auto *archive = zip_open(path.constData(), ZIP_CREATE | ZIP_TRUNCATE, &error);
     if (!archive)
         return false;
-    const QByteArray payload("OpenKJ ZIP round trip");
-    auto *source = zip_source_buffer(archive, payload.constData(), payload.size(), 0);
-    if (!source || zip_file_add(archive, "track.cdg", source, 0) < 0) {
-        if (source)
-            zip_source_free(source);
+    const auto add = [archive](const char *name, const QByteArray &payload) {
+        auto *source = zip_source_buffer(archive, payload.constData(), payload.size(), 0);
+        if (!source)
+            return false;
+        if (zip_file_add(archive, name, source, 0) >= 0)
+            return true;
+        zip_source_free(source);
+        return false;
+    };
+    if (!add("track.wav", audio) || !add("track.cdg", graphics)) {
         zip_discard(archive);
         return false;
     }
@@ -51,12 +59,16 @@ static bool checkZip()
     archive = zip_open(path.constData(), ZIP_RDONLY, &error);
     if (!archive)
         return false;
-    auto *file = zip_fopen(archive, "track.cdg", 0);
-    char buffer[64];
-    const auto count = file ? zip_fread(file, buffer, sizeof(buffer)) : -1;
-    const bool ok = count == payload.size() && QByteArray(buffer, count) == payload;
-    if (file)
+    const auto read = [archive](const char *name, const QByteArray &payload) {
+        auto *file = zip_fopen(archive, name, 0);
+        if (!file)
+            return false;
+        QByteArray buffer(payload.size(), Qt::Uninitialized);
+        const auto count = zip_fread(file, buffer.data(), buffer.size());
         zip_fclose(file);
+        return count == payload.size() && buffer == payload;
+    };
+    const bool ok = read("track.wav", audio) && read("track.cdg", graphics);
     const bool closed = zip_close(archive) == 0;
     if (!closed)
         zip_discard(archive);
@@ -107,12 +119,8 @@ int main(int argc, char **argv)
     QCommandLineParser arguments;
     arguments.addHelpOption();
     arguments.addOption({"media-directory", "Decode every media file in this directory.", "directory"});
+    arguments.addOption({"bundled-macos", "Test the packaged macOS plugin set."});
     arguments.process(app);
-    stage("ZIP creation and readback");
-    if (!checkZip()) {
-        qCritical() << "ZIP creation/readback failed";
-        return 1;
-    }
     stage("show offscreen widget");
     QWidget widget;
     widget.resize(320, 200);
@@ -171,19 +179,21 @@ int main(int argc, char **argv)
     QFile audioFile(audioPath);
     if (!audioFile.open(QIODevice::WriteOnly))
         return 1;
-    // 100 ms of silent mono PCM, independent of encoders or external fixtures.
+    // Generate loud mono PCM without needing an external audio encoder.
     constexpr quint32 sampleRate = 8000;
-    const QByteArray silence(sampleRate / 10 * 2, '\0');
+    constexpr quint32 samples = sampleRate * 3;
+    constexpr quint32 dataSize = samples * 2;
     QDataStream wav(&audioFile);
     wav.setByteOrder(QDataStream::LittleEndian);
     wav.writeRawData("RIFF", 4);
-    wav << quint32(36 + silence.size());
+    wav << quint32(36 + dataSize);
     wav.writeRawData("WAVEfmt ", 8);
     wav << quint32(16) << quint16(1) << quint16(1) << sampleRate
         << quint32(sampleRate * 2) << quint16(2) << quint16(16);
     wav.writeRawData("data", 4);
-    wav << quint32(silence.size());
-    wav.writeRawData(silence.constData(), silence.size());
+    wav << dataSize;
+    for (quint32 i = 0; i < samples; ++i)
+        wav << qint16(28000 * std::sin(6.283185307 * 440 * i / sampleRate));
     if (wav.status() != QDataStream::Ok || !audioFile.flush())
         return 1;
     audioFile.close();
@@ -202,8 +212,23 @@ int main(int argc, char **argv)
     if (!runPipeline("playbin uri=\"" + QString::fromUtf8(uri) +
                      "\" audio-sink=\"fakesink sync=false\" video-sink=fakesink"))
         return 1;
+    stage("analyze WAV and persist its gain");
+    const std::atomic_bool cancelled{false};
+    const auto gain = okj::analyzeTrackGain(audioPath, cancelled);
+    if (!gain || *gain <= 0.0 || *gain >= 1.0) {
+        qCritical() << "Expected loud WAV to produce attenuation";
+        return 1;
+    }
+    const auto libraryPath = mediaDirectory.filePath("library.sqlite");
+    const auto key = okj::TrackGainKey::fromFile(audioPath);
+    okj::cacheTrackGain(libraryPath, key, *gain);
+    if (okj::cachedTrackGain(libraryPath, key) != gain) {
+        qCritical() << "Could not read back the measured gain";
+        return 1;
+    }
+
     stage("process SoundTouch and EQ audio");
-    if (!runPipeline("audiotestsrc num-buffers=12 ! audioconvert ! pitch pitch=1.1 ! "
+    if (!arguments.isSet("bundled-macos") && !runPipeline("audiotestsrc num-buffers=12 ! audioconvert ! pitch pitch=1.1 ! "
                      "scaletempo ! equalizer-10bands band0=3 ! audiopanorama ! volume ! fakesink"))
         return 1;
 
@@ -214,7 +239,7 @@ int main(int argc, char **argv)
         "pitch pitch=1.1 ! scaletempo ! equalizer-10bands band0=3 ! "
         "audiopanorama ! volume ! audioconvert ! audioresample ! "
         "audio/x-raw,format=S16LE,rate=48000,channels=2 ! fakesink sync=false";
-    if (!runPipeline("audiotestsrc num-buffers=12 ! "
+    if (!arguments.isSet("bundled-macos") && !runPipeline("audiotestsrc num-buffers=12 ! "
                      "audio/x-raw,format=F32LE,rate=44100,channels=2 ! " + fixedOutput))
         return 1;
     // Exercise playbin's negotiation into the same sink chain with the 8 kHz
@@ -241,6 +266,12 @@ int main(int argc, char **argv)
     if (!runPipeline("filesrc location=\"" + path +
                      "\" ! cdgparse ! cdgdec ! videoconvert ! fakesink sync=false"))
         return 1;
+
+    stage("ZIP round trip for the decoded WAV and CDG fixtures");
+    if (!audioFile.open(QIODevice::ReadOnly) || !checkZip(audioFile.readAll(), packets)) {
+        qCritical() << "Karaoke ZIP creation/readback failed";
+        return 1;
+    }
 
     if (arguments.isSet("media-directory")) {
         stage("decode packaged-format fixtures");

@@ -31,6 +31,7 @@
 #include "tablelayout.h"
 #include <QShortcut>
 #include <QThread>
+#include <QThreadPool>
 #include "audiorecorder.h"
 #include "dlgbookcreator.h"
 #include "dlgeq.h"
@@ -112,15 +113,25 @@ private:
     QLabel m_labelSingerCount;
     QLabel m_labelRotationDuration;
     QLabel m_labelAutoplayStatus;
+    QLabel m_labelNormalizationStatus;
+    QLabel m_labelDatabaseStage;
     QLabel m_labelDatabaseStatus;
     enum class DurationScanState { Idle, Selecting, Scanning, Stopped, Failed };
     DurationScanState m_durationScanState{DurationScanState::Idle};
     qint64 m_durationProcessed{0}, m_durationTotal{0}, m_durationUpdated{0}, m_durationMissing{0}, m_durationFailed{0};
     bool m_libraryLoadFailed{false};
     QString m_durationScanError;
+    QThreadPool m_normalizationPool;
+    std::shared_ptr<std::atomic_bool> m_libraryNormalizationCancelled;
+    qint64 m_normalizationRemaining{0};
+    bool m_normalizationSelecting{false};
+    QString m_normalizationError;
     void updateDatabaseStatus();
     void connectDurationScanStatus();
+    void startLibraryNormalization();
+    void stopLibraryNormalization();
     void updateAutoplayStatus();
+    void updateNormalizationStatus(bool enabled);
     bool updateKaraokeAutoAdvanceTarget();
     void applyQueueTabLayout();
     okj::DeferredLayout m_queueLayout{this, [this] { applyQueueTabLayout(); }};

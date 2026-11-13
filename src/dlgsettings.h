@@ -75,6 +75,7 @@ public:
 
 signals:
     void audioOutputRoutingChanged();
+    void karaokeNormalizationChanged(bool enabled);
     void recordingMixLevelsChanged(int mic, int music);
     void rotationDisplaySettingsChanged();
     void audioUseFaderChanged(bool);

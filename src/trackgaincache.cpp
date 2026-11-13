@@ -5,12 +5,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
 #include <QScopeGuard>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <cmath>
 
 namespace {
+QMutex cacheMutex;
 quint64 cacheGeneration = 0;
 
 QString cachePath(const QString &libraryPath)
@@ -46,6 +48,24 @@ bool validGain(double gain)
 {
     return std::isfinite(gain) && gain >= 0.0 && gain <= 1.0;
 }
+
+constexpr auto selectGain = "SELECT gain FROM track_gain_v1 WHERE path = ? AND size = ? AND modified_ms = ?";
+
+std::optional<double> lookupGain(QSqlQuery &query, const okj::TrackGainKey &key)
+{
+    query.bindValue(0, key.path);
+    query.bindValue(1, key.size);
+    query.bindValue(2, key.modifiedMs);
+    std::optional<double> result;
+    if (query.exec() && query.next()) {
+        bool ok = false;
+        const auto gain = query.value(0).toDouble(&ok);
+        if (ok && validGain(gain))
+            result = gain;
+    }
+    query.finish();
+    return result;
+}
 }
 
 okj::TrackGainKey okj::TrackGainKey::fromFile(const QString &path)
@@ -61,25 +81,32 @@ std::optional<double> okj::cachedTrackGain(const QString &libraryPath, const Tra
     std::optional<double> result;
     if (!isCurrent(key))
         return result;
+    QMutexLocker lock(&cacheMutex);
     withCache(cachePath(libraryPath), true, [&](QSqlQuery &query) {
-        if (!query.prepare("SELECT gain FROM track_gain_v1 WHERE path = ? AND size = ? AND modified_ms = ?"))
-            return;
-        query.addBindValue(key.path);
-        query.addBindValue(key.size);
-        query.addBindValue(key.modifiedMs);
-        if (query.exec() && query.next()) {
-            bool ok = false;
-            const auto gain = query.value(0).toDouble(&ok);
-            if (ok && validGain(gain))
-                result = gain;
-        }
+        if (query.prepare(selectGain))
+            result = lookupGain(query, key);
     });
     return result;
 }
 
-void okj::cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, double gain)
+QList<okj::TrackGainKey> okj::uncachedTrackGains(const QString &libraryPath, const QList<TrackGainKey> &keys)
+{
+    auto pending = keys;
+    QMutexLocker lock(&cacheMutex);
+    withCache(cachePath(libraryPath), true, [&](QSqlQuery &query) {
+        if (query.prepare(selectGain))
+            pending.removeIf([&](const auto &key) { return lookupGain(query, key).has_value(); });
+    });
+    return pending;
+}
+
+void okj::cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, double gain,
+                         std::optional<quint64> generation)
 {
     if (!validGain(gain) || !isCurrent(key))
+        return;
+    QMutexLocker lock(&cacheMutex);
+    if (generation && *generation != cacheGeneration)
         return;
     withCache(cachePath(libraryPath), false, [&](QSqlQuery &query) {
         // Change the table version if the gain calculation changes.
@@ -97,6 +124,7 @@ void okj::cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, do
 
 QString okj::clearTrackGainCache(const QString &libraryPath)
 {
+    QMutexLocker lock(&cacheMutex);
     const auto path = cachePath(libraryPath);
     if (!path.isEmpty() && QFileInfo::exists(path)) {
         QFile file(path);
@@ -110,5 +138,6 @@ QString okj::clearTrackGainCache(const QString &libraryPath)
 
 quint64 okj::trackGainCacheGeneration()
 {
+    QMutexLocker lock(&cacheMutex);
     return cacheGeneration;
 }

@@ -68,9 +68,11 @@ QString MzArchive::audioExtension()
     return audioExt;
 }
 
-bool MzArchive::extractAudio(const QString& destPath, const QString& destFile, const std::atomic_bool *cancelled)
+bool MzArchive::extractAudio(const QString& destPath, const QString& destFile,
+                             const std::atomic_bool *cancelled, bool log)
 {
-    m_logger->info("{} Extracting {} audio file to: {}/{}", m_loggingPrefix, archiveFile, destPath, destFile);
+    if (log)
+        m_logger->info("{} Extracting {} audio file to: {}/{}", m_loggingPrefix, archiveFile, destPath, destFile);
     if (!findAudio())
         return false;
 
@@ -78,14 +80,16 @@ bool MzArchive::extractAudio(const QString& destPath, const QString& destFile, c
     zip_t *z = zip_open(archiveFile.toLocal8Bit().constData(), ZIP_RDONLY, &err);
     if (!z)
     {
-        m_logger->warn("{} Failed to open zip archive: {}", m_loggingPrefix, archiveFile);
+        if (log)
+            m_logger->warn("{} Failed to open zip archive: {}", m_loggingPrefix, archiveFile);
         return false;
     }
 
     zip_file_t *zf = zip_fopen_index(z, m_audioFileIndex, 0);
     if (!zf)
     {
-        m_logger->warn("{} Failed to open audio entry inside zip", m_loggingPrefix);
+        if (log)
+            m_logger->warn("{} Failed to open audio entry inside zip", m_loggingPrefix);
         zip_close(z);
         return false;
     }
@@ -93,7 +97,8 @@ bool MzArchive::extractAudio(const QString& destPath, const QString& destFile, c
     QFile dest(destPath + QDir::separator() + destFile);
     if (!dest.open(QIODevice::WriteOnly))
     {
-        m_logger->warn("{} Failed to open destination file for audio extraction", m_loggingPrefix);
+        if (log)
+            m_logger->warn("{} Failed to open destination file for audio extraction", m_loggingPrefix);
         zip_fclose(zf);
         zip_close(z);
         return false;

@@ -22,7 +22,8 @@ public:
     bool checkCDG();
     bool checkAudio();
     QString audioExtension();
-    bool extractAudio(const QString& destPath, const QString& destFile, const std::atomic_bool *cancelled = nullptr);
+    bool extractAudio(const QString& destPath, const QString& destFile,
+                      const std::atomic_bool *cancelled = nullptr, bool log = true);
     bool extractCdg(const QString& destPath, const QString& destFile, const std::atomic_bool *cancelled = nullptr);
     bool isValidKaraokeFile(bool logErrors = true);
     QString getLastError();

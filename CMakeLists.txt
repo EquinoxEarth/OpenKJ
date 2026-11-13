@@ -109,6 +109,7 @@ set(SOURCE_FILES
         src/dlgaddsong.cpp
         src/mediabackend.cpp
         src/audionormalization.cpp
+        src/librarynormalizationscan.cpp
         src/trackgaincache.cpp
         src/mzarchive.cpp
         src/mediapreparation.cpp
@@ -392,6 +393,7 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     add_executable(openkj-audio-outputs-test
         packaging/audio_outputs_test.cpp
         src/mediabackend.cpp src/audionormalization.cpp src/trackgaincache.cpp
+        src/librarynormalizationscan.cpp
         src/mzarchive.cpp src/audiofader.cpp src/recordingmix.cpp
         src/dlgvideopreview.cpp src/dlgvideopreview.ui src/mediapreparation.cpp
         src/videodisplay.cpp src/volslider.cpp src/xbrz.cpp src/settings.cpp src/simplecrypt.cpp)

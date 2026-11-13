@@ -3,6 +3,7 @@
 #include "audionormalization.h"
 #include "dlgvideopreview.h"
 #include "mediapreparation.h"
+#include "librarynormalizationscan.h"
 #include "xbrz.h"
 #include "recordingmix.h"
 #include <QtEndian>
@@ -22,10 +23,12 @@
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QUuid>
 #include <cstdio>
 #include <mutex>
@@ -865,6 +868,36 @@ int main(int argc, char **argv)
         require(std::abs(liveGain() - 0.8 * *loudGain) < 0.005,
                 "A newly extracted copy must start at the cached archive gain");
         karaoke.rawStop();
+        const auto scanArchive = temporary.filePath("library.zip");
+        require(QFile::copy(archivePath, scanArchive), "Cannot create library ZIP fixture");
+        const auto missing = temporary.filePath("disconnected.mp4");
+        QSqlQuery query(library);
+        require(query.exec("CREATE TABLE dbSongs (path TEXT NOT NULL)"), "Cannot create a test karaoke library");
+        require(query.prepare("INSERT INTO dbSongs VALUES (?)"), "Cannot prepare a test karaoke library entry");
+        for (const auto &path : {scanArchive, cdgFilename, missing}) {
+            query.bindValue(0, path);
+            require(query.exec(), "Cannot insert a test karaoke library entry");
+        }
+        query.finish();
+        const auto scan = [&] {
+            auto future = QtConcurrent::run(okj::scanLibraryTrackGains, libraryPath, notCancelled,
+                                            okj::trackGainCacheGeneration());
+            future.waitForFinished();
+            require(future.resultCount() == 0, "Background normalization must finish without a database error");
+            require(future.progressMaximum() == future.progressValue(), "Scan progress must reach the end of the pass");
+            return future.progressMaximum();
+        };
+        require(scan() == 2, "Scan must count accessible, uncached karaoke audio");
+        require(okj::cachedTrackGain(libraryPath, okj::TrackGainKey::fromFile(scanArchive)).has_value(),
+                "Library ZIP analysis must be saved against the archive");
+        const auto companion = QFileInfo(cdgFilename).absoluteDir().filePath(QFileInfo(cdgFilename).completeBaseName() + ".wav");
+        require(okj::cachedTrackGain(libraryPath, okj::TrackGainKey::fromFile(companion)).has_value(),
+                "Loose CDG analysis must be saved against its companion audio");
+        require(scan() == 0, "A subsequent scan must skip cached tracks");
+        require(QFile::copy(loud, missing), "Cannot restore the disconnected track");
+        require(scan() == 1, "A later scan must analyze a track that was previously disconnected");
+        require(okj::cachedTrackGain(libraryPath, okj::TrackGainKey::fromFile(missing)).has_value(),
+                "Scan must cache directly playable library files");
         std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and preview checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());

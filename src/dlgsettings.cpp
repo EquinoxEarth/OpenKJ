@@ -103,6 +103,7 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     connect(ui->checkBoxNormalizeKaraoke, &QCheckBox::toggled, this, [this](bool enabled) {
         m_settings.setNormalizeKaraokeAudio(enabled);
         kAudioBackend.setAudioNormalizationEnabled(enabled);
+        emit karaokeNormalizationChanged(enabled);
     });
     connect(ui->checkBoxNormalizeBreakMusic, &QCheckBox::toggled, this, [this](bool enabled) {
         m_settings.setNormalizeBreakMusicAudio(enabled);

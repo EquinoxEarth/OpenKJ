@@ -24,6 +24,7 @@
 #include "dlgeditsong.h"
 #include "songedit.h"
 #include "databasecleanup.h"
+#include "librarynormalizationscan.h"
 #include "soundfxbutton.h"
 #include "src/models/tableviewtooltipfilter.h"
 #include "dbupdater.h"
@@ -484,6 +485,8 @@ MainWindow::MainWindow(const QSqlDatabase &database, QWidget *parent) :
 #endif
     ui->setupUi(this);
     setMouseTracking(true);
+    m_normalizationPool.setMaxThreadCount(1);
+    m_normalizationPool.setThreadPriority(QThread::LowPriority);
     m_songShop = std::make_unique<SongShop>(this);
     m_lazyDurationUpdater = std::make_unique<LazyDurationUpdateController>(this);
     connectDurationScanStatus();
@@ -498,6 +501,7 @@ MainWindow::MainWindow(const QSqlDatabase &database, QWidget *parent) :
         ui->labelLibraryLoading->show();
         m_timerLazyDurationStart.stop();
         m_lazyDurationUpdater->stopWork();
+        stopLibraryNormalization();
     });
     connect(&m_karaokeSongsModel, &TableModelKaraokeSongs::libraryLoadFinished, this, [this](bool success) {
         m_libraryLoadFailed = !success;
@@ -605,6 +609,11 @@ MainWindow::MainWindow(const QSqlDatabase &database, QWidget *parent) :
     ui->statusBar->addWidget(&m_labelSingerCount);
     ui->statusBar->addWidget(&m_labelRotationDuration);
     ui->statusBar->addWidget(&m_labelAutoplayStatus);
+    ui->statusBar->addWidget(&m_labelNormalizationStatus);
+    m_labelNormalizationStatus.setToolTip(tr("Karaoke audio normalization. Change this in Settings > Audio > Karaoke."));
+    updateNormalizationStatus(m_settings.normalizeKaraokeAudio());
+    ui->statusBar->addPermanentWidget(&m_labelDatabaseStage);
+    m_labelDatabaseStage.hide();
     ui->statusBar->addPermanentWidget(&m_labelDatabaseStatus);
     m_tableModelPlaylists = std::make_unique<QSqlTableModel>(this, m_database);
     m_tableModelPlaylists->setTable("bmplaylists");
@@ -1463,6 +1472,8 @@ void MainWindow::cancelKaraokePlayback()
 
 MainWindow::~MainWindow() {
     m_shuttingDown = true;
+    stopLibraryNormalization();
+    m_normalizationPool.waitForDone();
     audioRecorder.stop();
     bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
@@ -1521,8 +1532,6 @@ void MainWindow::databaseUpdated() {
 }
 
 void MainWindow::restartLazyDurationScan() {
-    if (!m_settings.dbLazyLoadDurations())
-        return;
     // The request dialog owns a second library model. Wait for both read jobs
     // before starting writes; keep this wait asynchronous as well.
     if (m_karaokeSongsModel.isLoading() || (requestsDialog && requestsDialog->isLibraryLoading())) {
@@ -1531,12 +1540,18 @@ void MainWindow::restartLazyDurationScan() {
     }
     m_lazyDurationUpdater->stopWork();
     m_lazyDurationUpdater = std::make_unique<LazyDurationUpdateController>(this);
+    m_durationScanState = DurationScanState::Idle;
+    m_durationScanError.clear();
     connectDurationScanStatus();
     connect(m_lazyDurationUpdater.get(), &LazyDurationUpdateController::gotDuration, &m_karaokeSongsModel,
             &TableModelKaraokeSongs::setSongDuration);
     connect(m_lazyDurationUpdater.get(), &LazyDurationUpdateController::gotDuration, requestsDialog.get(),
             &DlgRequests::setSongDuration);
-    m_lazyDurationUpdater->getDurations();
+    if (m_settings.dbLazyLoadDurations())
+        m_lazyDurationUpdater->getDurations();
+    else
+        startLibraryNormalization();
+    updateDatabaseStatus();
 }
 
 void MainWindow::databaseCleared() {
@@ -1766,6 +1781,14 @@ void MainWindow::actionSettingsTriggered() {
                                         m_mediaBackendBm.activeAudioOutputDevice()};
         for (auto *preview : findChildren<DlgVideoPreview *>())
             preview->validateAudioOutput(activeOutputs);
+    });
+    connect(settingsDialog, &DlgSettings::karaokeNormalizationChanged, this, [this](bool enabled) {
+        updateNormalizationStatus(enabled);
+        if (enabled)
+            startLibraryNormalization();
+        else
+            stopLibraryNormalization();
+        updateDatabaseStatus();
     });
     connect(settingsDialog, &DlgSettings::audioUseFaderChanged, &m_mediaBackendKar, &MediaBackend::setUseFader);
     connect(settingsDialog, &DlgSettings::audioSilenceDetectChanged, &m_mediaBackendKar,
@@ -3494,6 +3517,7 @@ void MainWindow::tableViewRotationCurrentChanged(const QModelIndex &cur, const Q
 
 void MainWindow::connectDurationScanStatus() {
     connect(m_lazyDurationUpdater.get(), &LazyDurationUpdateController::scanStarted, this, [this] {
+        stopLibraryNormalization();
         m_durationScanState = DurationScanState::Selecting;
         m_durationScanError.clear();
         m_durationProcessed = m_durationTotal = m_durationUpdated = m_durationMissing = m_durationFailed = 0;
@@ -3514,8 +3538,57 @@ void MainWindow::connectDurationScanStatus() {
         m_durationScanError = error;
         m_durationScanState = !error.isEmpty() ? DurationScanState::Failed :
             cancelled ? DurationScanState::Stopped : DurationScanState::Idle;
+        if (!cancelled && error.isEmpty())
+            startLibraryNormalization();
         updateDatabaseStatus();
     });
+}
+
+void MainWindow::startLibraryNormalization()
+{
+    if (m_shuttingDown || m_libraryLoadFailed || m_libraryNormalizationCancelled ||
+        !m_settings.normalizeKaraokeAudio() || m_timerLazyDurationStart.isActive() ||
+        m_karaokeSongsModel.isLoading() || (requestsDialog && requestsDialog->isLibraryLoading()) ||
+        m_durationScanState == DurationScanState::Selecting || m_durationScanState == DurationScanState::Scanning)
+        return;
+
+    const auto cancelled = std::make_shared<std::atomic_bool>(false);
+    m_libraryNormalizationCancelled = cancelled;
+    m_normalizationSelecting = true;
+    m_normalizationRemaining = 0;
+    m_normalizationError.clear();
+    auto *watcher = new QFutureWatcher<QString>(this);
+    const auto updateProgress = [this, watcher, cancelled] {
+        if (m_libraryNormalizationCancelled != cancelled)
+            return;
+        m_normalizationSelecting = false;
+        m_normalizationRemaining = watcher->progressMaximum() - watcher->progressValue();
+        updateDatabaseStatus();
+    };
+    connect(watcher, &QFutureWatcherBase::progressRangeChanged, this, updateProgress);
+    connect(watcher, &QFutureWatcherBase::progressValueChanged, this, updateProgress);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, cancelled] {
+        watcher->deleteLater();
+        if (m_libraryNormalizationCancelled != cancelled)
+            return;
+        m_libraryNormalizationCancelled.reset();
+        if (watcher->future().resultCount()) {
+            m_normalizationError = watcher->result();
+            m_logger->warn("Library normalization scan failed: {}", m_normalizationError.toStdString());
+        }
+        updateDatabaseStatus();
+    });
+    watcher->setFuture(QtConcurrent::run(&m_normalizationPool, okj::scanLibraryTrackGains,
+                                        m_database.databaseName(), cancelled, okj::trackGainCacheGeneration()));
+}
+
+void MainWindow::stopLibraryNormalization()
+{
+    if (m_libraryNormalizationCancelled) {
+        m_libraryNormalizationCancelled->store(true);
+        m_libraryNormalizationCancelled.reset();
+    }
+    m_normalizationError.clear();
 }
 
 void MainWindow::updateDatabaseStatus() {
@@ -3524,19 +3597,30 @@ void MainWindow::updateDatabaseStatus() {
     const auto summary = tr("Duration scan: %1 of %2 checked; %3 updated, %4 inaccessible, %5 failed.")
         .arg(QLocale().toString(m_durationProcessed), QLocale().toString(m_durationTotal),
              QLocale().toString(m_durationUpdated), QLocale().toString(m_durationMissing), QLocale().toString(m_durationFailed));
+    QString stage;
     if (m_karaokeSongsModel.isLoading() || (requestsDialog && requestsDialog->isLibraryLoading())) {
         m_labelDatabaseStatus.setText(tr("Database: Loading library…"));
         m_labelDatabaseStatus.setToolTip(tr("Loading the song library in the background."));
     } else if (m_libraryLoadFailed) {
         m_labelDatabaseStatus.setText(tr("Database: Load failed"));
         m_labelDatabaseStatus.setToolTip(tr("The song library could not be loaded. See the log for details."));
+    } else if (m_libraryNormalizationCancelled) {
+        stage = tr("Stage: Normalization |");
+        m_labelDatabaseStatus.setText(m_normalizationSelecting ? tr("Database: Finding tracks…") :
+            tr("Database: %1 remaining").arg(QLocale().toString(qMax(qint64(0), m_normalizationRemaining))));
+        m_labelDatabaseStatus.setToolTip(tr("Analyzing audio levels for the karaoke library."));
+    } else if (!m_normalizationError.isEmpty()) {
+        m_labelDatabaseStatus.setText(tr("Database: Normalization scan failed"));
+        m_labelDatabaseStatus.setToolTip(m_normalizationError);
     } else {
+        if (m_durationScanState == DurationScanState::Selecting || m_durationScanState == DurationScanState::Scanning)
+            stage = tr("Stage: Durations |");
         switch (m_durationScanState) {
         case DurationScanState::Selecting:
             m_labelDatabaseStatus.setText(tr("Database: Finding missing durations…"));
             break;
         case DurationScanState::Scanning:
-            m_labelDatabaseStatus.setText(tr("Durations: %1 remaining").arg(QLocale().toString(qMax(qint64(0), m_durationTotal - m_durationProcessed))));
+            m_labelDatabaseStatus.setText(tr("Database: %1 remaining").arg(QLocale().toString(qMax(qint64(0), m_durationTotal - m_durationProcessed))));
             break;
         case DurationScanState::Stopped:
             m_labelDatabaseStatus.setText(tr("Database: Duration scan stopped"));
@@ -3550,6 +3634,8 @@ void MainWindow::updateDatabaseStatus() {
         }
         m_labelDatabaseStatus.setToolTip(m_durationScanError.isEmpty() ? summary : m_durationScanError + "\n" + summary);
     }
+    m_labelDatabaseStage.setText(stage);
+    m_labelDatabaseStage.setVisible(!stage.isEmpty());
 }
 
 bool MainWindow::updateKaraokeAutoAdvanceTarget() {
@@ -3575,6 +3661,11 @@ void MainWindow::updateAutoplayStatus() {
         m_labelAutoplayStatus.setText(tr(" Autoplay: On"));
         m_labelAutoplayStatus.setToolTip(tr("The next-song countdown starts when the current song finishes."));
     }
+}
+
+void MainWindow::updateNormalizationStatus(bool enabled)
+{
+    m_labelNormalizationStatus.setText(enabled ? tr(" Normalization: On") : tr(" Normalization: Off"));
 }
 
 void MainWindow::updateRotationDuration() {

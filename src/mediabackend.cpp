@@ -1881,8 +1881,7 @@ void MediaBackend::startAudioNormalization(bool beforePlayback)
         m_normalizationAnalyzed = true;
         if (gain) {
             rampAudioNormalization(*gain);
-            if (cacheGeneration == okj::trackGainCacheGeneration())
-                okj::cacheTrackGain(libraryPath, m_normalizationKey, *gain);
+            okj::cacheTrackGain(libraryPath, m_normalizationKey, *gain, cacheGeneration);
         }
     });
     watcher->setFuture(QtConcurrent::run(

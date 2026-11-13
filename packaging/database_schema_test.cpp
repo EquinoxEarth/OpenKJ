@@ -76,6 +76,20 @@ private slots:
         QSqlDatabase::removeDatabase("database-schema-test");
     }
 
+    void reportsCacheFailureAfterLibraryCommit()
+    {
+        migrate();
+        exec("INSERT INTO dbsongs (path) VALUES ('/test/song.zip')");
+        const auto cache = QFileInfo(m_path).absoluteDir().filePath("audio-normalization.sqlite");
+        QVERIFY(QDir().mkdir(cache));
+        const auto generation = okj::trackGainCacheGeneration();
+        const auto result = okj::clearKaraokeLibrary(m_database);
+        QVERIFY(result.error.isEmpty());
+        QVERIFY(!result.cacheError.isEmpty());
+        QCOMPARE(value("SELECT COUNT(*) FROM dbsongs").toInt(), 0);
+        QVERIFY(okj::trackGainCacheGeneration() != generation);
+    }
+
     void clearKaraokeLibraryRollsBackAndKeepsHistory()
     {
         migrate();
@@ -104,7 +118,7 @@ private slots:
              "BEGIN SELECT RAISE(ABORT, 'clear blocked'); END");
 
         const QStringList cleared{"dbSongs", "regularSingers", "regularSongs", "rotationSingers", "queueSongs"};
-        const auto error = okj::clearKaraokeLibrary(m_database);
+        const auto error = okj::clearKaraokeLibrary(m_database).error;
         QVERIFY2(error.contains("clear blocked"), qPrintable(error));
         QVERIFY(QFileInfo::exists(cachePath));
         QCOMPARE(okj::trackGainCacheGeneration(), generation);
@@ -112,7 +126,18 @@ private slots:
             QCOMPARE(value("SELECT COUNT(*) FROM " + table).toInt(), 1);
 
         exec("DROP TRIGGER block_clear");
-        const auto retry = okj::clearKaraokeLibrary(m_database);
+        exec("PRAGMA foreign_keys = ON");
+        exec("CREATE TABLE clearParent (id INTEGER PRIMARY KEY)");
+        exec("CREATE TABLE clearChild (parentId INT REFERENCES clearParent(id) DEFERRABLE INITIALLY DEFERRED)");
+        exec("CREATE TRIGGER block_commit AFTER DELETE ON dbSongs BEGIN INSERT INTO clearChild VALUES (9); END");
+        QVERIFY(!okj::clearKaraokeLibrary(m_database).error.isEmpty());
+        QVERIFY(QFileInfo::exists(cachePath));
+        QCOMPARE(okj::trackGainCacheGeneration(), generation);
+        QCOMPARE(value("SELECT COUNT(*) FROM dbSongs").toInt(), 1);
+        exec("DROP TRIGGER block_commit");
+        const auto clearedResult = okj::clearKaraokeLibrary(m_database);
+        QVERIFY(clearedResult.cacheError.isEmpty());
+        const auto retry = clearedResult.error;
         QVERIFY2(retry.isEmpty(), qPrintable(retry));
         QVERIFY(!QFileInfo::exists(cachePath));
         QVERIFY(!okj::cachedTrackGain(m_path, key));

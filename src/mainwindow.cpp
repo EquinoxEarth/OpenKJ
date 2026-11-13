@@ -819,8 +819,10 @@ void MainWindow::setupConnections() {
         if (m_shuttingDown)
             return;
         if (!m_pendingKaraokePlayback) {
-            if (!m_mediaPreparationCancelled && !m_startingKaraokePlayback)
+            if (!m_mediaPreparationCancelled && !m_startingKaraokePlayback) {
+                setNormalizationKaraokeBusy(false);
                 restoreBreakMusicVolume();
+            }
             return;
         }
         if (m_karaokeStopReady)
@@ -838,8 +840,10 @@ void MainWindow::setupConnections() {
             return;
         const bool preparing = bool(m_mediaPreparationCancelled);
         cancelMediaPreparation();
-        if (discardKaraokeStart() || preparing)
+        if (discardKaraokeStart() || preparing) {
+            setNormalizationKaraokeBusy(false);
             restoreBreakMusicVolume();
+        }
         audioRecorder.stop();
         // Finish dispatching the backend error before showing a modal dialog.
         QMetaObject::invokeMethod(this, [this, message] {
@@ -1296,6 +1300,7 @@ void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, Interrup
 
     cancelMediaPreparation();
     const bool wasStarting = discardKaraokeStart();
+    setNormalizationKaraokeBusy(true);
     m_mediaBackendBm.setSuppressedForKaraoke(true, m_settings.bmKCrossFade());
     audioRecorder.cancelPendingRecording();
     m_timerKaraokeAA.stop();
@@ -1419,6 +1424,7 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request)
         m_logger->info("{} Karaoke media preparation took {}ms", m_loggingPrefix, prepared.elapsedMs);
         if (!prepared.error.isEmpty()) {
             m_mediaPreparationCancelled.reset();
+            setNormalizationKaraokeBusy(false);
             restoreBreakMusicVolume();
             m_timerTest.stop();
             QMessageBox::warning(this, tr("Bad karaoke file"), prepared.error, QMessageBox::Ok);
@@ -1434,6 +1440,7 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request)
         m_mediaPreparationCancelled.reset();
         m_preparedPlaybackDir = prepared.directory;
         if (!prepareKaraokeSelection(selection)) {
+            setNormalizationKaraokeBusy(false);
             restoreBreakMusicVolume();
             return;
         }
@@ -1472,11 +1479,13 @@ void MainWindow::cancelKaraokePlayback()
 MainWindow::~MainWindow() {
     m_shuttingDown = true;
     stopLibraryNormalization();
-    m_normalizationPool.waitForDone();
     audioRecorder.stop();
     bmDbDialog->cancelUpdate();
     m_playlistImporter.cancel();
     cancelKaraokePlayback();
+    m_mediaBackendKar.stop(true);
+    m_mediaBackendBm.stop(true);
+    m_normalizationPool.waitForDone();
     if (m_dbThread) {
         // Save confirmed plays already queued on the worker before stopping its event loop.
         if (m_dbThread->isRunning())
@@ -3539,20 +3548,21 @@ void MainWindow::connectDurationScanStatus() {
 
 void MainWindow::startLibraryNormalization()
 {
-    if (m_shuttingDown || m_libraryLoadFailed || m_libraryNormalizationCancelled ||
+    if (m_shuttingDown || m_libraryLoadFailed || m_libraryNormalizationControl ||
         !m_settings.normalizeKaraokeAudio() || m_timerLazyDurationStart.isActive() ||
         m_karaokeSongsModel.isLoading() || (requestsDialog && requestsDialog->isLibraryLoading()) ||
         m_durationScanState == DurationScanState::Selecting || m_durationScanState == DurationScanState::Scanning)
         return;
 
-    const auto cancelled = std::make_shared<std::atomic_bool>(false);
-    m_libraryNormalizationCancelled = cancelled;
+    const auto control = std::make_shared<okj::LibraryNormalizationControl>();
+    control->setPaused(m_normalizationKaraokeBusy);
+    m_libraryNormalizationControl = control;
     m_normalizationSelecting = true;
     m_normalizationRemaining = 0;
-    m_normalizationError.clear();
-    auto *watcher = new QFutureWatcher<QString>(this);
-    const auto updateProgress = [this, watcher, cancelled] {
-        if (m_libraryNormalizationCancelled != cancelled)
+    m_normalizationResult = {};
+    auto *watcher = new QFutureWatcher<okj::LibraryNormalizationResult>(this);
+    const auto updateProgress = [this, watcher, control] {
+        if (m_libraryNormalizationControl != control)
             return;
         m_normalizationSelecting = false;
         m_normalizationRemaining = watcher->progressMaximum() - watcher->progressValue();
@@ -3560,28 +3570,37 @@ void MainWindow::startLibraryNormalization()
     };
     connect(watcher, &QFutureWatcherBase::progressRangeChanged, this, updateProgress);
     connect(watcher, &QFutureWatcherBase::progressValueChanged, this, updateProgress);
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, cancelled] {
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, control] {
         watcher->deleteLater();
-        if (m_libraryNormalizationCancelled != cancelled)
+        if (m_libraryNormalizationControl != control)
             return;
-        m_libraryNormalizationCancelled.reset();
+        m_libraryNormalizationControl.reset();
         if (watcher->future().resultCount()) {
-            m_normalizationError = watcher->result();
-            m_logger->warn("Library normalization scan failed: {}", m_normalizationError.toStdString());
+            m_normalizationResult = watcher->result();
+            if (!m_normalizationResult.error.isEmpty())
+                m_logger->warn("Library normalization scan failed: {}", m_normalizationResult.error.toStdString());
         }
         updateDatabaseStatus();
     });
     watcher->setFuture(QtConcurrent::run(&m_normalizationPool, okj::scanLibraryTrackGains,
-                                        m_database.databaseName(), cancelled, okj::trackGainCacheGeneration()));
+                                        m_database.databaseName(), control, okj::trackGainCacheGeneration()));
 }
 
 void MainWindow::stopLibraryNormalization()
 {
-    if (m_libraryNormalizationCancelled) {
-        m_libraryNormalizationCancelled->store(true);
-        m_libraryNormalizationCancelled.reset();
+    if (m_libraryNormalizationControl) {
+        m_libraryNormalizationControl->cancel();
+        m_libraryNormalizationControl.reset();
     }
-    m_normalizationError.clear();
+    m_normalizationResult = {};
+}
+
+void MainWindow::setNormalizationKaraokeBusy(bool busy)
+{
+    m_normalizationKaraokeBusy = busy;
+    if (m_libraryNormalizationControl)
+        m_libraryNormalizationControl->setPaused(busy);
+    updateDatabaseStatus();
 }
 
 void MainWindow::updateDatabaseStatus() {
@@ -3597,14 +3616,15 @@ void MainWindow::updateDatabaseStatus() {
     } else if (m_libraryLoadFailed) {
         m_labelDatabaseStatus.setText(tr("Database: Load failed"));
         m_labelDatabaseStatus.setToolTip(tr("The song library could not be loaded. See the log for details."));
-    } else if (m_libraryNormalizationCancelled) {
+    } else if (m_libraryNormalizationControl) {
         stage = tr("Stage: Normalization |");
-        m_labelDatabaseStatus.setText(m_normalizationSelecting ? tr("Database: Finding tracks…") :
+        m_labelDatabaseStatus.setText(m_normalizationKaraokeBusy ? tr("Database: Paused for karaoke") :
+            m_normalizationSelecting ? tr("Database: Finding tracks…") :
             tr("Database: %1 remaining").arg(QLocale().toString(qMax(qint64(0), m_normalizationRemaining))));
         m_labelDatabaseStatus.setToolTip(tr("Analyzing audio levels for the karaoke library."));
-    } else if (!m_normalizationError.isEmpty()) {
+    } else if (!m_normalizationResult.error.isEmpty()) {
         m_labelDatabaseStatus.setText(tr("Database: Normalization scan failed"));
-        m_labelDatabaseStatus.setToolTip(m_normalizationError);
+        m_labelDatabaseStatus.setToolTip(m_normalizationResult.error);
     } else {
         if (m_durationScanState == DurationScanState::Selecting || m_durationScanState == DurationScanState::Scanning)
             stage = tr("Stage: Durations |");
@@ -3622,10 +3642,17 @@ void MainWindow::updateDatabaseStatus() {
             m_labelDatabaseStatus.setText(tr("Database: Duration scan failed"));
             break;
         case DurationScanState::Idle:
-            m_labelDatabaseStatus.setText(tr("Database: Ready"));
+            m_labelDatabaseStatus.setText(m_normalizationResult.failed || m_normalizationResult.timedOut ||
+                m_normalizationResult.cacheFailures ? tr("Database: Normalization incomplete") : tr("Database: Ready"));
             break;
         }
-        m_labelDatabaseStatus.setToolTip(m_durationScanError.isEmpty() ? summary : m_durationScanError + "\n" + summary);
+        auto details = m_durationScanError.isEmpty() ? summary : m_durationScanError + "\n" + summary;
+        const auto &scan = m_normalizationResult;
+        if (scan.saved || scan.skipped || scan.failed || scan.timedOut || scan.cacheFailures) {
+            details += "\n" + tr("Normalization: %L1 saved, %L2 skipped, %L3 could not decode, %L4 timed out, %L5 cache writes failed.")
+                .arg(scan.saved).arg(scan.skipped).arg(scan.failed).arg(scan.timedOut).arg(scan.cacheFailures);
+        }
+        m_labelDatabaseStatus.setToolTip(details);
     }
     m_labelDatabaseStage.setText(stage);
     m_labelDatabaseStage.setVisible(!stage.isEmpty());

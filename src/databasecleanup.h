@@ -6,8 +6,11 @@
 class QSqlDatabase;
 
 namespace okj {
-// Return an empty string after commit, or an error describing the failed operation.
-QString clearKaraokeLibrary(QSqlDatabase &database);
+struct KaraokeLibraryClearResult {
+    QString error;
+    QString cacheError;
+};
+KaraokeLibraryClearResult clearKaraokeLibrary(QSqlDatabase &database);
 QString deleteBreakPlaylist(QSqlDatabase &database, int playlistId);
 }
 

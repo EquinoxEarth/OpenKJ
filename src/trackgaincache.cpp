@@ -49,6 +49,9 @@ bool validGain(double gain)
     return std::isfinite(gain) && gain >= 0.0 && gain <= 1.0;
 }
 
+constexpr auto createCache = "CREATE TABLE IF NOT EXISTS track_gain_v1 (path TEXT PRIMARY KEY NOT NULL, "
+                             "size INTEGER NOT NULL, modified_ms INTEGER NOT NULL, gain REAL NOT NULL)";
+
 constexpr auto selectGain = "SELECT gain FROM track_gain_v1 WHERE path = ? AND size = ? AND modified_ms = ?";
 
 std::optional<double> lookupGain(QSqlQuery &query, const okj::TrackGainKey &key)
@@ -100,31 +103,49 @@ QList<okj::TrackGainKey> okj::uncachedTrackGains(const QString &libraryPath, con
     return pending;
 }
 
-void okj::cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, double gain,
-                         std::optional<quint64> generation)
+bool okj::prepareTrackGainCache(const QString &libraryPath, quint64 generation)
+{
+    QMutexLocker lock(&cacheMutex);
+    if (generation != cacheGeneration)
+        return false;
+    bool ready = false;
+    withCache(cachePath(libraryPath), false, [&](QSqlQuery &query) {
+        // Take a write lock briefly so a read-only cache fails before decoding.
+        if (!query.exec("BEGIN IMMEDIATE"))
+            return;
+        ready = query.exec(createCache) && query.exec("COMMIT");
+        if (!ready)
+            query.exec("ROLLBACK");
+    });
+    return ready;
+}
+
+okj::GainCacheWrite okj::cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, double gain,
+                                        std::optional<quint64> generation)
 {
     if (!validGain(gain) || !isCurrent(key))
-        return;
+        return GainCacheWrite::Stale;
     QMutexLocker lock(&cacheMutex);
     if (generation && *generation != cacheGeneration)
-        return;
+        return GainCacheWrite::Stale;
+    bool saved = false;
     withCache(cachePath(libraryPath), false, [&](QSqlQuery &query) {
-        // Change the table version if the gain calculation changes.
-        if (!query.exec("CREATE TABLE IF NOT EXISTS track_gain_v1 (path TEXT PRIMARY KEY NOT NULL, "
-                        "size INTEGER NOT NULL, modified_ms INTEGER NOT NULL, gain REAL NOT NULL)") ||
+        if (!query.exec(createCache) ||
             !query.prepare("INSERT OR REPLACE INTO track_gain_v1 VALUES (?, ?, ?, ?)"))
             return;
         query.addBindValue(key.path);
         query.addBindValue(key.size);
         query.addBindValue(key.modifiedMs);
         query.addBindValue(gain);
-        query.exec();
+        saved = query.exec();
     });
+    return saved ? GainCacheWrite::Saved : GainCacheWrite::Failed;
 }
 
 QString okj::clearTrackGainCache(const QString &libraryPath)
 {
     QMutexLocker lock(&cacheMutex);
+    ++cacheGeneration;
     const auto path = cachePath(libraryPath);
     if (!path.isEmpty() && QFileInfo::exists(path)) {
         QFile file(path);
@@ -132,7 +153,6 @@ QString okj::clearTrackGainCache(const QString &libraryPath)
             return QCoreApplication::translate("TrackGainCache", "Could not delete the audio normalization cache: %1")
                 .arg(file.errorString());
     }
-    ++cacheGeneration;
     return {};
 }
 

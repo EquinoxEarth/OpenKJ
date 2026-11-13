@@ -18,7 +18,9 @@ struct TrackGainKey {
 // Connections are opened and closed on the calling thread.
 std::optional<double> cachedTrackGain(const QString &libraryPath, const TrackGainKey &key);
 QList<TrackGainKey> uncachedTrackGains(const QString &libraryPath, const QList<TrackGainKey> &keys);
-void cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, double gain,
+bool prepareTrackGainCache(const QString &libraryPath, quint64 generation);
+enum class GainCacheWrite { Saved, Stale, Failed };
+GainCacheWrite cacheTrackGain(const QString &libraryPath, const TrackGainKey &key, double gain,
                     std::optional<quint64> generation = std::nullopt);
 QString clearTrackGainCache(const QString &libraryPath);
 quint64 trackGainCacheGeneration();

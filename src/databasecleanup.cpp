@@ -25,9 +25,9 @@ QString cleanupTransaction(QSqlDatabase &database, const auto &operation)
 }
 }
 
-QString okj::clearKaraokeLibrary(QSqlDatabase &database)
+okj::KaraokeLibraryClearResult okj::clearKaraokeLibrary(QSqlDatabase &database)
 {
-    return cleanupTransaction(database, [&] {
+    const auto error = cleanupTransaction(database, [&] {
         QSqlQuery query(database);
         if (!query.exec("DELETE FROM queueSongs") ||
             !query.exec("DELETE FROM regularSongs") ||
@@ -35,8 +35,11 @@ QString okj::clearKaraokeLibrary(QSqlDatabase &database)
             !query.exec("DELETE FROM regularSingers") ||
             !query.exec("DELETE FROM dbSongs"))
             return query.lastError().text();
-        return clearTrackGainCache(database.databaseName());
+        return QString{};
     });
+    if (!error.isEmpty())
+        return {error, {}};
+    return {{}, clearTrackGainCache(database.databaseName())};
 }
 
 QString okj::deleteBreakPlaylist(QSqlDatabase &database, int playlistId)

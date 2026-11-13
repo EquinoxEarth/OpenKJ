@@ -349,12 +349,17 @@ void DlgDatabase::on_btnClearDatabase_clicked()
         return;
     }
     auto database = QSqlDatabase::database();
-    const auto error = okj::clearKaraokeLibrary(database);
-    if (!error.isEmpty()) {
-        QMessageBox::warning(this, tr("Could not clear karaoke database"), error);
+    const auto result = okj::clearKaraokeLibrary(database);
+    if (!result.error.isEmpty()) {
+        QMessageBox::warning(this, tr("Could not clear karaoke database"), result.error);
         return;
     }
     emit databaseCleared();
+    if (!result.cacheError.isEmpty()) {
+        QMessageBox::warning(this, tr("Database cleared"),
+                             tr("The library was cleared. %1").arg(result.cacheError));
+        return;
+    }
     QMessageBox::information(this, tr("Database cleared"),
         tr("The karaoke library, rotation, regular singer records, saved queues, and audio normalization cache were cleared."));
 }

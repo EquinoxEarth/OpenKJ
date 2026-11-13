@@ -40,6 +40,7 @@
 #include "dlgsongshop.h"
 #include "songshop.h"
 #include "durationlazyupdater.h"
+#include "librarynormalizationscan.h"
 #include "dlgvideopreview.h"
 #include "src/models/tablemodelhistorysongs.h"
 #include "src/models/tablemodelplaylistsongs.h"
@@ -122,10 +123,12 @@ private:
     bool m_libraryLoadFailed{false};
     QString m_durationScanError;
     QThreadPool m_normalizationPool;
-    std::shared_ptr<std::atomic_bool> m_libraryNormalizationCancelled;
+    std::shared_ptr<okj::LibraryNormalizationControl> m_libraryNormalizationControl;
     qint64 m_normalizationRemaining{0};
     bool m_normalizationSelecting{false};
-    QString m_normalizationError;
+    okj::LibraryNormalizationResult m_normalizationResult;
+    bool m_normalizationKaraokeBusy{false};
+    void setNormalizationKaraokeBusy(bool busy);
     void updateDatabaseStatus();
     void connectDurationScanStatus();
     void startLibraryNormalization();

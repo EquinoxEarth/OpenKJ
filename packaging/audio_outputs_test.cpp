@@ -991,11 +991,13 @@ int main(int argc, char **argv)
             require(query.exec(), "Cannot insert a test karaoke library entry");
         }
         query.finish();
+        const auto scanControl = std::make_shared<okj::LibraryNormalizationControl>();
         const auto scan = [&] {
-            auto future = QtConcurrent::run(okj::scanLibraryTrackGains, libraryPath, notCancelled,
+            auto future = QtConcurrent::run(okj::scanLibraryTrackGains, libraryPath, scanControl,
                                             okj::trackGainCacheGeneration());
             future.waitForFinished();
-            require(future.resultCount() == 0, "Background normalization must finish without a database error");
+            require(future.resultCount() == 1 && future.result().error.isEmpty(),
+                    "Background normalization must finish without a database error");
             require(future.progressMaximum() == future.progressValue(), "Scan progress must reach the end of the pass");
             return future.progressMaximum();
         };
@@ -1010,6 +1012,33 @@ int main(int argc, char **argv)
         require(scan() == 1, "A later scan must analyze a track that was previously disconnected");
         require(okj::cachedTrackGain(libraryPath, okj::TrackGainKey::fromFile(missing)).has_value(),
                 "Scan must cache directly playable library files");
+        require(query.prepare("INSERT INTO dbSongs VALUES (?)"), "Cannot prepare corrupt-track fixture");
+        query.addBindValue(corrupt);
+        require(query.exec(), "Cannot insert corrupt-track fixture");
+        query.finish();
+        const auto interruptedTrack = scanControl->beginTrack();
+        scanControl->setPaused(true);
+        require(interruptedTrack && interruptedTrack->load() && !scanControl->beginTrack(),
+                "Starting karaoke must cancel active analysis and block new tracks");
+        auto pausedScan = QtConcurrent::run(okj::scanLibraryTrackGains, libraryPath, scanControl,
+                                            okj::trackGainCacheGeneration());
+        QTest::qWait(150);
+        require(!pausedScan.isFinished(), "Background scanning must wait during karaoke");
+        scanControl->setPaused(false);
+        pausedScan.waitForFinished();
+        require(pausedScan.result().failed == 1 && pausedScan.result().saved == 0,
+                "A failed decode must be reported separately from saved results");
+
+        const auto cache = temporary.filePath("audio-normalization.sqlite");
+        const auto generation = okj::trackGainCacheGeneration();
+        require(okj::clearTrackGainCache(libraryPath).isEmpty(), "Could not clear the normalization cache");
+        require(okj::cacheTrackGain(libraryPath, archiveKey, 0.5, generation) == okj::GainCacheWrite::Stale,
+                "Old analysis must not refill a cleared cache");
+        require(QDir().mkdir(cache), "Cannot simulate an unwritable cache path");
+        auto blockedScan = QtConcurrent::run(okj::scanLibraryTrackGains, libraryPath, scanControl,
+                                             okj::trackGainCacheGeneration());
+        blockedScan.waitForFinished();
+        require(!blockedScan.result().error.isEmpty(), "An unwritable cache must fail before analysis");
         std::puts("Settings ownership/persistence, live video preferences, audio routing, fades, and preview checks passed");
     } catch (const std::exception &error) {
         std::fprintf(stderr, "%s\n", error.what());

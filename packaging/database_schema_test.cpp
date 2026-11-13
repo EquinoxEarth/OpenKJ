@@ -153,7 +153,7 @@ private slots:
     void freshDatabase()
     {
         migrate();
-        QCOMPARE(value("PRAGMA user_version").toInt(), 106);
+        QCOMPARE(value("PRAGMA user_version").toInt(), 107);
         QCOMPARE(value("PRAGMA synchronous").toInt(), 2);
         exec("INSERT INTO dbsongs (path, searchstring) VALUES ('/library/song.zip', 'search')");
         QCOMPARE(value("SELECT plays FROM dbsongs").toInt(), 0);
@@ -166,7 +166,7 @@ private slots:
     {
         createLegacyDatabase();
         migrate();
-        QCOMPARE(value("PRAGMA user_version").toInt(), 106);
+        QCOMPARE(value("PRAGMA user_version").toInt(), 107);
         QCOMPARE(value("SELECT searchstring FROM dbsongs WHERE songid = 1").toString(),
                  QString("song.zip Artist Title DISC-1"));
         QCOMPARE(value("SELECT count(*) FROM historySingers").toInt(), 1);
@@ -205,7 +205,7 @@ private slots:
 
         exec("DROP TRIGGER fail_history");
         migrate();
-        QCOMPARE(value("PRAGMA user_version").toInt(), 106);
+        QCOMPARE(value("PRAGMA user_version").toInt(), 107);
         QCOMPARE(value("SELECT count(*) FROM historySongs").toInt(), 2);
         QCOMPARE(value("SELECT plays FROM historySongs WHERE songid = 'DISC-1'").toInt(), 2);
     }
@@ -218,7 +218,7 @@ private slots:
         exec("DELETE FROM historySongs WHERE songid = 'DISC-2'");
         exec("PRAGMA user_version = 105");
         migrate();
-        QCOMPARE(value("PRAGMA user_version").toInt(), 106);
+        QCOMPARE(value("PRAGMA user_version").toInt(), 107);
         QCOMPARE(value("SELECT count(*) FROM historySingers").toInt(), 1);
         QCOMPARE(value("SELECT count(*) FROM historySongs").toInt(), 2);
         QCOMPARE(value("SELECT plays FROM historySongs WHERE songid = 'DISC-1'").toInt(), 12);
@@ -240,7 +240,7 @@ private slots:
         m_database.close();
         const auto error = okj::openAndMigrateDatabase(m_database, m_path);
         QVERIFY2(error.contains("historySongs"), qPrintable(error));
-        QCOMPARE(value("PRAGMA user_version").toInt(), 106);
+        QCOMPARE(value("PRAGMA user_version").toInt(), 107);
     }
 };
 

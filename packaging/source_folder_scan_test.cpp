@@ -45,10 +45,10 @@ class SourceFolderScanTest : public QObject
         if (!QDir().mkpath(path)) throw std::runtime_error("Cannot create fixture folder");
         return path;
     }
-    void touch(const QString &path)
+    void touch(const QString &path, const QByteArray &data = "fixture media")
     {
         QFile file(path);
-        if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error("Cannot create fixture song");
+        if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size()) throw std::runtime_error("Cannot create fixture song");
     }
 
 private slots:
@@ -64,7 +64,7 @@ private slots:
         database.setDatabaseName(temporary.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".sqlite"));
         QVERIFY(database.open());
         exec("CREATE TABLE dbsongs (songid INTEGER PRIMARY KEY, path TEXT UNIQUE, discid TEXT, artist TEXT, "
-             "title TEXT, filename TEXT, duration INTEGER, searchstring TEXT)");
+             "title TEXT, filename TEXT, duration INTEGER, searchstring TEXT, moveFingerprint BLOB)");
         exec("CREATE TABLE sourcedirs (path TEXT UNIQUE, pattern INT, custompattern INT)");
         exec("CREATE TABLE custompatterns (patternid INTEGER PRIMARY KEY, name TEXT, artistregex TEXT, "
              "artistcapturegrp INT, titleregex TEXT, titlecapturegrp INT, discidregex TEXT, discidcapturegrp INT)");
@@ -132,9 +132,11 @@ private slots:
         QCOMPARE(updater.missingFilesCount(), 2);
         // Search the whole DB to find a moved song, while keeping unrelated
         // missing records out of the removal list.
-        song(5, temporary.filePath("old-location/moved.mp4"));
+        const auto oldPath = folder("old-location") + "/moved.mp4";
+        touch(oldPath);
+        QVERIFY(updater.addFilesToDatabase({oldPath}));
+        QVERIFY(QFile::rename(oldPath, first + "/moved.mp4"));
         const auto moved = first + "/moved.mp4";
-        touch(moved);
         QVERIFY(updater.process({first, second}, DbUpdater::FixMovedFilesSearchInWholeDB | DbUpdater::PrepareForRemovalOfMissing));
         QCOMPARE(updater.missingFilesCount(), 2);
         QSqlQuery query("SELECT path FROM dbsongs WHERE songid = 5", database);
@@ -144,6 +146,40 @@ private slots:
         updater.removeMissingFilesFromDatabase();
         QCOMPARE(ids(), QList<int>({3, 4, 5}));
     }
+    void refusesUnverifiedMoves()
+    {
+        const auto source = folder("new-source");
+        const auto original = folder("old-source");
+        const auto duplicate = folder("new-source/duplicate");
+        DbUpdater updater;
+        const QStringList names{"present.mp4", "offline.mp4", "ambiguous.mp4", "different.mp4"};
+        for (const auto &name : names) {
+            touch(original + "/" + name);
+            QVERIFY(updater.addFilesToDatabase({original + "/" + name}));
+        }
+        const auto offline = folder("old-source/offline") + "/offline.mp4";
+        QVERIFY(QFile::rename(original + "/offline.mp4", offline));
+        QSqlQuery query(database);
+        QVERIFY(query.prepare("UPDATE dbsongs SET path = ? WHERE songid = 2"));
+        query.addBindValue(offline);
+        QVERIFY(query.exec());
+        QVERIFY(QDir().rename(QFileInfo(offline).absolutePath(), original + "/unmounted"));
+        QVERIFY(QFile::remove(original + "/ambiguous.mp4"));
+        QVERIFY(QFile::remove(original + "/different.mp4"));
+        for (const auto &name : names)
+            touch(source + "/" + name, name == "different.mp4" ? "different data" : "fixture media");
+        touch(duplicate + "/ambiguous.mp4");
+        QVERIFY(updater.process({source}, DbUpdater::FixMovedFilesSearchInWholeDB | DbUpdater::PrepareForRemovalOfMissing));
+        QCOMPARE(updater.missingFilesCount(), 0);
+        QCOMPARE(updater.getErrors().size(), 4);
+        QVERIFY(query.exec("SELECT path FROM dbsongs WHERE songid <= 4 ORDER BY songid"));
+        for (const auto &name : names) {
+            QVERIFY(query.next());
+            QCOMPARE(query.value(0).toString(), name == "offline.mp4" ? offline : original + "/" + name);
+        }
+        QCOMPARE(ids().size(), 9);
+    }
+
     void unavailableSourcesCannotSupplyRemovalCandidates()
     {
         const auto available = folder("available");
@@ -230,13 +266,16 @@ private slots:
         const auto source = folder("rollback");
         const auto moved = source + "/Artist - Moved.mp4";
         const auto oldPath = source + "/old/Artist - Moved.mp4";
-        touch(moved);
+        QVERIFY(QDir().mkpath(QFileInfo(oldPath).absolutePath()));
+        touch(oldPath);
+        DbUpdater updater;
+        QVERIFY(updater.addFilesToDatabase({oldPath}));
+        exec("UPDATE dbsongs SET songid = 9");
+        QVERIFY(QFile::rename(oldPath, moved));
         touch(source + "/Artist - New.mp4");
         touch(source + "/Artist - Z rejected.mp4");
-        song(9, oldPath);
         exec("CREATE TRIGGER reject_import BEFORE INSERT ON dbsongs "
              "WHEN NEW.path LIKE '%rejected.mp4' BEGIN SELECT RAISE(ABORT, 'rejected by test'); END");
-        DbUpdater updater;
         QVERIFY(!updater.process({source}, DbUpdater::FixMovedFiles | DbUpdater::PrepareForRemovalOfMissing));
         QVERIFY(updater.getErrors().join(" ").contains("rejected by test"));
         QCOMPARE(updater.missingFilesCount(), 0);

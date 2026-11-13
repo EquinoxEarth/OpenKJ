@@ -52,6 +52,7 @@ private:
        int id{-1};
        bool isDropped{false};
        QString path;
+       QByteArray fingerprint;
     };
 
     // file extension list must be sorted and in lower case:
@@ -111,6 +112,7 @@ private:
     struct ImportRecord {
         QString path, filename, artist, title, discId, search;
         int duration;
+        QByteArray fingerprint;
     };
 
     QSqlDatabase m_db;
@@ -125,7 +127,7 @@ private:
     bool sourcesAvailable();
     bool prepareImports(const QStringList &files, QList<ImportRecord> &imports);
     bool writeImports(const QList<ImportRecord> &imports, const QSet<QString> &moved);
-    bool fixMissingFiles(QVector<DbSongRecord> &missing, const QStringList &newFiles, QSet<QString> &moved);
+    bool fixMissingFiles(QVector<DbSongRecord> &missing, const QList<ImportRecord> &imports, QSet<QString> &moved);
     bool reportSqlError(const QSqlError &error);
     bool cancelled() const { return m_cancelled && m_cancelled->load(); }
     bool progressDue();

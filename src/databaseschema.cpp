@@ -74,8 +74,8 @@ QString okj::openAndMigrateDatabase(QSqlDatabase &database, const QString &path)
     if (version < 105 && !addColumn("rotationSingers", "addts", "TIMESTAMP"))
         return query.lastError().text();
 
-    constexpr int currentVersion = 106;
-    if (version < currentVersion) {
+    constexpr int currentVersion = 107;
+    if (version < 106) {
         if (!query.exec("CREATE TABLE IF NOT EXISTS dbSongHistory (id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT, artist TEXT, title TEXT, songid TEXT, timestamp TIMESTAMP)") ||
             !query.exec("CREATE INDEX IF NOT EXISTS idx_filepath ON dbSongHistory(filepath)") ||
             !addColumn("dbsongs", "plays", "INT DEFAULT(0)") ||
@@ -127,8 +127,11 @@ QString okj::openAndMigrateDatabase(QSqlDatabase &database, const QString &path)
             return QStringLiteral("Could not import regular-singer history. %1").arg(query.lastError().text());
     }
 
+    if (version < 107 && !addColumn("dbsongs", "moveFingerprint", "BLOB"))
+        return query.lastError().text();
+
     // Catch required schema missing from an older, incorrectly advanced database.
-    if (!query.exec("SELECT searchstring, plays, lastplay FROM dbsongs LIMIT 0") ||
+    if (!query.exec("SELECT searchstring, plays, lastplay, moveFingerprint FROM dbsongs LIMIT 0") ||
         !query.exec("SELECT addts FROM rotationSingers LIMIT 0") ||
         !query.exec("SELECT custompattern FROM sourceDirs LIMIT 0") ||
         !query.exec("SELECT patternid FROM custompatterns LIMIT 0") ||

@@ -10,6 +10,7 @@
 #include <QStandardPaths>
 #include <QScopeGuard>
 #include <QSet>
+#include <QCryptographicHash>
 #include <QtConcurrentRun>
 #include <QUuid>
 #include <memory>
@@ -19,6 +20,37 @@
 #include "settings.h"
 
 namespace {
+// Bound import I/O while distinguishing files that happen to share a name.
+QByteArray moveFingerprint(const QString &path)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QStringList files{path};
+    if (path.endsWith(".cdg", Qt::CaseInsensitive)) {
+        const auto companion = findMatchingAudioFile(path);
+        if (companion.isEmpty())
+            return {};
+        files.append(companion);
+    }
+    constexpr qint64 sampleSize = 16 * 1024;
+    for (const auto &name : files) {
+        QFile file(name);
+        if (!file.open(QIODevice::ReadOnly) || file.size() <= 0)
+            return {};
+        const auto size = file.size();
+        hash.addData(QByteArray::number(size) + ':');
+        const qint64 length = qMin(size, sampleSize);
+        for (const auto offset : {qint64(0), (size - length) / 2, size - length}) {
+            if (!file.seek(offset))
+                return {};
+            const auto sample = file.read(length);
+            if (sample.size() != length)
+                return {};
+            hash.addData(sample);
+        }
+    }
+    return hash.result();
+}
+
 DbUpdater::ImportSettings currentImportSettings()
 {
     Settings settings;
@@ -203,7 +235,7 @@ bool DbUpdater::process(const QList<QString> &paths, ProcessingOptions options)
             return reportSqlError(m_db.lastError());
         auto rollback = qScopeGuard([this] { m_db.rollback(); });
         QSet<QString> moved;
-        if (detectMoves && !fixMissingFiles(filesMissingOnDisk, newFilesOnDisk, moved))
+        if (detectMoves && !fixMissingFiles(filesMissingOnDisk, imports, moved))
             return false;
         if (!writeImports(imports, moved) || cancelled())
             return false;
@@ -272,7 +304,7 @@ bool DbUpdater::prepareImports(const QStringList &files, QList<ImportRecord> &im
         const auto title = parser.getTitle();
         const auto filename = QFileInfo(path).completeBaseName();
         imports.append({path, filename, artist, parser.parsedSuccessfully() ? title : filename,
-                        discId, filename + " " + artist + " " + title + " " + discId, duration});
+                        discId, filename + " " + artist + " " + title + " " + discId, duration, moveFingerprint(path)});
     }
     return !cancelled();
 }
@@ -283,11 +315,11 @@ bool DbUpdater::writeImports(const QList<ImportRecord> &imports, const QSet<QStr
         return true;
     QSqlQuery query(m_db);
     if (!query.prepare(SQL(
-        INSERT INTO dbSongs (discid, artist, title, path, filename, duration, searchstring)
-        VALUES(:discid, :artist, :title, :path, :filename, :duration, :searchstring)
+        INSERT INTO dbSongs (discid, artist, title, path, filename, duration, searchstring, moveFingerprint)
+        VALUES(:discid, :artist, :title, :path, :filename, :duration, :searchstring, :fingerprint)
         ON CONFLICT(path) DO UPDATE SET
             discid = excluded.discid, artist = excluded.artist, title = excluded.title,
-            filename = excluded.filename, duration = excluded.duration, searchstring = excluded.searchstring
+            filename = excluded.filename, duration = excluded.duration, searchstring = excluded.searchstring, moveFingerprint = excluded.moveFingerprint
     )))
         return reportSqlError(query.lastError());
 
@@ -308,6 +340,7 @@ bool DbUpdater::writeImports(const QList<ImportRecord> &imports, const QSet<QStr
         query.bindValue(":filename", record.filename);
         query.bindValue(":duration", record.duration);
         query.bindValue(":searchstring", record.search);
+        query.bindValue(":fingerprint", record.fingerprint);
         if (!query.exec())
             return reportSqlError(query.lastError());
     }
@@ -501,7 +534,7 @@ bool DbUpdater::DbEnumerator::prepareQuery(bool limitToPaths)
 {
     m_dbSongs.setForwardOnly(true);
     if (!limitToPaths) {
-        m_dbSongs.prepare("SELECT songid, path, CASE discid WHEN '!!DROPPED!!' THEN 1 ELSE 0 END FROM dbsongs ORDER BY path");
+        m_dbSongs.prepare("SELECT songid, path, CASE discid WHEN '!!DROPPED!!' THEN 1 ELSE 0 END, moveFingerprint FROM dbsongs ORDER BY path");
     }
     else {
         QStringList sql_path_filter;
@@ -513,7 +546,7 @@ bool DbUpdater::DbEnumerator::prepareQuery(bool limitToPaths)
             sql_path_filter.append(QString("(path COLLATE BINARY >= :pathstart%1 AND path COLLATE BINARY < :pathend%1)").arg(i));
         }
 
-        m_dbSongs.prepare("SELECT songid, path, CASE discid WHEN '!!DROPPED!!' THEN 1 ELSE 0 END FROM dbsongs WHERE " + sql_path_filter.join(" OR ") + " ORDER BY path");
+        m_dbSongs.prepare("SELECT songid, path, CASE discid WHEN '!!DROPPED!!' THEN 1 ELSE 0 END, moveFingerprint FROM dbsongs WHERE " + sql_path_filter.join(" OR ") + " ORDER BY path");
         for(int i = 0; i < m_parent.m_paths.size(); i++) {
             const auto &prefix = m_parent.m_paths[i];
             m_dbSongs.bindValue(QString(":pathstart%1").arg(i), prefix);
@@ -534,7 +567,8 @@ void DbUpdater::DbEnumerator::readNextRecord()
         CurrentRecord = DbSongRecord {
             .id =        m_dbSongs.value(0).toInt(),
             .isDropped = m_dbSongs.value(2).toBool(),
-            .path =      m_dbSongs.value(1).toString()
+            .path =      m_dbSongs.value(1).toString(),
+            .fingerprint = m_dbSongs.value(3).toByteArray()
         };
     } else if (m_dbSongs.lastError().isValid()) {
         m_parent.reportSqlError(m_dbSongs.lastError());
@@ -566,39 +600,62 @@ void DbUpdater::setPaths(const QList<QString> &paths)
     }
 }
 
-// Match moved files by filename while keeping their database IDs.
-bool DbUpdater::fixMissingFiles(QVector<DbSongRecord> &missing, const QStringList &newFiles, QSet<QString> &moved)
+// Preserve an ID only when one old row and one validated import agree.
+bool DbUpdater::fixMissingFiles(QVector<DbSongRecord> &missing, const QList<ImportRecord> &imports,
+                               QSet<QString> &moved)
 {
-    QList<DbSongRecord> unmatched;
-    QHash<QString, QString> newPaths;
-    for (const auto &path : newFiles) {
-        if (cancelled())
-            return false;
-        const auto filename = QFileInfo(path).fileName().toCaseFolded();
-        if (!newPaths.contains(filename))
-            newPaths.insert(filename, path);
-    }
+    QHash<QString, QList<const ImportRecord *>> candidates;
+    for (const auto &entry : imports)
+        candidates[QFileInfo(entry.path).fileName().toCaseFolded()].append(&entry);
 
-    QSqlQuery query(m_db);
-    if (!query.prepare("UPDATE OR IGNORE dbsongs SET path = :newpath WHERE songid = :id AND path = :oldpath"))
-        return reportSqlError(query.lastError());
+    QHash<QString, int> oldCounts;
     for (const auto &file : missing) {
         if (cancelled())
             return false;
-        const auto path = newPaths.value(QFileInfo(file.path).fileName().toCaseFolded());
-        if (!path.isEmpty() && !moved.contains(path)) {
-            query.bindValue(":newpath", path);
-            query.bindValue(":id", file.id);
-            query.bindValue(":oldpath", file.path);
-            if (!query.exec())
-                return reportSqlError(query.lastError());
-            if (query.numRowsAffected() > 0) {
-                moved.insert(path);
-                continue;
+        const auto name = QFileInfo(file.path).fileName().toCaseFolded();
+        if (candidates.contains(name))
+            ++oldCounts[name];
+    }
+
+    QSqlQuery query(m_db);
+    if (!query.prepare("UPDATE OR IGNORE dbsongs SET path = :newpath, filename = :filename "
+                       "WHERE songid = :id AND path = :oldpath AND moveFingerprint = :fingerprint"))
+        return reportSqlError(query.lastError());
+
+    QList<DbSongRecord> unmatched;
+    int uncertain = 0;
+    for (const auto &file : missing) {
+        if (cancelled())
+            return false;
+        const QFileInfo original(file.path);
+        const auto name = original.fileName().toCaseFolded();
+        const auto matches = candidates.constFind(name);
+        if (matches != candidates.cend()) {
+            const auto parent = QFileInfo(original.absolutePath());
+            const auto *entry = matches->size() == 1 ? matches->front() : nullptr;
+            if (!original.exists() && !original.isSymLink() && parent.isDir() && parent.isReadable() &&
+                oldCounts.value(name) == 1 && entry && !file.fingerprint.isEmpty() &&
+                file.fingerprint == entry->fingerprint && !moved.contains(entry->path) &&
+                moveFingerprint(entry->path) == file.fingerprint) {
+                query.bindValue(":newpath", entry->path);
+                query.bindValue(":filename", entry->filename);
+                query.bindValue(":id", file.id);
+                query.bindValue(":oldpath", file.path);
+                query.bindValue(":fingerprint", file.fingerprint);
+                if (!query.exec())
+                    return reportSqlError(query.lastError());
+                if (query.numRowsAffected() == 1) {
+                    moved.insert(entry->path);
+                    continue;
+                }
             }
+            if (++uncertain <= 20)
+                m_errors.append(tr("Could not verify a move for %1. Its library entry was not relinked.").arg(file.path));
         }
         unmatched.append(file);
     }
+    if (uncertain > 20)
+        m_errors.append(tr("%1 more possible moves could not be verified.").arg(uncertain - 20));
     missing = std::move(unmatched);
     return true;
 }

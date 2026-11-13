@@ -9,6 +9,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStringList>
+#include <QUuid>
 
 namespace {
 
@@ -170,4 +171,83 @@ QString okj::saveSongEdit(QSqlDatabase &database, int songId, const QString &old
     if (!database.commit())
         return fail(database.lastError().text());
     return {};
+}
+
+QStringList okj::songRemovalPaths(const QString &path)
+{
+    QStringList files{pathWithDirectoryEntrySpelling(QFileInfo(path))};
+    if (QFileInfo(path).suffix().compare("cdg", Qt::CaseInsensitive) == 0) {
+        const auto audio = findMatchingAudioFile(path);
+        if (!audio.isEmpty())
+            files.append(pathWithDirectoryEntrySpelling(QFileInfo(audio)));
+    }
+    return files;
+}
+
+okj::SongRemovalResult okj::removeSongFiles(QSqlDatabase &database, int songId, const QString &path,
+                                           const QStringList &confirmedPaths, SongFileRename renameFile)
+{
+    const auto tr = [](const char *message) { return QCoreApplication::translate("MainWindow", message); };
+    if (!renameFile)
+        renameFile = renameSongFile;
+    if (path.isEmpty() || confirmedPaths != songRemovalPaths(path))
+        return {tr("The song's files changed. Reopen the removal dialog and try again."), {}};
+    for (const auto &source : confirmedPaths) {
+        if (!QFileInfo(source).isFile())
+            return {tr("The source file is missing or unavailable.\n%1").arg(source), {}};
+    }
+    if (!database.transaction())
+        return {database.lastError().text(), {}};
+
+    QList<FileMove> staged;
+    const auto fail = [&](const QString &reason) {
+        QStringList errors{reason};
+        if (!database.rollback())
+            errors.append(database.lastError().text());
+        for (auto it = staged.crbegin(); it != staged.crend(); ++it) {
+            const auto error = renameFile(it->destination, it->source);
+            if (!error.isEmpty())
+                errors.append(tr("Could not restore %1. Recover it from %2.\n%3")
+                              .arg(it->source, it->destination, error));
+        }
+        return SongRemovalResult{errors.join("\n\n"), {}};
+    };
+
+    QSqlQuery query(database);
+    if (!query.prepare("DELETE FROM dbsongs WHERE songid = ? AND path = ?"))
+        return fail(query.lastError().text());
+    query.addBindValue(songId);
+    query.addBindValue(path);
+    if (!query.exec())
+        return fail(query.lastError().text());
+    if (query.numRowsAffected() != 1)
+        return fail(tr("The library entry changed while the removal dialog was open."));
+    for (const auto *sql : {"DELETE FROM queueSongs WHERE song = ?", "DELETE FROM regularSongs WHERE songid = ?"}) {
+        if (!query.prepare(sql))
+            return fail(query.lastError().text());
+        query.addBindValue(songId);
+        if (!query.exec())
+            return fail(query.lastError().text());
+    }
+    query.finish();
+
+    for (const auto &source : confirmedPaths) {
+        const QFileInfo file(source);
+        const auto destination = file.absoluteDir().filePath(
+            file.fileName() + ".openkj-removed-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+        const auto error = renameFile(source, destination);
+        if (!error.isEmpty())
+            return fail(tr("Could not stage %1 for removal.\n%2").arg(source, error));
+        staged.append({source, destination});
+    }
+    if (!database.commit())
+        return fail(database.lastError().text());
+
+    SongRemovalResult result;
+    for (const auto &move : staged) {
+        QFile file(move.destination);
+        if (!file.moveToTrash())
+            result.retainedFiles.append(move.destination);
+    }
+    return result;
 }

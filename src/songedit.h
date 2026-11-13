@@ -2,6 +2,7 @@
 #define OPENKJ_SONGEDIT_H
 
 #include <QString>
+#include <QStringList>
 
 class QSqlDatabase;
 
@@ -19,6 +20,16 @@ using SongFileRename = QString (*)(const QString &source, const QString &destina
 
 QString saveSongEdit(QSqlDatabase &database, int songId, const QString &oldPath,
                      const SongEdit &edit, SongFileRename renameFile = nullptr);
+
+QStringList songRemovalPaths(const QString &path);
+
+struct SongRemovalResult {
+    QString error;
+    QStringList retainedFiles;
+};
+
+SongRemovalResult removeSongFiles(QSqlDatabase &database, int songId, const QString &path,
+                                  const QStringList &confirmedPaths, SongFileRename renameFile = nullptr);
 
 } // namespace okj
 

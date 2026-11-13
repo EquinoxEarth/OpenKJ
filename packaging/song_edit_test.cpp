@@ -228,6 +228,59 @@ private slots:
         verifyRecord(path("Old Track.CDG"), "Title", "original filename field");
     }
 
+    void removesOnlyPlaybackCompanionAndPreservesHistory()
+    {
+        const auto cdg = path("Pair.cdg");
+        const auto wav = path("Pair.wav");
+        const auto ogg = path("Pair.ogg");
+        QVERIFY(writeFile(cdg, "lyrics"));
+        QVERIFY(writeFile(wav, "playback audio"));
+        QVERIFY(writeFile(ogg, "alternate audio"));
+        addSong(cdg);
+        exec("INSERT INTO queueSongs (singer, song) VALUES (1, 42)");
+        exec("INSERT INTO regularSongs (regsingerid, songid) VALUES (1, 42)");
+        const auto paths = okj::songRemovalPaths(cdg);
+        QCOMPARE(paths, QStringList({cdg, wav}));
+        const auto failedMove = okj::removeSongFiles(m_database, 42, cdg, paths,
+            [](const QString &source, const QString &destination) {
+                return source.endsWith("/Pair.wav") ? QString("injected audio move failure") : rename(source, destination);
+            });
+        QVERIFY(failedMove.error.contains("injected audio move failure"));
+        QCOMPARE(contents(cdg), QByteArray("lyrics"));
+        QCOMPARE(contents(wav), QByteArray("playback audio"));
+        verifyRecord(cdg, "Title", "original filename field");
+
+        exec("PRAGMA foreign_keys = ON");
+        exec("CREATE TABLE removalParent (id INTEGER PRIMARY KEY)");
+        exec("CREATE TABLE removalChild (parentId INT REFERENCES removalParent(id) DEFERRABLE INITIALLY DEFERRED)");
+        exec("CREATE TRIGGER fail_remove AFTER DELETE ON dbsongs BEGIN INSERT INTO removalChild VALUES (99); END");
+        const auto failedCommit = okj::removeSongFiles(m_database, 42, cdg, paths);
+        QVERIFY2(failedCommit.error.contains("FOREIGN KEY", Qt::CaseInsensitive), qPrintable(failedCommit.error));
+        QCOMPARE(contents(cdg), QByteArray("lyrics"));
+        QCOMPARE(contents(wav), QByteArray("playback audio"));
+        verifyRecord(cdg, "Title", "original filename field");
+        QSqlQuery query(m_database);
+        QVERIFY(query.exec("SELECT (SELECT COUNT(*) FROM queueSongs), (SELECT COUNT(*) FROM regularSongs)"));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toInt(), 1);
+        QCOMPARE(query.value(1).toInt(), 1);
+        query.finish();
+
+        exec("DROP TRIGGER fail_remove");
+        const auto result = okj::removeSongFiles(m_database, 42, cdg, paths);
+        QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+        QVERIFY(!QFile::exists(cdg));
+        QVERIFY(!QFile::exists(wav));
+        QCOMPARE(contents(ogg), QByteArray("alternate audio"));
+        QVERIFY(query.exec("SELECT (SELECT COUNT(*) FROM dbSongs), (SELECT COUNT(*) FROM queueSongs), "
+                           "(SELECT COUNT(*) FROM regularSongs), (SELECT plays FROM historySongs)"));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toInt(), 0);
+        QCOMPARE(query.value(1).toInt(), 0);
+        QCOMPARE(query.value(2).toInt(), 0);
+        QCOMPARE(query.value(3).toInt(), 9);
+    }
+
     void rollsBackPairOnDatabaseCommitFailure()
     {
         addPair();

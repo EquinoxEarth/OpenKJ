@@ -35,12 +35,6 @@ public:
         SEARCH_TYPE_ARTIST,
         SEARCH_TYPE_TITLE
     };
-    enum DeleteStatus {
-        DELETE_OK,
-        DELETE_FAIL,
-        DELETE_CDG_AUDIO_FAIL
-    };
-
     explicit TableModelKaraokeSongs(QObject *parent = nullptr);
     ~TableModelKaraokeSongs() override;
     [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
@@ -61,8 +55,6 @@ public:
     // Requires an existing song ID; throws std::out_of_range if absent.
     okj::KaraokeSong &getSong(int songId);
     void markSongBad(QString path);
-    DeleteStatus removeBadSong(QString path);
-    QString findCdgAudioFile(const QString& path);
     int addSong(okj::KaraokeSong song);
 
 

@@ -2362,7 +2362,7 @@ void MainWindow::markSongBad(const std::shared_ptr<okj::KaraokeSong>& song) {
     QMessageBox msgBox;
     QMessageBox msgBoxResult;
     msgBox.setWindowTitle("Mark song as bad?");
-    msgBox.setText("Would you like mark the file as bad in the DB, or remove it from disk permanently?");
+    msgBox.setText("Would you like to mark the song as bad or remove its files?");
     msgBox.setIcon(QMessageBox::Question);
     msgBox.setInformativeText(song->path);
     auto markBadButton = msgBox.addButton(tr("Mark Bad"), QMessageBox::ActionRole);
@@ -2375,34 +2375,36 @@ void MainWindow::markSongBad(const std::shared_ptr<okj::KaraokeSong>& song) {
         msgBoxResult.setIcon(QMessageBox::Information);
         msgBoxResult.exec();
     } else if (msgBox.clickedButton() == removeFileButton) {
-        bool isCdg = false;
-        if (QFileInfo(song->path).suffix().toLower() == "cdg")
-            isCdg = true;
-        QString mediaFile;
-        if (isCdg)
-            mediaFile = findMatchingAudioFile(song->path);
-        QFile file(song->path);
-        auto ret = m_karaokeSongsModel.removeBadSong(song->path);
-        switch (ret) {
-            case TableModelKaraokeSongs::DELETE_OK:
-                msgBoxResult.setText("File removed successfully");
-                msgBoxResult.setIcon(QMessageBox::Information);
-                msgBoxResult.exec();
-                break;
-            case TableModelKaraokeSongs::DELETE_FAIL:
-                msgBoxResult.setText("Error while removing file");
-                msgBoxResult.setIcon(QMessageBox::Warning);
-                msgBoxResult.setInformativeText(
-                        "Unable to remove the file.  Please check file permissions.\nOperation cancelled.");
-                msgBoxResult.exec();
-                break;
-            case TableModelKaraokeSongs::DELETE_CDG_AUDIO_FAIL:
-                msgBoxResult.setText("Error while removing file");
-                msgBoxResult.setIcon(QMessageBox::Warning);
-                msgBoxResult.setInformativeText(
-                        "The cdg file was deleted, but there was an error while deleting the matching media file.  You will need to manually remove the file.");
-                msgBoxResult.exec();
-                break;
+        const int songId = song->id;
+        const auto path = song->path;
+        const auto paths = okj::songRemovalPaths(path);
+        QMessageBox confirm(QMessageBox::Warning, tr("Remove song files"),
+            tr("Remove these files from the library and move them to the Trash? "
+               "If Trash is unavailable, the files will be kept under new names in the same folder."),
+            QMessageBox::Yes | QMessageBox::Cancel, this);
+        confirm.setTextFormat(Qt::PlainText);
+        confirm.setInformativeText(paths.join(u'\n'));
+        confirm.setDefaultButton(QMessageBox::Cancel);
+        if (confirm.exec() != QMessageBox::Yes)
+            return;
+
+        const auto result = okj::removeSongFiles(m_database, songId, path, paths);
+        if (!result.error.isEmpty()) {
+            QMessageBox error(QMessageBox::Warning, tr("Could not remove song"), result.error, QMessageBox::Ok, this);
+            error.setTextFormat(Qt::PlainText);
+            error.exec();
+            return;
+        }
+        databaseUpdated();
+        m_qModel.loadSinger(m_qModel.getSingerId());
+        m_rotModel.loadData();
+        if (!result.retainedFiles.isEmpty()) {
+            QMessageBox retained(QMessageBox::Information, tr("Song removed from library"),
+                tr("Trash was unavailable. The following files were kept for recovery:"),
+                QMessageBox::Ok, this);
+            retained.setTextFormat(Qt::PlainText);
+            retained.setInformativeText(result.retainedFiles.join(u'\n'));
+            retained.exec();
         }
     }
 }
@@ -3048,7 +3050,7 @@ void MainWindow::filesDroppedOnQueue(const QList<QUrl> &urls, const int &singerI
                         continue;
                     }
                 } else if (file.endsWith(".cdg", Qt::CaseInsensitive)) {
-                    if (m_karaokeSongsModel.findCdgAudioFile(file) == QString()) {
+                    if (findMatchingAudioFile(file) == QString()) {
                         QMessageBox msgBox;
                         msgBox.setWindowTitle("Invalid karaoke file!");
                         msgBox.setIcon(QMessageBox::Warning);

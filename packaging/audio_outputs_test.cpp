@@ -318,6 +318,109 @@ static void checkStopAndVolume(const QString &filename, MediaBackend::MediaType 
     }
 }
 
+static void checkBreakMusicKaraokeHandoff(const QString &audio)
+{
+    MediaBackend breaks(nullptr, "Break Music handoff test", MediaBackend::BackgroundMusic);
+    breaks.setAudioOutputDevice("Test USB");
+    breaks.setUseFader(false);
+    breaks.setVolume(80);
+    breaks.setMedia(audio);
+    breaks.play();
+    waitFor([initial = audiblePreviewBuffers.load()] { return audiblePreviewBuffers > initial; },
+            3000, "Break Music must be audible before the handoff");
+
+    for (int i = 0; i < 3; ++i) {
+        // Karaoke preparation has started, but its pipeline is not Playing.
+        breaks.setSuppressedForKaraoke(true, i != 0);
+        // A playlist advance replaces the media and restarts the backend.
+        breaks.setMedia(audio);
+        const auto audible = audiblePreviewBuffers.load();
+        const auto silent = silentPreviewBuffers.load();
+        breaks.play();
+        waitFor([&] { return silentPreviewBuffers > silent; }, 3000,
+                "The next break track must start silent during karaoke preparation");
+        require(audiblePreviewBuffers == audible, "Playlist advance must not override karaoke suppression");
+
+        breaks.pause();
+        waitFor([&] { return breaks.state() == MediaBackend::PausedState; }, 3000, "Break Music must pause");
+        const auto beforeResume = silentPreviewBuffers.load();
+        breaks.play();
+        waitFor([&] { return silentPreviewBuffers > beforeResume; }, 3000, "Break Music must resume silently");
+        require(audiblePreviewBuffers == audible, "Manual resume must also honor karaoke suppression");
+
+        breaks.setSuppressedForKaraoke(false, i != 0);
+        waitFor([&] { return audiblePreviewBuffers > audible; }, 3000,
+                "Break Music must become audible when karaoke releases the handoff");
+    }
+
+    breaks.setUseFader(true);
+    breaks.stop();
+    breaks.setSuppressedForKaraoke(true, true);
+    breaks.setSuppressedForKaraoke(false, true);
+    waitFor([&] { return breaks.isPlaybackStopped(); }, 5000,
+            "Karaoke handoffs must not cancel a Break Music stop already in progress");
+}
+
+struct MediaBackendTestAccess {
+    static GstElement *pipeline(const MediaBackend &backend, bool graphics)
+    {
+        return graphics ? backend.m_cdgPipeline : backend.m_pipeline;
+    }
+};
+
+static void checkPlaybackErrorRecovery(const QString &audio, const QString &cdg, const QString &corrupt)
+{
+    const bool graphics = !cdg.isEmpty();
+    MediaBackend backend(nullptr, "Playback recovery test",
+                         graphics ? MediaBackend::Karaoke : MediaBackend::BackgroundMusic);
+    backend.setAudioOutputDevice("Test Speakers");
+    QSignalSpy errors(&backend, &MediaBackend::audioError);
+    QSignalSpy stops(&backend, &MediaBackend::stopCompleted);
+    const auto verifyStopped = [&] {
+        waitFor([&] { return errors.size() == 1 && stops.size() == 1 && backend.isPlaybackStopped(); },
+                3000, "Playback failure must report one error and complete cleanup");
+        for (bool video : {false, true}) {
+            if (auto *pipeline = MediaBackendTestAccess::pipeline(backend, video)) {
+                GstState state = GST_STATE_VOID_PENDING;
+                gst_element_get_state(pipeline, &state, nullptr, 0);
+                require(state == GST_STATE_NULL, "Native playback pipelines must be stopped on error");
+            }
+        }
+    };
+    if (!graphics) {
+        backend.setMedia(corrupt);
+        stops.clear();
+        backend.play();
+        verifyStopped();
+    }
+
+    if (graphics)
+        backend.setMediaCdg(cdg, audio);
+    else
+        backend.setMedia(audio);
+    backend.play();
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000,
+            "Valid audio must play before injecting a runtime error");
+    errors.clear();
+    stops.clear();
+    auto *pipeline = MediaBackendTestAccess::pipeline(backend, graphics);
+    require(pipeline, "Error test needs a pipeline");
+    for (int i = 0; i < 2; ++i) {
+        auto *error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Simulated media failure");
+        const bool posted = gst_element_post_message(pipeline,
+            gst_message_new_error(GST_OBJECT(pipeline), error, nullptr));
+        g_error_free(error);
+        require(posted, "Could not inject pipeline error");
+    }
+    verifyStopped();
+    backend.setMedia(audio);
+    backend.play();
+    waitFor([&] { return backend.state() == MediaBackend::PlayingState; }, 3000,
+            "The next valid track must play after a runtime error");
+    require(errors.size() == 1, "Duplicate messages from failed playback must be discarded");
+    backend.rawStop();
+}
+
 static void checkOutputReopen(const QString &filename, const QString &cdg, MediaBackend::MediaType type)
 {
     MediaBackend backend(nullptr, "Output reopen test", type);
@@ -816,6 +919,7 @@ int main(int argc, char **argv)
         settings.setAudioOutputDeviceBm("Test Speakers");
         checkStopAndVolume(filename, MediaBackend::Karaoke);
         checkStopAndVolume(filename, MediaBackend::BackgroundMusic);
+        checkBreakMusicKaraokeHandoff(filename);
 #ifdef Q_OS_MACOS
         checkKaraokeMixUsesPreVolumeAudio(filename, temporary.filePath("muted live playback.wav"));
 #endif
@@ -839,6 +943,14 @@ int main(int argc, char **argv)
             }
             require(cdg.write(packets) == packets.size(), "Cannot write test CDG");
         }
+        const auto corrupt = temporary.filePath("corrupt.wav");
+        {
+            QFile file(corrupt);
+            require(file.open(QIODevice::WriteOnly) && file.write("invalid wave") == 12,
+                    "Cannot create corrupt audio fixture");
+        }
+        checkPlaybackErrorRecovery(filename, {}, corrupt);
+        checkPlaybackErrorRecovery(filename, cdgFilename, {});
         checkSharedVideoFrames(filename, cdgFilename);
         makeTestWave(loud, 28000);
         checkOutputReopen(filename, {}, MediaBackend::Karaoke);

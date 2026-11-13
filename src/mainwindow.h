@@ -176,18 +176,16 @@ private:
         okj::QueueSong song;
         bool trackSong{true};
         bool selectSinger{false};
-        bool forceCrossfade{false};
     };
     enum class InterruptionWarning { Never, Playing, PlayingOrPaused };
     QPointer<QMessageBox> m_karaokeInterruptionPrompt;
     std::optional<KaraokePlaybackRequest> m_pendingKaraokePlayback;
     std::optional<KaraokePlaybackRequest> m_startingKaraokePlayback;
-    bool m_pendingKaraokeCrossfade{false};
     bool m_karaokeStopReady{false};
 
     void requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning);
     void requestRotationSong(const okj::RotationSinger &singer, InterruptionWarning warning, bool selectSinger);
-    void startKaraokePlayback(const KaraokePlaybackRequest &request, bool crossfade);
+    void startKaraokePlayback(const KaraokePlaybackRequest &request);
     void continueKaraokePlayback();
     bool prepareKaraokeSelection(KaraokePlaybackRequest &request);
     void recordKaraokeStart(const KaraokePlaybackRequest &request);
@@ -209,7 +207,7 @@ private:
     void setupConnections();
     void loadSettings();
     void resetBmLabels();
-    void play(const QString &karaokeFilePath, const bool &k2k = false);
+    void play(const QString &karaokeFilePath);
     void restoreBreakMusicVolume();
     void refreshLibrarySong(int songId);
     void bmAddPlaylist(const QString& title);

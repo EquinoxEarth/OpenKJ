@@ -168,7 +168,7 @@ void MainWindow::setupShortcuts() {
             m_mediaBackendBm.pause();
             ui->buttonBmPause->setChecked(true);
         } else if (mediaState == MediaBackend::PausedState) {
-            m_mediaBackendBm.play(m_mediaBackendKar.state() == MediaBackend::PlayingState);
+            m_mediaBackendBm.play();
             ui->buttonBmPause->setChecked(false);
         }
     });
@@ -774,7 +774,7 @@ void MainWindow::loadSettings() {
                 if (plSong.has_value()) {
                     if (QFile::exists(plSong->get().path)) {
                         m_mediaBackendBm.setMedia(plSong->get().path);
-                        m_mediaBackendBm.play(m_mediaBackendKar.state() == MediaBackend::PlayingState);
+                        m_mediaBackendBm.play();
                         m_mediaBackendBm.setVolume(ui->sliderBmVolume->value());
                     } else {
                         QMessageBox::warning(this, tr("Break music autostart failure"),
@@ -816,7 +816,14 @@ void MainWindow::setupConnections() {
     connect(&m_mediaBackendKar, &MediaBackend::durationChanged, this, &MainWindow::karaokeMediaBackend_durationChanged);
     connect(&m_mediaBackendKar, &MediaBackend::stateChanged, this, &MainWindow::karaokeMediaBackend_stateChanged);
     connect(&m_mediaBackendKar, &MediaBackend::stopCompleted, this, [this] {
-        if (m_shuttingDown || !m_pendingKaraokePlayback || m_karaokeStopReady)
+        if (m_shuttingDown)
+            return;
+        if (!m_pendingKaraokePlayback) {
+            if (!m_mediaPreparationCancelled && !m_startingKaraokePlayback)
+                restoreBreakMusicVolume();
+            return;
+        }
+        if (m_karaokeStopReady)
             return;
         m_karaokeStopReady = true;
         QMetaObject::invokeMethod(this, &MainWindow::continueKaraokePlayback, Qt::QueuedConnection);
@@ -845,7 +852,10 @@ void MainWindow::setupConnections() {
             ui->statusBar->showMessage(tr("Recording failed: %1").arg(message), 15000);
     });
     connect(&m_mediaBackendKar, &MediaBackend::silenceDetected, this, &MainWindow::silenceDetectedKar);
-    connect(&m_mediaBackendBm, &MediaBackend::audioError, this, &MainWindow::audioError);
+    connect(&m_mediaBackendBm, &MediaBackend::audioError, this, [this](const QString &message) {
+        if (!m_shuttingDown)
+            audioError(message);
+    }, Qt::QueuedConnection);
     connect(&m_mediaBackendBm, &MediaBackend::silenceDetected, this, &MainWindow::silenceDetectedBm);
     connect(&m_mediaBackendBm, &MediaBackend::hasActiveVideoChanged, [&](const bool &isActive) {
         m_bmHasActiveVideo = isActive;
@@ -1227,10 +1237,7 @@ void MainWindow::initDatabaseWorker() {
 
 
 void MainWindow::restoreBreakMusicVolume() {
-    if (m_settings.bmKCrossFade())
-        m_mediaBackendBm.fadeIn(false);
-    else
-        m_mediaBackendBm.fadeInImmediate();
+    m_mediaBackendBm.setSuppressedForKaraoke(false, m_settings.bmKCrossFade());
 }
 
 void MainWindow::cancelMediaPreparation() {
@@ -1289,6 +1296,7 @@ void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, Interrup
 
     cancelMediaPreparation();
     const bool wasStarting = discardKaraokeStart();
+    m_mediaBackendBm.setSuppressedForKaraoke(true, m_settings.bmKCrossFade());
     audioRecorder.cancelPendingRecording();
     m_timerKaraokeAA.stop();
     updateAutoplayStatus();
@@ -1296,10 +1304,9 @@ void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, Interrup
     if (m_pendingKaraokePlayback) {
         m_pendingKaraokePlayback = std::move(request);
     } else if (!wasStarting && m_mediaBackendKar.isPlaybackStopped()) {
-        startKaraokePlayback(request, request.forceCrossfade);
+        startKaraokePlayback(request);
     } else {
         m_pendingKaraokePlayback = std::move(request);
-        m_pendingKaraokeCrossfade = m_mediaBackendKar.state() == MediaBackend::PlayingState;
         // Store the request before Stop, which may complete synchronously.
         m_mediaBackendKar.stop(wasStarting);
     }
@@ -1312,7 +1319,6 @@ void MainWindow::continueKaraokePlayback()
 
     m_karaokeStopReady = false;
     auto request = std::exchange(m_pendingKaraokePlayback, std::nullopt);
-    const bool crossfade = std::exchange(m_pendingKaraokeCrossfade, false) || request->forceCrossfade;
     if (m_settings.rotationAltSortOrder()) {
         const auto completed = m_rotModel.getSinger(m_rotModel.currentSinger());
         if (completed.isValid())
@@ -1321,7 +1327,7 @@ void MainWindow::continueKaraokePlayback()
         m_rotDelegate.setCurrentSinger(-1);
         m_rotModel.setCurRemainSecs(0);
     }
-    startKaraokePlayback(*request, crossfade);
+    startKaraokePlayback(*request);
 }
 
 void MainWindow::requestRotationSong(const okj::RotationSinger &singer, InterruptionWarning warning, bool selectSinger)
@@ -1397,7 +1403,7 @@ void MainWindow::recordKaraokeStart(const KaraokePlaybackRequest &request)
     }
 }
 
-void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, bool crossfade)
+void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request)
 {
     m_kAASkip = false;
     const auto filename = request.song.path;
@@ -1405,7 +1411,7 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, boo
     m_mediaPreparationCancelled = cancelled;
     auto *watcher = new QFutureWatcher<PreparedKaraokeMedia>(this);
     connect(watcher, &QFutureWatcher<PreparedKaraokeMedia>::finished, this,
-            [this, watcher, cancelled, selection = request, crossfade]() mutable {
+            [this, watcher, cancelled, selection = request]() mutable {
         const auto prepared = watcher->result();
         watcher->deleteLater();
         if (cancelled->load() || m_shuttingDown)
@@ -1432,12 +1438,6 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, boo
             return;
         }
         m_startingKaraokePlayback = std::move(selection);
-        if (!crossfade) {
-            if (m_settings.bmKCrossFade())
-                m_mediaBackendBm.fadeOut(false);
-            else
-                m_mediaBackendBm.fadeOutImmediate();
-        }
         m_mediaBackendKar.play();
         if (!m_startingKaraokePlayback && !m_karaokePlaybackActive)
             return;
@@ -1453,9 +1453,9 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request, boo
     }));
 }
 
-void MainWindow::play(const QString &karaokeFilePath, const bool &k2k)
+void MainWindow::play(const QString &karaokeFilePath)
 {
-    requestKaraokePlayback({.song = {.path = karaokeFilePath}, .trackSong = false, .forceCrossfade = k2k},
+    requestKaraokePlayback({.song = {.path = karaokeFilePath}, .trackSong = false},
                            InterruptionWarning::Never);
 }
 
@@ -1464,7 +1464,6 @@ void MainWindow::cancelKaraokePlayback()
     if (m_karaokeInterruptionPrompt)
         m_karaokeInterruptionPrompt->close();
     m_pendingKaraokePlayback.reset();
-    m_pendingKaraokeCrossfade = false;
     m_karaokeStopReady = false;
     cancelMediaPreparation();
     discardKaraokeStart();
@@ -1604,13 +1603,9 @@ void MainWindow::stopKaraokePlayback()
     updateAutoplayStatus();
     cdgWindow->showAlert(false);
     audioRecorder.stop();
-    if (m_settings.bmKCrossFade()) {
+    if (m_settings.bmKCrossFade())
         restoreBreakMusicVolume();
-        m_mediaBackendKar.stop();
-    } else {
-        m_mediaBackendKar.stop();
-        restoreBreakMusicVolume();
-    }
+    m_mediaBackendKar.stop();
 }
 
 void MainWindow::buttonPauseClicked() {
@@ -2570,7 +2565,7 @@ void MainWindow::bmMediaStateChanged(const MediaBackend::State &newState) {
                 m_logger->info("{} Break music auto-advancing to song: {}", m_loggingPrefix,
                                plSong->get().path.toStdString());
                 m_mediaBackendBm.stop(true);
-                m_mediaBackendBm.play(m_mediaBackendKar.state() == MediaBackend::PlayingState);
+                m_mediaBackendBm.play();
             } else {
                 m_mediaBackendBm.stop(true);
                 resetBmLabels();
@@ -2685,16 +2680,14 @@ void MainWindow::tableViewBmPlaylistDoubleClicked(const QModelIndex &index) {
     if (!plSong.has_value())
         return;
     m_mediaBackendBm.setMedia(plSong->get().path);
-    m_mediaBackendBm.play(m_mediaBackendKar.state() == MediaBackend::PlayingState);
-    if (m_mediaBackendKar.state() != MediaBackend::PlayingState)
-        m_mediaBackendBm.fadeInImmediate();
+    m_mediaBackendBm.play();
 }
 
 void MainWindow::buttonBmPauseClicked(const bool &checked) {
     if (checked)
         m_mediaBackendBm.pause();
     else
-        m_mediaBackendBm.play(m_mediaBackendKar.state() == MediaBackend::PlayingState);
+        m_mediaBackendBm.play();
 }
 
 bool MainWindow::bmPlaylistExists(const QString &name) {
@@ -2999,8 +2992,8 @@ void MainWindow::spinBoxTempoValueChanged(const int &arg1) {
 
 void MainWindow::audioError(const QString &msg) {
     QMessageBox msgBox;
-    msgBox.setTextFormat(Qt::RichText);
-    msgBox.setText("Audio playback error! - " + msg);
+    msgBox.setTextFormat(Qt::PlainText);
+    msgBox.setText(tr("Audio playback error: %1").arg(msg));
     msgBox.setIcon(QMessageBox::Warning);
     msgBox.exec();
 }
@@ -3972,8 +3965,7 @@ void MainWindow::actionKaraokeTorture() {
         ui->tableViewDB->selectRow(randomNum);
         ui->tableViewDB->scrollTo(ui->tableViewDB->selectionModel()->selectedRows().at(0));
         play(m_karaokeSongsModel.getPath(
-                     ui->tableViewDB->selectionModel()->selectedRows(TableModelKaraokeSongs::COL_ID).at(0).data().toInt()),
-             true);
+                     ui->tableViewDB->selectionModel()->selectedRows(TableModelKaraokeSongs::COL_ID).at(0).data().toInt()));
         ui->labelSinger->setText("Torture run (" + QString::number(++runs) + ")");
     });
     m_timerTest.start(4000);
@@ -4016,7 +4008,7 @@ void MainWindow::actionKAndBTorture() {
         m_logger->info("{} randomNum: {}", m_loggingPrefix, randomNum);
         ui->tableViewDB->selectRow(randomNum);
         ui->tableViewDB->scrollTo(ui->tableViewDB->selectionModel()->selectedRows().at(0));
-        play(ui->tableViewDB->selectionModel()->selectedRows(5).at(0).data().toString(), false);
+        play(ui->tableViewDB->selectionModel()->selectedRows(5).at(0).data().toString());
         ui->labelSinger->setText("Torture run (" + QString::number(++runs) + ")");
         playing = true;
     });

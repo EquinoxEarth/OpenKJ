@@ -66,8 +66,7 @@ MediaBackend::MediaBackend(QObject *parent, QString objectName, MediaType type)
         }
         if (!cancelled) {
             if (result.audio == GST_STATE_CHANGE_FAILURE || result.cdg == GST_STATE_CHANGE_FAILURE) {
-                rawStop();
-                emit audioError("Unable to change synchronized CDG playback state");
+                failPlayback(tr("Unable to change synchronized CDG playback state"));
             } else if (result.target == GST_STATE_PLAYING) {
                 m_cdgStartPending = false;
                 m_logger->info("{} Coordinated CDG start: preroll={}ms, runningTime={}ms, shared base time",
@@ -383,12 +382,6 @@ void MediaBackend::destroyCdgPipeline()
     m_cdgPipeline = nullptr;
 }
 
-gboolean MediaBackend::busCall(GstBus *bus, GstMessage *msg, gpointer data) {
-    MediaBackend *backend = static_cast<MediaBackend*>(data);
-    backend->handleBusMessage(msg);
-    return TRUE;
-}
-
 void MediaBackend::handleBusMessage(GstMessage *msg) {
     switch (GST_MESSAGE_TYPE(msg)) {
         case GST_MESSAGE_EOS:
@@ -402,17 +395,10 @@ void MediaBackend::handleBusMessage(GstMessage *msg) {
             gst_message_parse_error(msg, &err, &debug_info);
             m_logger->error("{} Error received from element {}: {}", m_loggingPrefix, GST_OBJECT_NAME(msg->src), err->message);
             m_logger->error("{} Debug info: {}", m_loggingPrefix, debug_info ? debug_info : "none");
-            emit audioError(QString::fromUtf8(err->message));
+            const auto message = QString::fromUtf8(err->message);
             g_clear_error(&err);
             g_free(debug_info);
-            if (m_type == Karaoke && m_rateControlledVideo) {
-                // A failed source can queue downstream errors for the same playback.
-                // Close the pipeline and flush its bus before those messages are dispatched.
-                rawStop();
-                break;
-            }
-            m_state = StoppedState;
-            emit stateChanged(m_state);
+            failPlayback(message);
             break;
         }
         case GST_MESSAGE_STATE_CHANGED: {
@@ -878,25 +864,29 @@ void MediaBackend::eventTimer_timeout() {
      if (!m_pipeline)
         return;
 
-    // Process pending GStreamer messages using Qt's event loop.
-    GstBus *bus = gst_element_get_bus(m_pipeline);
-
-    if (bus) {
-        // Limit work per tick so message bursts can't freeze the UI.
-        for (int i = 0; i < 100; ++i) {
-            GstMessage *msg = gst_bus_pop(bus);
-
-            if (!msg)
+    // Drain both buses before advancing playback. Only the audio pipeline
+    // controls normal EOS and playback state.
+    const auto drain = [this](GstElement *pipeline, bool graphicsOnly) {
+        if (!pipeline)
+            return true;
+        auto *bus = gst_element_get_bus(pipeline);
+        if (!bus)
+            return true;
+        bool keepGoing = true;
+        for (int i = 0; i < 100 && keepGoing; ++i) {
+            auto *message = gst_bus_pop(bus);
+            if (!message)
                 break;
-
-            handleBusMessage(msg);
-            gst_message_unref(msg);
+            const auto revision = m_cdgStateRevision->load();
+            if (!graphicsOnly || GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR)
+                handleBusMessage(message);
+            gst_message_unref(message);
+            keepGoing = !m_cdgStateBusy && revision == m_cdgStateRevision->load();
         }
-
         gst_object_unref(bus);
-    }
-
-    if (m_cdgStateBusy)
+        return keepGoing;
+    };
+    if (!drain(m_cdgPipeline, true) || !drain(m_pipeline, false))
         return;
 
     // Handle coordinated seek if needed.
@@ -995,13 +985,14 @@ if (m_cdgPipeline &&
 void MediaBackend::play(bool startSilent) {
     if (deferControl([this, startSilent] { play(startSilent); }))
         return;
+    m_playbackFailed = false;
     applyAudioOutputDevice();
     startAudioNormalization((m_state == StoppedState || m_state == EndOfMediaState) && !m_cdgStartPending);
     if (!(m_frameGeneration.load() & 1))
         ++m_frameGeneration;
     m_stopAfterFade = false;
     // Set gain before starting the pipeline, including silent playlist advances.
-    if (startSilent)
+    if (startSilent || m_suppressedForKaraoke)
         m_fader->immediateOut();
     else if (m_fade)
         m_fader->fadeIn(false);
@@ -1065,8 +1056,7 @@ void MediaBackend::processCdgStartup() {
     const auto cdg = gst_element_get_state(m_cdgPipeline, &cdgState, nullptr, 0);
     if (audio == GST_STATE_CHANGE_FAILURE || cdg == GST_STATE_CHANGE_FAILURE ||
         m_cdgStartTimer.elapsed() > 5000) {
-        rawStop();
-        emit audioError("Synchronized CDG playback failed to preroll");
+        failPlayback(tr("Synchronized CDG playback failed to preroll"));
         return;
     }
     if (audio == GST_STATE_CHANGE_ASYNC || cdg == GST_STATE_CHANGE_ASYNC ||
@@ -1650,6 +1640,14 @@ void MediaBackend::stop(const bool &skipFade) {
     }
 }
 
+void MediaBackend::failPlayback(const QString &message)
+{
+    if (std::exchange(m_playbackFailed, true))
+        return;
+    rawStop();
+    emit audioError(message);
+}
+
 void MediaBackend::rawStop() {
     QElapsedTimer stopTimer;
     stopTimer.start();
@@ -1710,6 +1708,28 @@ void MediaBackend::setPitchShift(const int &pitchShift) {
     if (m_pitch) {
         double ratio = pow(1.0594630943592953, pitchShift);
         g_object_set(G_OBJECT(m_pitch), "pitch", ratio, nullptr);
+    }
+}
+
+void MediaBackend::setSuppressedForKaraoke(bool suppressed, bool crossfade)
+{
+    if (m_type != BackgroundMusic || m_suppressedForKaraoke == suppressed)
+        return;
+    m_suppressedForKaraoke = suppressed;
+    // A handoff must not interrupt a host's Break Music Stop.
+    if (m_stopAfterFade)
+        return;
+
+    if (suppressed) {
+        if (crossfade)
+            fadeOut(false);
+        else
+            fadeOutImmediate();
+    } else {
+        if (crossfade)
+            fadeIn(false);
+        else
+            fadeInImmediate();
     }
 }
 

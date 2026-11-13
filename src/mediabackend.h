@@ -136,6 +136,7 @@ private:
     bool m_videoEnabled{true};
     bool m_fade{false};
     bool m_stopAfterFade{false};
+    bool m_suppressedForKaraoke{false};
     // Odd generations accept frames; even generations represent stopped playback.
     // Streaming callbacks capture this before pulling a sample.
     std::atomic<quint64> m_frameGeneration{0};
@@ -206,8 +207,10 @@ private:
     qint64 m_lastCdgSyncCheckMs{-1};
     qint64 m_lastCdgCorrectionMs{-1};
 
-    static gboolean busCall(GstBus *bus, GstMessage *msg, gpointer data);
+    friend struct MediaBackendTestAccess;
     void handleBusMessage(GstMessage *msg);
+    void failPlayback(const QString &message);
+    bool m_playbackFailed{false};
 
     static GstFlowReturn onNewVideoSample(
         GstAppSink *sink,
@@ -257,6 +260,7 @@ private slots:
 public slots:
     void setVideoOffset(int offsetMs) {}
     void play(bool startSilent = false);
+    void setSuppressedForKaraoke(bool suppressed, bool crossfade);
     void pause();
     void setMedia(const QString &filename);
     void setMediaCdg(const QString &cdgFilename, const QString &audioFilename,

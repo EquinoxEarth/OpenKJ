@@ -74,7 +74,7 @@ QString okj::openAndMigrateDatabase(QSqlDatabase &database, const QString &path)
     if (version < 105 && !addColumn("rotationSingers", "addts", "TIMESTAMP"))
         return query.lastError().text();
 
-    constexpr int currentVersion = 107;
+    constexpr int currentVersion = 108;
     if (version < 106) {
         if (!query.exec("CREATE TABLE IF NOT EXISTS dbSongHistory (id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT, artist TEXT, title TEXT, songid TEXT, timestamp TIMESTAMP)") ||
             !query.exec("CREATE INDEX IF NOT EXISTS idx_filepath ON dbSongHistory(filepath)") ||
@@ -128,6 +128,10 @@ QString okj::openAndMigrateDatabase(QSqlDatabase &database, const QString &path)
     }
 
     if (version < 107 && !addColumn("dbsongs", "moveFingerprint", "BLOB"))
+        return query.lastError().text();
+
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_queue_singer_played_position "
+                    "ON queueSongs(singer, played, position)"))
         return query.lastError().text();
 
     // Catch required schema missing from an older, incorrectly advanced database.

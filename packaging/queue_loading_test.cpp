@@ -264,6 +264,32 @@ private slots:
         QCOMPARE(value(QString("SELECT singer FROM queuesongs WHERE qsongid = %1").arg(added)).toInt(), 2);
         QCOMPARE(value(QString("SELECT keychg FROM queuesongs WHERE qsongid = %1").arg(added)).toInt(), -1);
     }
+    void rotationPicksOneEarliestUnplayedSongAndKeepsCounts()
+    {
+        exec("CREATE INDEX idx_queue_singer_played_position ON queueSongs(singer, played, position)");
+        exec("INSERT INTO queueSongs (qsongid, singer, song, played, position) VALUES "
+             "(20, 2, 1, 0, 0), (23, 2, 3, 1, -1), (24, 2, 3, 0, NULL)");
+        TableModelRotation rotation;
+        connect(worker.get(), &DatabaseWorker::rotationLoaded, &rotation, &TableModelRotation::onRotationLoaded);
+        worker->loadRotation();
+        QCOMPARE(rotation.getSingerAtPosition(0).id, 1);
+        const auto &singer = rotation.getSingerAtPosition(1);
+        QCOMPARE(singer.id, 2);
+        QCOMPARE(singer.cachedNextSongQueueId, 20);
+        QCOMPARE(singer.nextSongPath(), QString("/a"));
+        QCOMPARE(singer.numSongsSung(), 1);
+        QCOMPARE(singer.numSongsUnsung(), 4);
+        QCOMPARE(rotation.getSingerAtPosition(2).id, 3);
+        QVERIFY(rotation.getSingerAtPosition(2).nextSongPath().isEmpty());
+        queue->loadSinger(2);
+        QList<int> tiedIds;
+        for (const auto &song : replies.last().songs) {
+            if (song.id == 20 || song.id == 21)
+                tiedIds.append(song.id);
+        }
+        QCOMPARE(tiedIds, QList<int>({20, 21}));
+    }
+
     void staleRotationCannotEraseDelayedSingerAddition()
     {
         TableModelRotation rotation;

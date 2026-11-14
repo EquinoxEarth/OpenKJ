@@ -106,75 +106,49 @@ void DatabaseWorker::loadRotation()
 {
     QList<okj::RotationSinger> singers;
     QSqlQuery query(m_db);
-    
-    // 1. Load basic singer details
-    if (!query.exec("SELECT singerid, name, position, regular, addts FROM rotationsingers ORDER BY position")) {
+    // Each singer needs two index range counts and at most one next row.
+    if (!query.exec(
+            "SELECT r.singerid, r.name, r.position, r.regular, r.addts, "
+            "(SELECT COUNT(*) FROM queueSongs WHERE singer = r.singerid AND played = 1), "
+            "(SELECT COUNT(*) FROM queueSongs WHERE singer = r.singerid AND played = 0), "
+            "d.path, d.artist, d.title, d.discid, d.duration, q.keychg, q.qsongid "
+            "FROM rotationSingers r "
+            "LEFT JOIN queueSongs q ON q.qsongid = ("
+            "  SELECT next.qsongid FROM queueSongs next "
+            "  WHERE next.singer = r.singerid AND next.played = 0 AND next.position IS NOT NULL "
+            "  ORDER BY next.position, next.qsongid LIMIT 1"
+            ") "
+            "LEFT JOIN dbSongs d ON d.songid = q.song "
+            "ORDER BY r.position, r.singerid")) {
         emit errorOccurred(query.lastError().text());
         return;
     }
     while (query.next()) {
-        okj::RotationSinger s(
+        okj::RotationSinger singer(
             query.value(0).toInt(),
             query.value(1).toString(),
             query.value(2).toInt(),
             query.value(3).toBool(),
             query.value(4).toDateTime()
         );
-        singers.append(s);
-    }
-    
-    // 2. Load numSongsSung counts
-    query.exec("SELECT singer, COUNT(qsongid) FROM queuesongs WHERE played = 1 GROUP BY singer");
-    while (query.next()) {
-        int singerId = query.value(0).toInt();
-        int count = query.value(1).toInt();
-        for (auto &s : singers) {
-            if (s.id == singerId) {
-                s.cachedNumSongsSung = count;
-                break;
-            }
+        singer.cachedNumSongsSung = query.value(5).toInt();
+        singer.cachedNumSongsUnsung = query.value(6).toInt();
+        if (!query.value(7).isNull()) {
+            singer.cachedNextSongPath = query.value(7).toString();
+            singer.cachedNextSongArtist = query.value(8).toString();
+            singer.cachedNextSongTitle = query.value(9).toString();
+            singer.cachedNextSongSongId = query.value(10).toString();
+            singer.cachedNextSongDurationMs = query.value(11).toInt();
+            singer.cachedNextSongKeyChg = query.value(12).toInt();
+            singer.cachedNextSongQueueId = query.value(13).toInt();
         }
+        singers.append(singer);
     }
-    
-    // 3. Load numSongsUnsung counts
-    query.exec("SELECT singer, COUNT(qsongid) FROM queuesongs WHERE played = 0 GROUP BY singer");
-    while (query.next()) {
-        int singerId = query.value(0).toInt();
-        int count = query.value(1).toInt();
-        for (auto &s : singers) {
-            if (s.id == singerId) {
-                s.cachedNumSongsUnsung = count;
-                break;
-            }
-        }
+    if (query.lastError().isValid()) {
+        emit errorOccurred(query.lastError().text());
+        return;
     }
-    
-    // 4. Load next song details
-    query.exec("SELECT q.singer, d.path, d.artist, d.title, d.discid, d.duration, q.keychg, q.qsongid "
-               "FROM queuesongs q "
-               "INNER JOIN dbsongs d ON d.songid = q.song "
-               "WHERE q.played = 0 "
-               "AND q.position = ("
-               "    SELECT MIN(q2.position) "
-               "    FROM queuesongs q2 "
-               "    WHERE q2.singer = q.singer AND q2.played = 0"
-               ")");
-    while (query.next()) {
-        int singerId = query.value(0).toInt();
-        for (auto &s : singers) {
-            if (s.id == singerId) {
-                s.cachedNextSongPath = query.value(1).toString();
-                s.cachedNextSongArtist = query.value(2).toString();
-                s.cachedNextSongTitle = query.value(3).toString();
-                s.cachedNextSongSongId = query.value(4).toString();
-                s.cachedNextSongDurationMs = query.value(5).toInt();
-                s.cachedNextSongKeyChg = query.value(6).toInt();
-                s.cachedNextSongQueueId = query.value(7).toInt();
-                break;
-            }
-        }
-    }
-    
+
     emit rotationLoaded(singers);
 }
 
@@ -187,7 +161,7 @@ void DatabaseWorker::loadQueue(int singerId, quint64 requestId)
                   "dbsongs.title, dbsongs.discid, dbsongs.duration, dbsongs.path FROM queuesongs "
                   "INNER JOIN rotationsingers ON rotationsingers.singerid = queuesongs.singer "
                   "INNER JOIN dbsongs ON dbsongs.songid = queuesongs.song WHERE queuesongs.singer = :singerId "
-                  "ORDER BY queuesongs.position");
+                  "ORDER BY queuesongs.position, queuesongs.qsongid");
     query.bindValue(":singerId", singerId);
     if (!query.exec()) {
         emit errorOccurred(query.lastError().text());

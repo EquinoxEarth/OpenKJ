@@ -22,16 +22,10 @@
 #define REGULARIMPORTDIALOG_H
 
 #include <QDialog>
-#include <QStringList>
-#include <QJsonArray>
-#include <QMap>
-#include <QHash>
+#include "regularsimport.h"
 
 class QTableWidget;
 class QGroupBox;
-#include "models/tablemodelhistorysongs.h"
-#include "models/tablemodelhistorysingers.h"
-#include "models/tablemodelkaraokesongs.h"
 
 namespace Ui {
 class DlgRegularImport;
@@ -41,29 +35,15 @@ class DlgRegularImport : public QDialog
 {
     Q_OBJECT
 
-private:
-    Ui::DlgRegularImport *ui;
-    QString m_curImportFile;
-    QJsonArray m_importSingers;
-    QTableWidget *m_rootTable;
-    QGroupBox *m_rootGroup;
-    QMap<QString, QString> m_mappings;
-    QHash<QString, QStringList> m_libraryMatches;
-    bool m_libraryIndexed{false};
-    void addRootMapping(const QString &source, const QString &destination, const QString &original = {});
-    bool readMappings();
-    QString matchingLibraryPath(const QJsonObject &song, QString &problem);
-    QStringList legacyLoadSingerList(const QString &fileName);
-    QStringList loadSingerList(const QString &filename);
-    QStringList legacyImportSinger(const QString &name);
-    QStringList importSinger(const QString &name);
-    TableModelHistorySingers m_historySingersModel;
-    TableModelKaraokeSongs &m_karaokeSongsModel;
-    TableModelHistorySongs m_historySongsModel{m_karaokeSongsModel};
-
 public:
-    explicit DlgRegularImport(TableModelKaraokeSongs &karaokeSongsModel, QWidget *parent = nullptr);
+    explicit DlgRegularImport(QWidget *parent = nullptr);
     ~DlgRegularImport();
+
+signals:
+    void historyImported();
+
+protected:
+    void done(int result) override;
 
 private slots:
     void on_pushButtonSelectFile_clicked();
@@ -71,14 +51,16 @@ private slots:
     void on_pushButtonImport_clicked();
     void on_pushButtonImportAll_clicked();
 
+private:
+    void addRootMapping(const QString &source, const QString &destination, const QString &original = {});
+    bool readMappings(QMap<QString, QString> &mappings);
+    void setBusy(bool busy);
 
-    // QWidget interface
-protected:
-    void closeEvent(QCloseEvent *event) override;
-
-    // QDialog interface
-public slots:
-    void done(int) override;
+    Ui::DlgRegularImport *ui;
+    RegularsImport::Export m_export;
+    QTableWidget *m_rootTable;
+    QGroupBox *m_rootGroup;
+    bool m_busy = false;
 };
 
 #endif // REGULARIMPORTDIALOG_H

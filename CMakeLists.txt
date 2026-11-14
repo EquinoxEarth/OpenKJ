@@ -127,6 +127,7 @@ set(SOURCE_FILES
         src/dlgrequests.cpp
         src/dlgregularexport.cpp
         src/dlgregularimport.cpp
+        src/regularsimport.cpp
         src/dlgregularsingers.cpp
         src/dlgsettings.cpp
         src/dlgcdg.cpp
@@ -200,6 +201,7 @@ set(SOURCE_FILES
         src/dlgregularexport.h
         src/dlgregularimport.h
         src/regularpathmapping.h
+        src/regularsimport.h
         src/dlgregularsingers.h
         src/dlgsettings.h
         src/dlgcdg.h
@@ -310,6 +312,11 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     target_link_libraries(openkj-database-schema-test PRIVATE Qt6::Test Qt6::Sql)
     add_test(NAME database-schema COMMAND openkj-database-schema-test)
     set_tests_properties(database-schema PROPERTIES TIMEOUT 15)
+    add_executable(openkj-regulars-import-test
+        packaging/regulars_import_test.cpp src/databaseschema.cpp src/regularsimport.cpp)
+    target_link_libraries(openkj-regulars-import-test PRIVATE Qt6::Test Qt6::Sql)
+    add_test(NAME regulars-import COMMAND openkj-regulars-import-test)
+    set_tests_properties(regulars-import PROPERTIES TIMEOUT 15)
     add_executable(openkj-song-edit-test packaging/song_edit_test.cpp src/songedit.cpp src/databaseschema.cpp)
     target_link_libraries(openkj-song-edit-test PRIVATE Qt6::Test Qt6::Sql)
     add_test(NAME song-edit COMMAND openkj-song-edit-test

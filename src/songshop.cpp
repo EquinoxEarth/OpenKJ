@@ -1,3 +1,4 @@
+#include "zipfilepath.h"
 #include "songshop.h"
 #include "localfilename.h"
 #include "mzarchive.h"
@@ -82,7 +83,7 @@ bool isMp4(QFile &file)
 
 bool isKaraokeZip(const QString &path)
 {
-    auto *archive = zip_open(QFile::encodeName(path).constData(), ZIP_RDONLY | ZIP_CHECKCONS, nullptr);
+    auto *archive = zip_open(okj::zipFilePath(path).constData(), ZIP_RDONLY | ZIP_CHECKCONS, nullptr);
     if (!archive)
         return false;
     zip_discard(archive);

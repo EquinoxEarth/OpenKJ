@@ -1,3 +1,4 @@
+#include "zipfilepath.h"
 #include "okjversion.h"
 #include "songbookupload.h"
 #include "songshop.h"
@@ -399,7 +400,7 @@ private slots:
         QCOMPARE(saved.readAll(), video);
 
         const auto fixture = folder.filePath("fixture.zip");
-        auto *archive = zip_open(QFile::encodeName(fixture).constData(), ZIP_CREATE, nullptr);
+        auto *archive = zip_open(okj::zipFilePath(fixture).constData(), ZIP_CREATE, nullptr);
         QVERIFY(archive);
         for (const char *entry : {"song.cdg", "song.mp3"}) {
             auto *source = zip_source_buffer(archive, "payload", 7, 0);

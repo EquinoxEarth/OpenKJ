@@ -1,3 +1,4 @@
+#include "zipfilepath.h"
 #include "mediabackend.h"
 #include "audiofader.h"
 #include "audionormalization.h"
@@ -545,7 +546,7 @@ static void checkPreviewDialogs(const QString &audioFilename, const QString &cdg
 {
     const auto looseAudio = QFileInfo(cdgFilename).absoluteDir().filePath(QFileInfo(cdgFilename).completeBaseName() + ".wav");
     require(QFile::copy(audioFilename, looseAudio), "Cannot create a loose CDG pair");
-    auto *zip = zip_open(QFile::encodeName(zipFilename).constData(), ZIP_CREATE, nullptr);
+    auto *zip = zip_open(okj::zipFilePath(zipFilename).constData(), ZIP_CREATE, nullptr);
     require(zip, "Cannot create preview ZIP");
     auto discard = qScopeGuard([zip] { zip_discard(zip); });
     for (const auto &[name, path] : {std::pair{"song.wav", audioFilename}, std::pair{"song.cdg", cdgFilename}}) {
@@ -956,7 +957,8 @@ int main(int argc, char **argv)
         checkOutputReopen(filename, {}, MediaBackend::Karaoke);
         checkOutputReopen(filename, {}, MediaBackend::BackgroundMusic);
         checkOutputReopen(filename, cdgFilename, MediaBackend::VideoPreview);
-        const auto archivePath = temporary.filePath("preview.zip");
+        const auto archivePath = temporary.filePath(QStringLiteral("歌手 café/演奏 🎤.zip"));
+        require(QDir().mkpath(QFileInfo(archivePath).absolutePath()), "Cannot create Unicode archive folder");
         checkPreviewDialogs(loud, cdgFilename, archivePath);
         checkPreviewAudio(cdgFilename);
         spdlog::register_logger(spdlog::default_logger()->clone("logger"));

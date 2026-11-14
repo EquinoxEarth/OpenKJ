@@ -20,6 +20,8 @@
 #include <QDataStream>
 #include <QFile>
 #include "localmediauri.h"
+#include "mzarchive.h"
+#include "zipfilepath.h"
 #include "bundledruntime.h"
 #include "mediainitialization.h"
 
@@ -29,14 +31,19 @@ static void stage(const char *message)
     std::fflush(stderr);
 }
 
+static bool runPipeline(const QString &description);
+
 static bool checkZip(const QByteArray &audio, const QByteArray &graphics)
 {
     QTemporaryDir directory;
     if (!directory.isValid())
         return false;
-    const auto path = directory.filePath(QString::fromUtf8("ZIP test café.zip")).toUtf8();
+    const auto sourceDir = directory.filePath(QStringLiteral("歌手 café"));
+    if (!QDir().mkpath(sourceDir))
+        return false;
+    const auto path = QDir(sourceDir).filePath(QStringLiteral("演奏 🎤.zip"));
     int error = 0;
-    auto *archive = zip_open(path.constData(), ZIP_CREATE | ZIP_TRUNCATE, &error);
+    auto *archive = zip_open(okj::zipFilePath(path).constData(), ZIP_CREATE | ZIP_TRUNCATE, &error);
     if (!archive)
         return false;
     const auto add = [archive](const char *name, const QByteArray &payload) {
@@ -56,23 +63,21 @@ static bool checkZip(const QByteArray &audio, const QByteArray &graphics)
         zip_discard(archive);
         return false;
     }
-    archive = zip_open(path.constData(), ZIP_RDONLY, &error);
-    if (!archive)
+    MzArchive karaoke(path);
+    if (!karaoke.isValidKaraokeFile() || karaoke.getSongDuration() <= 0 ||
+        !karaoke.extractAudio(directory.path(), "track.wav") ||
+        !karaoke.extractCdg(directory.path(), "track.cdg"))
         return false;
-    const auto read = [archive](const char *name, const QByteArray &payload) {
-        auto *file = zip_fopen(archive, name, 0);
-        if (!file)
-            return false;
-        QByteArray buffer(payload.size(), Qt::Uninitialized);
-        const auto count = zip_fread(file, buffer.data(), buffer.size());
-        zip_fclose(file);
-        return count == payload.size() && buffer == payload;
-    };
-    const bool ok = read("track.wav", audio) && read("track.cdg", graphics);
-    const bool closed = zip_close(archive) == 0;
-    if (!closed)
-        zip_discard(archive);
-    return ok && closed;
+    QFile audioFile(directory.filePath("track.wav"));
+    QFile cdgFile(directory.filePath("track.cdg"));
+    if (!audioFile.open(QIODevice::ReadOnly) || audioFile.readAll() != audio ||
+        !cdgFile.open(QIODevice::ReadOnly) || cdgFile.readAll() != graphics)
+        return false;
+    audioFile.close();
+    cdgFile.close();
+    const auto uri = localMediaUri(audioFile.fileName());
+    return runPipeline("playbin uri=\"" + QString::fromUtf8(uri) +
+                       "\" audio-sink=\"fakesink sync=false\" video-sink=fakesink");
 }
 
 static bool runPipeline(const QString &description)
@@ -116,6 +121,7 @@ int main(int argc, char **argv)
         std::fflush(stderr);
     });
     QApplication app(argc, argv);
+    spdlog::register_logger(spdlog::default_logger()->clone("logger"));
     QCommandLineParser arguments;
     arguments.addHelpOption();
     arguments.addOption({"media-directory", "Decode every media file in this directory.", "directory"});
@@ -252,8 +258,8 @@ int main(int argc, char **argv)
     QTemporaryFile cdg;
     if (!cdg.open())
         return 1;
-    QByteArray packets(24 * 300, '\0');
-    for (int i = 0; i < 300; ++i) {
+    QByteArray packets(24 * 600, '\0');
+    for (int i = 0; i < 600; ++i) {
         packets[i * 24] = 9; // CDG command
         packets[i * 24 + 1] = 1; // Memory preset
     }

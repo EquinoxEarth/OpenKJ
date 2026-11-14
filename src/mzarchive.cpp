@@ -1,3 +1,4 @@
+#include "zipfilepath.h"
 #include "mzarchive.h"
 #include <QFile>
 #include <QDir>
@@ -77,7 +78,7 @@ bool MzArchive::extractAudio(const QString& destPath, const QString& destFile,
         return false;
 
     int err = 0;
-    zip_t *z = zip_open(archiveFile.toLocal8Bit().constData(), ZIP_RDONLY, &err);
+    zip_t *z = zip_open(okj::zipFilePath(archiveFile).constData(), ZIP_RDONLY, &err);
     if (!z)
     {
         if (log)
@@ -127,7 +128,7 @@ bool MzArchive::extractCdg(const QString& destPath, const QString& destFile, con
         return false;
 
     int err = 0;
-    zip_t *z = zip_open(archiveFile.toLocal8Bit().constData(), ZIP_RDONLY, &err);
+    zip_t *z = zip_open(okj::zipFilePath(archiveFile).constData(), ZIP_RDONLY, &err);
     if (!z)
     {
         m_logger->warn("{} Failed to open zip archive: {}", m_loggingPrefix, archiveFile);
@@ -227,7 +228,7 @@ bool MzArchive::findEntries(bool logErrors)
         return true;
 
     int err = 0;
-    zip_t *z = zip_open(archiveFile.toLocal8Bit().constData(), ZIP_RDONLY, &err);
+    zip_t *z = zip_open(okj::zipFilePath(archiveFile).constData(), ZIP_RDONLY, &err);
     if (!z)
     {
         zip_error_t zipError;

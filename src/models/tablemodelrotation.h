@@ -70,6 +70,7 @@ public:
     [[nodiscard]] int positionTurnDistance(int position) const;
     [[nodiscard]] int positionWaitTime(int position) const;
     [[nodiscard]] int rotationDuration() const;
+    void invalidateWaitEstimates();
     [[nodiscard]] size_t singerCount();
     [[nodiscard]] bool singerExists(const QString &name) const;
     [[nodiscard]] QStringList singers() const;
@@ -106,6 +107,7 @@ private:
     int m_remainSecs{0};
     // Expected state after previously issued writes; refreshed by a database load.
     QList<okj::RotationSinger> m_expectedState;
+    [[nodiscard]] int estimatedTurnSeconds(const okj::RotationSinger &singer) const;
     Settings m_settings;
     [[nodiscard]] QList<int> upcomingSingerPositions(int limit, bool includeEmpty) const;
     [[nodiscard]] QVariant getTooltipData(const QModelIndex &index) const;

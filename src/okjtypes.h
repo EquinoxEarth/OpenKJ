@@ -57,7 +57,7 @@ namespace okj {
         QString cachedNextSongArtist;
         QString cachedNextSongTitle;
         QString cachedNextSongSongId;
-        int cachedNextSongDurationSecs{0};
+        int cachedNextSongDurationMs{0};
         int cachedNextSongKeyChg{0};
         int cachedNextSongQueueId{-1};
         int cachedNumSongsSung{0};
@@ -73,7 +73,7 @@ namespace okj {
             return cachedNextSongArtist + " - " + cachedNextSongTitle;
         }
         [[nodiscard]] QString nextSongSongId() const { return cachedNextSongSongId; }
-        [[nodiscard]] int nextSongDurationSecs() const { return cachedNextSongDurationSecs; }
+        [[nodiscard]] int nextSongDurationMs() const { return cachedNextSongDurationMs; }
         [[nodiscard]] int nextSongKeyChg() const { return cachedNextSongKeyChg; }
         [[nodiscard]] int nextSongQueueId() const { return cachedNextSongQueueId; }
         [[nodiscard]] int numSongsSung() const { return cachedNumSongsSung; }

@@ -46,6 +46,7 @@ signals:
     void scanProgress(qint64 processed, qint64 total, qint64 updated, qint64 missing, qint64 failed);
     void scanFinished(bool cancelled, const QString &error);
     void operate(const QString &dbPath, const QStringList &onlyPaths);
+    void durationBatchCommitted(const QStringList &paths);
     void gotDuration(const QString &path, unsigned int duration);
 };
 

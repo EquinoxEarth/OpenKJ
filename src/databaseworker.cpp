@@ -167,7 +167,7 @@ void DatabaseWorker::loadRotation()
                 s.cachedNextSongArtist = query.value(2).toString();
                 s.cachedNextSongTitle = query.value(3).toString();
                 s.cachedNextSongSongId = query.value(4).toString();
-                s.cachedNextSongDurationSecs = (query.value(5).toInt() / 1000) + m_settings.estimationSingerPad();
+                s.cachedNextSongDurationMs = query.value(5).toInt();
                 s.cachedNextSongKeyChg = query.value(6).toInt();
                 s.cachedNextSongQueueId = query.value(7).toInt();
                 break;
@@ -175,17 +175,6 @@ void DatabaseWorker::loadRotation()
         }
     }
     
-    // Handle estimated empty song length for empty singers
-    for (auto &s : singers) {
-        if (s.cachedNextSongPath.isEmpty()) {
-            if (!m_settings.estimationSkipEmptySingers()) {
-                s.cachedNextSongDurationSecs = m_settings.estimationEmptySongLength() + m_settings.estimationSingerPad();
-            } else {
-                s.cachedNextSongDurationSecs = 0;
-            }
-        }
-    }
-
     emit rotationLoaded(singers);
 }
 

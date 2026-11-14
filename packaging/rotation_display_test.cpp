@@ -42,6 +42,9 @@ private slots:
     {
         Settings settings;
         settings.setRotationAltSortOrder(false);
+        settings.setEstimationSingerPad(0);
+        settings.setEstimationEmptySongLength(0);
+        settings.setEstimationSkipEmptySingers(true);
         settings.setRotationDisplayVisible(false);
         settings.setRotationDisplayFullscreen(false);
         settings.setRotationDisplaySingerCount(5);
@@ -615,11 +618,39 @@ private slots:
         QCOMPARE(cardHeights().size(), full.size());
     }
 
+    void estimatesReflectSettingsAndMeasuredSongDuration()
+    {
+        Settings settings;
+        settings.setEstimationSingerPad(10);
+        settings.setEstimationEmptySongLength(120);
+        auto records = singers().mid(0, 3);
+        records[0].cachedNextSongDurationMs = 180000;
+        records[2].cachedNextSongDurationMs = -2;
+        TableModelRotation model;
+        model.onRotationLoaded(records);
+        model.setCurrentSinger(records[0].id);
+        model.setCurRemainSecs(30);
+
+        QCOMPARE(model.rotationDuration(), 320);
+        QCOMPARE(model.positionWaitTime(2), 30);
+        settings.setEstimationSkipEmptySingers(false);
+        QCOMPARE(model.rotationDuration(), 450);
+        QCOMPARE(model.positionWaitTime(2), 160);
+        settings.setEstimationEmptySongLength(150);
+        settings.setEstimationSingerPad(20);
+        QCOMPARE(model.rotationDuration(), 540);
+        QCOMPARE(model.positionWaitTime(2), 200);
+
+        records[2].cachedNextSongDurationMs = 200000;
+        model.onRotationLoaded(records);
+        QCOMPARE(model.rotationDuration(), 590);
+    }
+
     void summaryCountsTheFullRotationAndStaysBelowVideo()
     {
         auto records = singers();
-        records[0].cachedNextSongDurationSecs = 305;
-        records[2].cachedNextSongDurationSecs = 180;
+        records[0].cachedNextSongDurationMs = 305000;
+        records[2].cachedNextSongDurationMs = 180000;
         TableModelRotation model;
         model.onRotationLoaded(records);
 
@@ -644,7 +675,7 @@ private slots:
         QVERIFY(summary->geometry().right() == display.videoDisplay()->geometry().right());
 
         records.removeLast();
-        records[2].cachedNextSongDurationSecs = 0;
+        records[2].cachedNextSongDurationMs = 0;
         model.onRotationLoaded(records);
         QTRY_COMPARE(summary->text(), QString("Singers: 5  |  Est. rotation: 6 min"));
 

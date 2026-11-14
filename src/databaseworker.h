@@ -7,7 +7,6 @@
 #include <QList>
 #include <QString>
 #include "okjtypes.h"
-#include "settings.h"
 
 class DatabaseWorker : public QObject
 {
@@ -57,7 +56,6 @@ private:
     bool write(int singerId, const std::function<void()> &operation);
     QString m_dbPath;
     QSqlDatabase m_db;
-    Settings m_settings;
 };
 
 #endif // DATABASEWORKER_H

@@ -394,10 +394,25 @@ QStringList TableModelRotation::historySingers() const {
     return names;
 }
 
+int TableModelRotation::estimatedTurnSeconds(const okj::RotationSinger &singer) const
+{
+    if (singer.nextSongPath().isEmpty() && m_settings.estimationSkipEmptySingers())
+        return 0;
+    const int durationMs = singer.nextSongDurationMs();
+    const int seconds = durationMs > 0 ? durationMs / 1000 : m_settings.estimationEmptySongLength();
+    return seconds + m_settings.estimationSingerPad();
+}
+
+void TableModelRotation::invalidateWaitEstimates()
+{
+    if (!m_singers.empty())
+        emit dataChanged(index(0, COL_ID), index(rowCount({}) - 1, COL_DELETE), {Qt::ToolTipRole});
+}
+
 int TableModelRotation::rotationDuration() const {
     int secs = 0;
     for (const auto &singer: m_singers) {
-        secs += singer.nextSongDurationSecs();
+        secs += estimatedTurnSeconds(singer);
     }
     return secs;
 }
@@ -747,7 +762,7 @@ int TableModelRotation::positionWaitTime(int position) const {
             if (i == curSinger.position) {
                 totalWaitDuration += m_remainSecs;
             } else if (loopSinger.id != singer.id) {
-                int nextDuration = loopSinger.nextSongDurationSecs();
+                int nextDuration = estimatedTurnSeconds(loopSinger);
                 totalWaitDuration += nextDuration;
             }
         }
@@ -758,16 +773,16 @@ int TableModelRotation::positionWaitTime(int position) const {
         for (int i = 0; i < singer.position; i++) {
             const auto &loopSinger = getSingerAtPosition(i);
             if (loopSinger.id != singer.id) {
-                int nextDuration = loopSinger.nextSongDurationSecs();
+                int nextDuration = estimatedTurnSeconds(loopSinger);
                 totalWaitDuration += nextDuration;
             }
         }
         for (int i = curSinger.position; i < m_singers.size(); i++) {
             const auto &loopSinger = getSingerAtPosition(i);
             if (i == curSinger.position)
-                totalWaitDuration += 240;
+                totalWaitDuration += m_remainSecs;
             else if (loopSinger.id != singer.id) {
-                int nextDuration = loopSinger.nextSongDurationSecs();
+                int nextDuration = estimatedTurnSeconds(loopSinger);
                 totalWaitDuration += nextDuration;
             }
         }

@@ -207,6 +207,7 @@ LazyDurationUpdateController::LazyDurationUpdateController(QObject *parent) : QO
         if (!workerThread.isInterruptionRequested()) {
             for (qsizetype i = 0; i < paths.size(); ++i)
                 emit gotDuration(paths[i], durations[i]);
+            emit durationBatchCommitted(paths);
         }
         consumed->release();
     });

@@ -1555,6 +1555,16 @@ void MainWindow::restartLazyDurationScan() {
             &TableModelKaraokeSongs::setSongDuration);
     connect(m_lazyDurationUpdater.get(), &LazyDurationUpdateController::gotDuration, requestsDialog.get(),
             &DlgRequests::setSongDuration);
+    connect(m_lazyDurationUpdater.get(), &LazyDurationUpdateController::durationBatchCommitted, this,
+            [this](const QStringList &paths) {
+        for (int row = 0; row < m_rotModel.rowCount({}); ++row) {
+            const auto &singer = m_rotModel.getSingerAtPosition(row);
+            if (paths.contains(singer.nextSongPath())) {
+                m_rotModel.loadData();
+                break;
+            }
+        }
+    });
     if (m_settings.dbLazyLoadDurations())
         m_lazyDurationUpdater->getDurations();
     else
@@ -1771,7 +1781,10 @@ void MainWindow::actionSettingsTriggered() {
     connect(settingsDialog, &DlgSettings::requestServerEnableChanged, ui->pushButtonIncomingRequests,
             &QPushButton::setVisible);
     connect(settingsDialog, &DlgSettings::rotationShowNextSongChanged, [&]() { autosizeRotationCols(); });
-    connect(settingsDialog, &DlgSettings::rotationDurationSettingsModified, this, &MainWindow::updateRotationDuration);
+    connect(settingsDialog, &DlgSettings::rotationDurationSettingsModified, this, [this] {
+        m_rotModel.invalidateWaitEstimates();
+        updateRotationDuration();
+    });
     connect(settingsDialog, &DlgSettings::requestServerIntervalChanged, &m_songbookApi, &OKJSongbookAPI::setInterval);
     connect(settingsDialog, &DlgSettings::shortcutsChanged, this, &MainWindow::shortcutsUpdated);
 

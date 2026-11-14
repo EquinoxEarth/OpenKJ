@@ -61,12 +61,11 @@ DlgVideoPreview::DlgVideoPreview(QString mediaFilePath, QWidget *parent, const Q
             return;
         }
 
-        m_preparedDirectory = std::move(prepared.directory);
         m_mediaLoaded = true;
         if (prepared.cdgFile.isEmpty())
             m_mediaBackend.setMedia(prepared.audioFile);
         else
-            m_mediaBackend.setMediaCdg(prepared.cdgFile, prepared.audioFile);
+            m_mediaBackend.setMediaCdg(prepared.cdgFile, prepared.audioFile, {}, prepared.directory);
         if (!m_failed)
             m_mediaBackend.play();
     });
@@ -74,7 +73,7 @@ DlgVideoPreview::DlgVideoPreview(QString mediaFilePath, QWidget *parent, const Q
         if (filename.endsWith(".zip", Qt::CaseInsensitive))
             return prepareKaraokeZip(filename, cancelled);
         if (filename.endsWith(".cdg", Qt::CaseInsensitive))
-            return prepareKaraokePair(filename, cancelled);
+            return prepareKaraokePair(filename, cancelled, false);
 
         PreparedKaraokeMedia result;
         if (cancelled->load())

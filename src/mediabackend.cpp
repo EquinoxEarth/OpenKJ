@@ -1,3 +1,4 @@
+#include "mediapreparation.h"
 #include "mediabackend.h"
 #include "audionormalization.h"
 #include <QSqlDatabase>
@@ -1235,7 +1236,7 @@ void MediaBackend::setMedia(const QString &filename) {
     if (!m_cdgFilename.isEmpty()) {
         setupCdgPipeline(m_cdgFilename);
         m_cdgLastDrawPosMs =
-            getCdgLastDrawPositionMs(m_cdgFilename);
+            cdgLastDrawPositionMs(m_cdgFilename);
     } else {
         m_cdgLastDrawPosMs = 0;
     }
@@ -1248,21 +1249,15 @@ void MediaBackend::setMedia(const QString &filename) {
 }
 
 void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioFilename,
-                               std::optional<okj::TrackGainKey> sourceGainKey) {
+                               std::optional<okj::TrackGainKey> sourceGainKey,
+                               std::shared_ptr<QTemporaryDir> directory, std::optional<qint64> lastDrawMs) {
     if (m_cdgStateBusy) {
         rawStop();
-        deferControl([this, cdgFilename, audioFilename, sourceGainKey] {
-            setMediaCdg(cdgFilename, audioFilename, sourceGainKey);
+        deferControl([this, cdgFilename, audioFilename, sourceGainKey, directory, lastDrawMs] {
+            setMediaCdg(cdgFilename, audioFilename, sourceGainKey, directory, lastDrawMs);
         });
         return;
     }
-    QElapsedTimer preparationStage;
-    preparationStage.start();
-    const auto logStage = [this, &preparationStage](const char *stage) {
-        const auto elapsed = preparationStage.restart();
-        if (elapsed >= 50)
-            m_logger->warn("{} CDG preparation on UI thread: {} took {}ms", m_loggingPrefix, stage, elapsed);
-    };
     m_silenceDetectedEmitted = false;
     rawStop();
     m_normalizationPath.clear();
@@ -1273,36 +1268,17 @@ void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioF
     destroyCdgPipeline();
     m_filename = audioFilename;
     m_cdgFilename = cdgFilename;
-    m_tempDir.reset();
+    m_tempDir = std::move(directory);
     m_rateControlledVideo = false;
-    logStage("pipeline and temporary file cleanup");
 
     if (!m_pipeline) {
         emit audioError("Unable to initialize audio playback");
         return;
     }
 
-    QString playAudio = audioFilename;
     const bool preview = m_type == VideoPreview;
-    if (!preview) {
-        m_tempDir = std::make_shared<QTemporaryDir>();
-        if (!m_tempDir->isValid()) {
-            emit audioError("Failed to create temporary directory");
-            return;
-        }
-        const auto targetAudio = m_tempDir->filePath("song." + QFileInfo(audioFilename).suffix());
-        const auto targetCdg = m_tempDir->filePath("song.cdg");
-        if (!QFile::copy(audioFilename, targetAudio) || !QFile::copy(cdgFilename, targetCdg)) {
-            emit audioError("Failed to copy media files to temp dir");
-            return;
-        }
-        playAudio = targetAudio;
-        m_cdgFilename = targetCdg;
-        logStage("copying audio and CDG files");
-    }
-
-    const auto uri = localMediaUri(playAudio);
-    m_normalizationPath = playAudio;
+    const auto uri = localMediaUri(audioFilename);
+    m_normalizationPath = audioFilename;
     g_object_set(G_OBJECT(m_pipeline), "uri", uri.constData(), "suburi", nullptr, nullptr);
     if (!setupCdgPipeline(m_cdgFilename) && preview) {
         emit audioError("Unable to initialize CDG playback");
@@ -1312,10 +1288,9 @@ void MediaBackend::setMediaCdg(const QString &cdgFilename, const QString &audioF
     m_hasVideo = false;
     emit hasActiveVideoChanged(false);
     // Previews do not use end-of-song silence detection.
-    m_cdgLastDrawPosMs = preview ? 0 : getCdgLastDrawPositionMs(m_cdgFilename);
+    m_cdgLastDrawPosMs = preview ? 0 : (lastDrawMs ? *lastDrawMs : cdgLastDrawPositionMs(m_cdgFilename));
     updateVolume();
     updateAudioFilters();
-    logStage("pipeline setup and CDG analysis");
 }
 
 void MediaBackend::setMuted(const bool &muted) {
@@ -1998,51 +1973,4 @@ void MediaBackend::updateAudioFilters() {
 
 void MediaBackend::setDownmix(const bool &enabled) {
     // left empty
-}
-
-qint64 MediaBackend::getCdgLastDrawPositionMs(const QString &cdgPath) {
-    QFile file(cdgPath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return 0;
-    }
-    qint64 size = file.size();
-    qint64 numPackets = size / 24;
-    if (numPackets == 0) return 0;
-
-    uchar *data = file.map(0, size);
-    if (data) {
-        for (qint64 i = numPackets - 1; i >= 0; --i) {
-            uchar command = data[i * 24] & 0x3F;
-            uchar instruction = data[i * 24 + 1] & 0x3F;
-            if (command == 0x09) {
-                if (instruction == 6 || instruction == 38 || instruction == 20 || instruction == 24 || instruction == 1) {
-                    file.unmap(data);
-                    return (i * 10) / 3;
-                }
-            }
-        }
-        file.unmap(data);
-    } else {
-        const int chunkSize = 4096;
-        QByteArray buffer;
-        qint64 offset = size;
-        while (offset > 0) {
-            qint64 readSize = std::min(static_cast<qint64>(chunkSize), offset);
-            offset -= readSize;
-            if (!file.seek(offset)) break;
-            buffer = file.read(readSize);
-            qint64 localPackets = buffer.size() / 24;
-            for (qint64 j = localPackets - 1; j >= 0; --j) {
-                qint64 globalIndex = (offset / 24) + j;
-                uchar command = buffer[j * 24] & 0x3F;
-                uchar instruction = buffer[j * 24 + 1] & 0x3F;
-                if (command == 0x09) {
-                    if (instruction == 6 || instruction == 38 || instruction == 20 || instruction == 24 || instruction == 1) {
-                        return (globalIndex * 10) / 3;
-                    }
-                }
-            }
-        }
-    }
-    return 0;
 }

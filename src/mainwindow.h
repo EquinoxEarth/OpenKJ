@@ -170,8 +170,6 @@ private:
     QShortcut m_scutDeleteSong{nullptr};
     QShortcut m_scutDeletePlSong{nullptr};
     std::unique_ptr<LazyDurationUpdateController> m_lazyDurationUpdater;
-    std::unique_ptr<QTemporaryDir> m_mediaTempDir;
-    std::shared_ptr<QTemporaryDir> m_preparedPlaybackDir;
     std::shared_ptr<std::atomic_bool> m_mediaPreparationCancelled;
     void cancelMediaPreparation();
     void initDatabaseWorker();

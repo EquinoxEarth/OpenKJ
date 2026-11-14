@@ -964,15 +964,47 @@ int main(int argc, char **argv)
         spdlog::register_logger(spdlog::default_logger()->clone("logger"));
         const auto releaseArchiveLogger = qScopeGuard([] { spdlog::drop("logger"); });
         const auto notCancelled = std::make_shared<std::atomic_bool>(false);
+        const auto detachedDir = temporary.filePath("detached-source");
+        require(QDir().mkpath(detachedDir), "Cannot create source folder");
+        const auto looseCdg = QDir(detachedDir).filePath("song.cdg");
+        const auto looseAudio = QDir(detachedDir).filePath("song.wav");
+        require(QFile::copy(cdgFilename, looseCdg) && QFile::copy(loud, looseAudio),
+                "Cannot create loose CD+G fixture");
+        const auto cancelledPair = std::make_shared<std::atomic_bool>(true);
+        const auto cancelledPreparation = prepareKaraokePair(looseCdg, cancelledPair);
+        require(!cancelledPreparation.directory && cancelledPreparation.audioFile.isEmpty(), "Cancelled preparation must not stage media");
+        QString stagedDir;
+        {
+            const auto prepared = prepareKaraokePair(looseCdg, notCancelled);
+            require(prepared.error.isEmpty() && prepared.directory && prepared.cdgLastDrawMs.value_or(0) > 0 &&
+                    prepared.sourceGainKey == okj::TrackGainKey::fromFile(looseAudio),
+                    "Loose CD+G preparation must stage both files and retain the original cache key");
+            stagedDir = prepared.directory->path();
+            require(QDir(detachedDir).removeRecursively(), "Cannot simulate a detached source");
+            karaoke.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.sourceGainKey,
+                                prepared.directory, prepared.cdgLastDrawMs);
+        }
+        require(QFileInfo(stagedDir).isDir(), "Backend must own the staged CD+G directory");
+        karaoke.play();
+        waitFor([&] { return karaoke.state() == MediaBackend::PlayingState; }, 3000,
+                "Staged CD+G must play after detaching the source");
+        karaoke.rawStop();
+        karaoke.setMedia(filename);
+        waitFor([&] { return !QFileInfo::exists(stagedDir); }, 3000,
+                "Replacing the track must release its staged directory");
+
         const auto playArchive = [&] {
             const auto prepared = prepareKaraokeZip(archivePath, notCancelled);
-            require(prepared.error.isEmpty() && prepared.archiveGainKey && prepared.directory,
+            require(prepared.error.isEmpty() && prepared.sourceGainKey && prepared.directory,
                     "Cannot prepare the ZIP for karaoke playback");
-            karaoke.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.archiveGainKey);
+            karaoke.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.sourceGainKey,
+                                prepared.directory, prepared.cdgLastDrawMs);
             karaoke.play();
+            return prepared.directory->path();
         };
         const auto archiveKey = okj::TrackGainKey::fromFile(archivePath);
-        playArchive();
+        const auto extractedDir = playArchive();
+        require(QFileInfo(extractedDir).isDir(), "ZIP playback must use the original extraction directory");
         waitFor([&] { return okj::cachedTrackGain(libraryPath, archiveKey).has_value(); }, 3000,
                 "ZIP playback must cache analysis against the archive path");
         waitFor([&] { return karaoke.state() == MediaBackend::PlayingState; }, 3000,

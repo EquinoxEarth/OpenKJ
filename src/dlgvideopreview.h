@@ -31,7 +31,6 @@ private:
     const QString m_mediaFilename;
     std::shared_ptr<std::atomic_bool> m_cancelled = std::make_shared<std::atomic_bool>(false);
     // Destroy the backend before releasing any files it can still be using.
-    std::shared_ptr<QTemporaryDir> m_preparedDirectory;
     std::optional<int> m_closeResult;
     bool m_mediaLoaded{false};
     bool m_failed{false};

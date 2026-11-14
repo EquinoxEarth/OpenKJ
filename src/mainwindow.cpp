@@ -571,7 +571,6 @@ MainWindow::MainWindow(const QSqlDatabase &database, QWidget *parent) :
     ui->tableViewQueue->viewport()->installEventFilter(new TableViewToolTipFilter(ui->tableViewQueue));
     ui->labelNoSinger->setVisible(true);
     ui->tabWidgetQueue->setVisible(false);
-    m_mediaTempDir = std::make_unique<QTemporaryDir>();
     dbDialog = std::make_unique<DlgDatabase>(m_karaokeSongsModel, this);
     dlgKeyChange = std::make_unique<DlgKeyChange>(&m_qModel, this);
     requestsDialog = std::make_unique<DlgRequests>(m_rotModel, m_songbookApi);
@@ -1431,14 +1430,14 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request)
             return;
         }
         if (!prepared.cdgFile.isEmpty())
-            m_mediaBackendKar.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.archiveGainKey);
+            m_mediaBackendKar.setMediaCdg(prepared.cdgFile, prepared.audioFile, prepared.sourceGainKey,
+                                          prepared.directory, prepared.cdgLastDrawMs);
         else
             m_mediaBackendKar.setMedia(prepared.audioFile);
         // Binding media can emit a synchronous error before play is requested.
         if (cancelled->load())
             return;
         m_mediaPreparationCancelled.reset();
-        m_preparedPlaybackDir = prepared.directory;
         if (!prepareKaraokeSelection(selection)) {
             setNormalizationKaraokeBusy(false);
             restoreBreakMusicVolume();
@@ -4162,50 +4161,7 @@ void MainWindow::actionCdgDecodeTorture() {
             !karaokeFilePath.endsWith("cdg", Qt::CaseInsensitive)) {
             return;
         }
-        if (karaokeFilePath.endsWith(".zip", Qt::CaseInsensitive)) {
-            const auto archiveGainKey = okj::TrackGainKey::fromFile(karaokeFilePath);
-            MzArchive archive(karaokeFilePath);
-            if ((archive.checkCDG()) && (archive.checkAudio())) {
-                if (archive.checkAudio()) {
-                    if (!archive.extractAudio(m_mediaTempDir->path(), "tmp" + archive.audioExtension())) {
-                        return;
-                    }
-                    if (!archive.extractCdg(m_mediaTempDir->path(), "tmp.cdg")) {
-                        return;
-                    }
-                    QString audioFile = m_mediaTempDir->path() + QDir::separator() + "tmp" + archive.audioExtension();
-                    QString cdgFile = m_mediaTempDir->path() + QDir::separator() + "tmp.cdg";
-                    m_logger->info("{} Extracted audio file size: {}", m_loggingPrefix, QFileInfo(audioFile).size());
-                    m_logger->info("{} Setting karaoke backend source file to: {}", m_loggingPrefix,
-                                   audioFile.toStdString());
-                    m_mediaBackendKar.setMediaCdg(cdgFile, audioFile, archiveGainKey);
-                    //m_mediaBackendKar.testCdgDecode(); // todo: andth
-                }
-            } else {
-                return;
-            }
-        } else if (karaokeFilePath.endsWith(".cdg", Qt::CaseInsensitive)) {
-            QString cdgTmpFile = "tmp.cdg";
-            QString audTmpFile = "tmp.mp3";
-            QFile cdgFile(karaokeFilePath);
-            if (!cdgFile.exists() || cdgFile.size() == 0) {
-                return;
-            }
-            QString audioFilename = findMatchingAudioFile(karaokeFilePath);
-            if (audioFilename == "") {
-                return;
-            }
-            QFile audioFile(audioFilename);
-            if (audioFile.size() == 0) {
-                return;
-            }
-            const auto audioGainKey = okj::TrackGainKey::fromFile(audioFilename);
-            cdgFile.copy(m_mediaTempDir->path() + QDir::separator() + cdgTmpFile);
-            QFile::copy(audioFilename, m_mediaTempDir->path() + QDir::separator() + audTmpFile);
-            m_mediaBackendKar.setMediaCdg(m_mediaTempDir->path() + QDir::separator() + cdgTmpFile,
-                                          m_mediaTempDir->path() + QDir::separator() + audTmpFile, audioGainKey);
-            // m_mediaBackendKar.testCdgDecode(); // todo: andth
-        }
+        play(karaokeFilePath);
         ui->labelSinger->setText("Torture run (" + QString::number(++runs) + ")");
     });
     m_timerTest.start(2000);

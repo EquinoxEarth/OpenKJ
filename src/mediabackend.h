@@ -202,7 +202,6 @@ private:
     void destroyCdgPipeline();
     void updateVolume();
     void updateAudioFilters();
-    qint64 getCdgLastDrawPositionMs(const QString &cdgPath);
     QElapsedTimer m_cdgSyncTimer;
     qint64 m_lastCdgSyncCheckMs{-1};
     qint64 m_lastCdgCorrectionMs{-1};
@@ -264,7 +263,9 @@ public slots:
     void pause();
     void setMedia(const QString &filename);
     void setMediaCdg(const QString &cdgFilename, const QString &audioFilename,
-                     std::optional<okj::TrackGainKey> sourceGainKey = std::nullopt);
+                     std::optional<okj::TrackGainKey> sourceGainKey = std::nullopt,
+                     std::shared_ptr<QTemporaryDir> directory = {},
+                     std::optional<qint64> lastDrawMs = std::nullopt);
     void setMuted(const bool &muted);
     bool isMuted();
     void setPosition(const qint64 &position);

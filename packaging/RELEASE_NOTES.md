@@ -49,3 +49,4 @@ The Windows packages are unsigned. Back up your OpenKJ data before upgrading. Ea
 
 - Bound Songbook polling and connection-test requests so timeouts and slow responses do not pile up or hang the settings interface. [`faf4c736`](https://github.com/EquinoxEarth/OpenKJ/commit/faf4c736)
 - Stage the five platform packages from the tagged build and verify the candidate run and checksums before publishing the GitHub release. [`205409c4`](https://github.com/EquinoxEarth/OpenKJ/commit/205409c4)
+- Give the large source-folder scan test time to run on hosted macOS runners and build the Flatpak with its own KDE SDK installation. [`8c195c40`](https://github.com/EquinoxEarth/OpenKJ/commit/8c195c40)

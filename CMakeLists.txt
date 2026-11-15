@@ -363,7 +363,8 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         src/mzarchive.cpp src/settings.cpp src/simplecrypt.cpp)
     target_link_libraries(openkj-source-folder-scan-test PRIVATE ${LIBRARIES} Qt6::Test)
     add_test(NAME source-folder-scan COMMAND openkj-source-folder-scan-test)
-    set_tests_properties(source-folder-scan PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # This suite creates 14,000 files, which can take longer on hosted macOS runners.
+    set_tests_properties(source-folder-scan PROPERTIES TIMEOUT 90 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(openkj-directory-listing-test packaging/directory_listing_test.cpp)
     target_link_libraries(openkj-directory-listing-test PRIVATE Qt6::Core)

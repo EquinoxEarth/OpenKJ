@@ -223,7 +223,7 @@ private slots:
         hostTimer.start(1);
         watcher.setFuture(DbUpdater::scanAsync(database.databaseName(), {source, offline},
             DbUpdater::FixMovedFiles | DbUpdater::SkipUnavailableSources, state));
-        QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 30000);
         const auto result = watcher.result();
         QVERIFY2(result.success, qPrintable(result.errors.join("\n")));
         QVERIFY(ticksDuringScan > 0);

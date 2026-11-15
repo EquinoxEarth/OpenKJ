@@ -32,12 +32,16 @@ jobs:
       - name: Build and test installable Flatpak
         env:
           OPENKJ_FLATPAK_SYSTEM: '1'
+          FLATPAK_SYSTEM_DIR: /var/tmp/openkj-flatpak/install
+          FLATPAK_SYSTEM_CACHE_DIR: /var/tmp/openkj-flatpak/cache
         run: |
           set -o pipefail
           # The SDK container and Actions checkout use different home/UID
           # contexts. Trust only this runner-mounted source checkout.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           dbus-uuidgen --ensure=/etc/machine-id
+          # Keep SDK deployments and their temporary repositories off the image's preinstalled Flatpak tree.
+          mkdir -p "$FLATPAK_SYSTEM_DIR" "$FLATPAK_SYSTEM_CACHE_DIR"
           dbus-run-session -- bash packaging/build_flatpak.sh 2>&1 | tee build-flatpak.log
       - name: Upload installable Linux Flatpak
         uses: actions/upload-artifact@v6
@@ -54,7 +58,7 @@ jobs:
             build-flatpak.log
             packaging/flatpak/org.openkj.OpenKJ.json
       - uses: actions/cache/save@v5
-        if: always()
+        if: success()
         with:
           path: .flatpak-builder
           key: flatpak-kde611-${{ runner.arch }}-${{ hashFiles('packaging/flatpak/org.openkj.OpenKJ.json') }}-${{ github.run_id }}

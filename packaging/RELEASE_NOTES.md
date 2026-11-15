@@ -1,55 +1,51 @@
-# OpenKJ 3.0.0
+# OpenKJ 3.1.0
 
-OpenKJ 3.0.0 is the first stable release of this Qt 6 port. It includes the changes since 2.2.8 Beta 1 and brings the Windows, macOS and Linux packages together in one release.
+OpenKJ 3.1.0 is a stable release for Windows, Apple Silicon macOS and Linux. It adds paused singers, optional audio normalization and a Rotation Display queue summary. It also improves playback transitions and makes several library and queue operations safer.
 
 ## Downloads
 
 | Platform | Package | How to use it |
 | --- | --- | --- |
-| Windows x64 | `OpenKJ-3.0.0-windows-x64.msi` | Run the installer for an installed copy. |
-| Windows x64 | `OpenKJ-3.0.0-windows-x64.zip` | Extract the entire archive and run `openkj.exe`. Keep the bundled DLLs and plugins together. |
-| macOS Apple Silicon | `OpenKJ-3.0.0-macos-arm64.dmg` | Open the DMG and copy OpenKJ to Applications. The app uses ad hoc signing and has no Apple notarization. |
-| Linux x86_64 | `OpenKJ-3.0.0-linux-x86_64.flatpak` | Install with `flatpak install --user ./OpenKJ-3.0.0-linux-x86_64.flatpak`. Launch with `flatpak run org.openkj.OpenKJ//stable`. |
-| Fedora 44 x86_64 | `OpenKJ-3.0.0-linux-fedora44-x86_64-portable.tar.gz` | Extract and run `./run-openkj.sh`. Install the Fedora runtime dependencies listed in the included `LINUX_DEVELOPMENT.md`. |
+| Windows x64 | `OpenKJ-3.1.0-windows-x64.msi` | Run the installer. |
+| Windows x64 | `OpenKJ-3.1.0-windows-x64.zip` | Extract the entire archive and run `openkj.exe` with the bundled DLLs and plugins in place. |
+| macOS Apple Silicon | `OpenKJ-3.1.0-macos-arm64.dmg` | Open the DMG and copy OpenKJ to Applications. The app is ad hoc signed and has no Apple notarization. |
+| Linux x86_64 | `OpenKJ-3.1.0-linux-x86_64.flatpak` | Install with `flatpak install --user ./OpenKJ-3.1.0-linux-x86_64.flatpak`, then launch with `flatpak run org.openkj.OpenKJ//stable`. The KDE runtime is available from Flathub. |
+| Fedora 44 x86_64 | `OpenKJ-3.1.0-linux-fedora44-x86_64-portable.tar.gz` | Extract the archive, install the Fedora dependencies listed in the included `LINUX_DEVELOPMENT.md`, and run `./run-openkj.sh`. |
 
-Windows packages are unsigned. Back up your OpenKJ data before upgrading, especially if you use a large library or external media. Download the package's SHA-256 file to verify it, or use the release-wide `SHA256SUMS` file. Linux users on other distributions can use the Flatpak with the KDE runtime from Flathub. An installed preview Flatpak can coexist with the stable branch.
+The Windows packages are unsigned. Back up your OpenKJ data before upgrading. Each package has a SHA-256 checksum, and `SHA256SUMS` lists the checksums for all five downloads.
 
-## Singer and Rotation Displays
+## Singer rotation and audience display
 
-- Added a configurable audience-facing Rotation Display that shows the current singer, upcoming singers and synchronized karaoke lyrics or video. [`3ce08430`](https://github.com/EquinoxEarth/OpenKJ/commit/3ce08430)
-- Added a setting to hide parenthetical notes in names shown to the audience while preserving the host's singer records. [`a0989647`](https://github.com/EquinoxEarth/OpenKJ/commit/a0989647)
-- Moved Rotation Display settings beside Display, fixed settings ownership in the video views and reused the settings object across repaints. [`ff092389`](https://github.com/EquinoxEarth/OpenKJ/commit/ff092389), [`3c86ca8e`](https://github.com/EquinoxEarth/OpenKJ/commit/3c86ca8e)
-- Preserved display preferences across app rebuilds, capped the size of singer rows in short rotations and gave lyrics more of the window width. Added fallback handling for unavailable monitor selections. [`28283d14`](https://github.com/EquinoxEarth/OpenKJ/commit/28283d14), [`18ddbadd`](https://github.com/EquinoxEarth/OpenKJ/commit/18ddbadd)
-- Matched the Preview and Rotation Display settings backgrounds to the rest of Settings. Added an accent colour for the current singer and upcoming position numbers, a background image, and tighter framing for both CDG and video. [`b197c390`](https://github.com/EquinoxEarth/OpenKJ/commit/b197c390)
-- Added a 16:9 resize button beside fullscreen on the Singer Display. [`20af2ba3`](https://github.com/EquinoxEarth/OpenKJ/commit/20af2ba3)
-- Added a customizable idle image or logo for the Rotation Display video area, with the OpenKJ logo as the default. Added singer-row opacity, background dimming and optional looping video backgrounds for the Rotation and Singer Displays. [`413f2dff`](https://github.com/EquinoxEarth/OpenKJ/commit/413f2dff)
+- Pause a singer from the rotation context menu to move them to the **Paused Singers** list with their song queue intact. Open the list using the pause button at the bottom of the rotation panel. Resuming puts the singer after the on-deck singer by default. [`6c3ef939`](https://github.com/EquinoxEarth/OpenKJ/commit/6c3ef939)
+- Pause directly from a singer row using the button between the regular-singer toggle and delete. The status bar now includes the paused singer count. [`6e99f549`](https://github.com/EquinoxEarth/OpenKJ/commit/6e99f549)
+- Check **Up Next** next to **Resume** to put a singer immediately after the current singer. The checkbox starts unchecked when opening the dialog. [`665e937f`](https://github.com/EquinoxEarth/OpenKJ/commit/665e937f)
+- Optionally show the total singers in the queue and estimated rotation duration at the bottom right of the Rotation Display. The setting is off by default. [`04d5ba79`](https://github.com/EquinoxEarth/OpenKJ/commit/04d5ba79)
+- Refresh rotation estimates when relevant settings or queued song durations change. [`107595a1`](https://github.com/EquinoxEarth/OpenKJ/commit/107595a1)
 
-## Playback, audio and preview
+## Audio normalization
 
-- Added a dedicated audio output for Song Preview under Settings → Audio → Preview. The default output is None and preview starts muted by default. The preview window has a mute button and volume slider for monitoring on a separate device. The settings panel advises using an output separate from karaoke and break music. [`292d9511`](https://github.com/EquinoxEarth/OpenKJ/commit/292d9511)
-- Fixed karaoke video ending early when silence detection is enabled. MP4 playback now runs through the end of the video stream. [`07d00ebc`](https://github.com/EquinoxEarth/OpenKJ/commit/07d00ebc)
-- Improved recording startup and shutdown, and added an independent karaoke mix for recording. [`2d611e02`](https://github.com/EquinoxEarth/OpenKJ/commit/2d611e02)
-- Moved library scanning and song transitions off the UI thread. Coalesced video frame updates and shared rendering work across displays. [`83011a79`](https://github.com/EquinoxEarth/OpenKJ/commit/83011a79), [`70f3a069`](https://github.com/EquinoxEarth/OpenKJ/commit/70f3a069)
+- Enable normalization separately for Karaoke and Break Music under **Settings → Audio**. Normalization reduces the level of louder tracks and leaves quieter tracks at their original level. Playback analysis saves track gain in a cache beside the song database so it can be reused. Clearing the song database also clears that cache. [`eb996ab5`](https://github.com/EquinoxEarth/OpenKJ/commit/eb996ab5)
+- With Karaoke normalization enabled, uncached library tracks are analyzed in the background after the duration scan. The database status identifies the **Durations** and **Normalization** stages and shows the remaining work. [`c5581e2d`](https://github.com/EquinoxEarth/OpenKJ/commit/c5581e2d)
+- Pause background analysis during karaoke playback, report decode, timeout and cache-write problems, and show whether normalization is on in the main window status bar. [`ff310acf`](https://github.com/EquinoxEarth/OpenKJ/commit/ff310acf)
 
-## Rotation, queues and play history
+## Playback and media compatibility
 
-- Unified rotation ordering so the next singer shown on the display agrees with the singer selected by autoplay. [`f9f75efe`](https://github.com/EquinoxEarth/OpenKJ/commit/f9f75efe)
-- Discarded stale queue responses when switching singers and guarded queue edits during the switch. [`b39d4af8`](https://github.com/EquinoxEarth/OpenKJ/commit/b39d4af8)
-- Recorded karaoke plays after playback starts so songs that fail to start do not create play history entries. [`3b5c7556`](https://github.com/EquinoxEarth/OpenKJ/commit/3b5c7556)
+- Restore the selected Karaoke, Break Music and Preview output devices when their pipelines are recreated after playback stops. [`57a08b33`](https://github.com/EquinoxEarth/OpenKJ/commit/57a08b33)
+- Handle karaoke startup and playback failures more reliably and preserve the handoff between Break Music and Karaoke during repeated starts and stops. [`1291ef44`](https://github.com/EquinoxEarth/OpenKJ/commit/1291ef44)
+- Restore WAV playback in the packaged macOS app and add smoke checks for the bundled media runtime. [`1fa7e26b`](https://github.com/EquinoxEarth/OpenKJ/commit/1fa7e26b)
+- Open karaoke ZIP archives whose Windows paths contain Unicode characters. [`f0150342`](https://github.com/EquinoxEarth/OpenKJ/commit/f0150342)
+- Prepare CD+G media on a worker thread for song startup so extraction and file preparation leave the interface responsive. [`b51002ef`](https://github.com/EquinoxEarth/OpenKJ/commit/b51002ef)
 
-## Library, startup and data integrity
+## Library, queues and history
 
-- Matched source-folder paths literally and preserved entries for files on unavailable drives. Guarded stale database snapshots and rolled back failed writes. [`cac73cfa`](https://github.com/EquinoxEarth/OpenKJ/commit/cac73cfa), [`ec42852d`](https://github.com/EquinoxEarth/OpenKJ/commit/ec42852d)
-- Made startup database migrations atomic and made karaoke file renames recoverable if a later step fails. [`402e88a7`](https://github.com/EquinoxEarth/OpenKJ/commit/402e88a7), [`2cbcbb53`](https://github.com/EquinoxEarth/OpenKJ/commit/2cbcbb53)
-- Kept single-instance protection active through shutdown, preserved startup logging when file logging fails, and applied safe startup mode across all windows. [`99d42e00`](https://github.com/EquinoxEarth/OpenKJ/commit/99d42e00), [`312b088d`](https://github.com/EquinoxEarth/OpenKJ/commit/312b088d), [`df20a436`](https://github.com/EquinoxEarth/OpenKJ/commit/df20a436)
+- Make library clearing and playlist deletion transactional. Clearing the karaoke library preserves singer history. [`ded3d48c`](https://github.com/EquinoxEarth/OpenKJ/commit/ded3d48c)
+- Save the karaoke play count and singer playback bookkeeping in one transaction so related updates succeed or roll back together. [`8906b131`](https://github.com/EquinoxEarth/OpenKJ/commit/8906b131)
+- Make karaoke file removal recoverable if a related step fails. [`efd7c4a6`](https://github.com/EquinoxEarth/OpenKJ/commit/efd7c4a6)
+- Verify media identity before automatically relinking moved library entries, reducing the risk of matching a different file with the same name. [`db15ee04`](https://github.com/EquinoxEarth/OpenKJ/commit/db15ee04)
+- Add indexes for queue lookups and consolidate rotation loading so the application can retrieve singer and queue information with fewer database queries. [`8227b6c8`](https://github.com/EquinoxEarth/OpenKJ/commit/8227b6c8)
+- Import regular singers and their associated data transactionally so failed imports can roll back together. [`620df4a9`](https://github.com/EquinoxEarth/OpenKJ/commit/620df4a9)
 
-## Songbook, downloads and updates
+## Songbook and release verification
 
-- Validated Songbook uploads and reported partial failures so hosts can see which uploads need attention. [`c31c1442`](https://github.com/EquinoxEarth/OpenKJ/commit/c31c1442)
-- Validated song downloads and moved update checks for this fork to HTTPS. [`25d806ab`](https://github.com/EquinoxEarth/OpenKJ/commit/25d806ab)
-
-## Packaging and verification
-
-- The Windows package builds on the tested portable payload. MSI CI exercises installation, a simulated older-version upgrade, repair, installed runtime checks, downgrade rejection and uninstall. [`2764a13b`](https://github.com/EquinoxEarth/OpenKJ/commit/2764a13b)
-- The Linux Flatpak includes the media plugins and is checked on Ubuntu and Fedora without a development SDK. The Fedora portable archive packages the application and extra plugins for use with Fedora's system libraries. [`9890c86b`](https://github.com/EquinoxEarth/OpenKJ/commit/9890c86b), [`34893b3c`](https://github.com/EquinoxEarth/OpenKJ/commit/34893b3c)
-- The release workflow stages all five packages from one source commit, verifies their checksums and publishes them together. [`f0feb6a7`](https://github.com/EquinoxEarth/OpenKJ/commit/f0feb6a7)
+- Bound Songbook polling and connection-test requests so timeouts and slow responses do not pile up or hang the settings interface. [`faf4c736`](https://github.com/EquinoxEarth/OpenKJ/commit/faf4c736)
+- Stage the five platform packages from the tagged build and verify the candidate run and checksums before publishing the GitHub release. [`205409c4`](https://github.com/EquinoxEarth/OpenKJ/commit/205409c4)

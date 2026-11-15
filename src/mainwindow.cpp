@@ -570,6 +570,11 @@ MainWindow::MainWindow(const QSqlDatabase &database, QWidget *parent) :
                                                                     QHeaderView::ResizeToContents);
     ui->tableViewRotation->horizontalHeader()->setSectionResizeMode(TableModelRotation::COL_REGULAR,
                                                                     QHeaderView::ResizeToContents);
+    auto *rotationHeader = ui->tableViewRotation->horizontalHeader();
+    rotationHeader->setSectionResizeMode(TableModelRotation::COL_PAUSE, QHeaderView::ResizeToContents);
+    // Keep Delete's column number so saved widths still apply to the same columns.
+    rotationHeader->moveSection(rotationHeader->visualIndex(TableModelRotation::COL_PAUSE),
+                                rotationHeader->visualIndex(TableModelRotation::COL_DELETE));
     ui->tableViewQueue->setModel(&m_qModel);
     ui->tableViewQueue->setItemDelegate(&m_qDelegate);
     ui->tableViewQueue->viewport()->installEventFilter(new TableViewToolTipFilter(ui->tableViewQueue));
@@ -1700,6 +1705,10 @@ void MainWindow::tableViewRotationDoubleClicked(const QModelIndex &index)
 }
 
 void MainWindow::tableViewRotationClicked(const QModelIndex &index) {
+    if (index.isValid() && index.column() == TableModelRotation::COL_PAUSE) {
+        setSingerPaused(index.data(Qt::UserRole).toInt(), true);
+        return;
+    }
     if (index.column() == TableModelRotation::COL_DELETE) {
         if (m_settings.showSingerRemovalWarning()) {
             QMessageBox msgBox(this);
@@ -2133,9 +2142,7 @@ void MainWindow::rotationDataChanged() {
     updateRotationDuration();
     QString sep = "•";
     requestsDialog->rotationChanged();
-    QString statusBarText = "Singers: ";
-    statusBarText += QString::number(m_rotModel.singerCount());
-    m_labelSingerCount.setText(statusBarText);
+    m_labelSingerCount.setText(tr("Singers: %1 (%2 paused)").arg(m_rotModel.singerCount()).arg(pausedCount));
     QString tickerText;
     if (m_settings.tickerCustomString() != "") {
         tickerText += m_settings.tickerCustomString() + " " + sep + " ";

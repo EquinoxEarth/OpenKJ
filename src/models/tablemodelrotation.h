@@ -18,6 +18,7 @@ class ItemDelegateRotation : public QItemDelegate
 private:
     int m_currentSinger{-1};
     QImage m_iconDelete;
+    QImage m_iconPause;
     QImage m_iconCurSinger;
     QImage m_iconRegularOn;
     QImage m_iconRegularOff;
@@ -39,7 +40,7 @@ class TableModelRotation : public QAbstractTableModel
     Q_OBJECT
 
 public:
-    enum {COL_ID=0,COL_NAME,COL_POSITION,COL_NEXT_SONG,COL_REGULAR,COL_ADDTS,COL_DELETE};
+    enum {COL_ID=0,COL_NAME,COL_POSITION,COL_NEXT_SONG,COL_REGULAR,COL_ADDTS,COL_DELETE,COL_PAUSE,COL_COUNT};
     enum {ADD_FAIR=0,ADD_BOTTOM,ADD_NEXT};
     okj::RotationSinger InvalidSinger {
         -1,

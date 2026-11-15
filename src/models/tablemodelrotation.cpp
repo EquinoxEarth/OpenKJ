@@ -29,6 +29,7 @@ QVariant TableModelRotation::headerData(int section, Qt::Orientation orientation
     if (role == Qt::SizeHintRole && orientation == Qt::Horizontal) {
         switch (section) {
             case COL_REGULAR:
+            case COL_PAUSE:
             case COL_DELETE:
             case COL_ID: {
                 return QFontMetrics(m_settings.applicationFont()).size(Qt::TextSingleLine, "_00");
@@ -55,7 +56,7 @@ int TableModelRotation::rowCount([[maybe_unused]]const QModelIndex &parent) cons
 }
 
 int TableModelRotation::columnCount([[maybe_unused]]const QModelIndex &parent) const {
-    return 7;
+    return COL_COUNT;
 }
 
 QVariant TableModelRotation::data(const QModelIndex &index, int role) const {
@@ -114,6 +115,7 @@ QVariant TableModelRotation::getDecorationRole(const QModelIndex &index) const {
 QVariant TableModelRotation::getColumnSizeHint(const QModelIndex &index) const {
     switch (index.column()) {
         case COL_REGULAR:
+        case COL_PAUSE:
         case COL_DELETE:
         case COL_ID: {
             return QFontMetrics(m_settings.applicationFont()).size(Qt::TextSingleLine, "_00");
@@ -147,6 +149,8 @@ QVariant TableModelRotation::getDisplayData(const QModelIndex &index) const {
 }
 
 QVariant TableModelRotation::getTooltipData(const QModelIndex &index) const {
+    if (index.column() == COL_PAUSE)
+        return tr("Pause singer");
     QString toolTipText;
     int totalWaitDuration = 0;
     const auto &singer = m_singers.at(index.row());
@@ -534,6 +538,11 @@ void ItemDelegateRotation::resizeIconsForFont(const QFont &font) {
     m_iconCurSinger = QImage(m_curFontHeight, m_curFontHeight, QImage::Format_ARGB32);
     m_iconRegularOn = QImage(m_curFontHeight, m_curFontHeight, QImage::Format_ARGB32);
     m_iconRegularOff = QImage(m_curFontHeight, m_curFontHeight, QImage::Format_ARGB32);
+    m_iconPause = QImage(m_curFontHeight, m_curFontHeight, QImage::Format_ARGB32);
+    m_iconPause.fill(Qt::transparent);
+    QPainter painterPause(&m_iconPause);
+    QSvgRenderer pauseRenderer(thm + "actions/16/media-playback-pause.svg");
+    pauseRenderer.render(&painterPause);
     m_iconDelete.fill(Qt::transparent);
     m_iconCurSinger.fill(Qt::transparent);
     m_iconRegularOn.fill(Qt::transparent);
@@ -580,11 +589,12 @@ ItemDelegateRotation::paint(QPainter *painter, const QStyleOptionViewItem &optio
                     QRect(option.rect.x() + leftPad, option.rect.y() + topPad, m_curFontHeight, m_curFontHeight),
                     m_iconRegularOff);
         return;
-    } else if (index.column() == TableModelRotation::COL_DELETE) {
+    } else if (index.column() == TableModelRotation::COL_PAUSE ||
+               index.column() == TableModelRotation::COL_DELETE) {
         int topPad = (option.rect.height() - m_curFontHeight) / 2;
         int leftPad = (option.rect.width() - m_curFontHeight) / 2;
         painter->drawImage(QRect(option.rect.x() + leftPad, option.rect.y() + topPad, m_curFontHeight, m_curFontHeight),
-                           m_iconDelete);
+                           index.column() == TableModelRotation::COL_PAUSE ? m_iconPause : m_iconDelete);
         return;
     }
     QItemDelegate::paint(painter, option, index);

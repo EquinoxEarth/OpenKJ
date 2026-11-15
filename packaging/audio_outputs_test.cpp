@@ -550,7 +550,7 @@ static void checkPreviewDialogs(const QString &audioFilename, const QString &cdg
     require(zip, "Cannot create preview ZIP");
     auto discard = qScopeGuard([zip] { zip_discard(zip); });
     for (const auto &[name, path] : {std::pair{"song.wav", audioFilename}, std::pair{"song.cdg", cdgFilename}}) {
-        auto *source = zip_source_file(zip, QFile::encodeName(path).constData(), 0, 0);
+        auto *source = zip_source_file(zip, okj::zipFilePath(path).constData(), 0, 0);
         require(source, "Cannot read preview ZIP fixture");
         if (zip_file_add(zip, name, source, ZIP_FL_ENC_UTF_8) < 0) {
             zip_source_free(source);

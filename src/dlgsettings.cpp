@@ -315,6 +315,10 @@ DlgSettings::DlgSettings(MediaBackend &AudioBackend, MediaBackend &BmAudioBacken
     connect(ui->checkBoxLazyLoadDurations, &QCheckBox::toggled, &m_settings, &Settings::dbSetLazyLoadDurations);
     connect(ui->checkBoxMonitorDirs, &QCheckBox::toggled, &m_settings, &Settings::dbSetDirectoryWatchEnabled);
     connect(ui->spinBoxSystemId, qOverload<int>(&QSpinBox::valueChanged), &m_settings, &Settings::setSystemId);
+    connect(ui->spinBoxSystemId, qOverload<int>(&QSpinBox::valueChanged), &songbookApi,
+            &OKJSongbookAPI::configurationChanged);
+    connect(ui->lineEditUrl, &QLineEdit::textEdited, this, &DlgSettings::cancelRequestServerTest);
+    connect(ui->lineEditApiKey, &QLineEdit::textEdited, this, &DlgSettings::cancelRequestServerTest);
     connect(ui->checkBoxTreatAllSingersAsRegs, &QAbstractButton::toggled, &m_settings,
             &Settings::setTreatAllSingersAsRegs);
     connect(ui->checkBoxShowAddDlgOnDbDblclk, &QCheckBox::toggled,
@@ -533,6 +537,9 @@ void DlgSettings::setupRotationDisplayPage()
 }
 
 DlgSettings::~DlgSettings() {
+    auto *network = m_requestTest;
+    m_requestTest = nullptr;
+    delete network;
     delete ui;
 }
 
@@ -751,18 +758,23 @@ void DlgSettings::on_groupBoxTicker_toggled(bool arg1) {
 
 void DlgSettings::on_lineEditUrl_editingFinished() {
     m_settings.setRequestServerUrl(ui->lineEditUrl->text());
+    songbookApi.configurationChanged();
 }
 
 void DlgSettings::on_checkBoxIgnoreCertErrors_toggled(bool checked) {
     if (!m_pageSetupDone)
         return;
+    cancelRequestServerTest();
     m_settings.setRequestServerIgnoreCertErrors(checked);
+    songbookApi.configurationChanged();
 }
 
 void DlgSettings::on_groupBoxRequestServer_toggled(bool arg1) {
     if (!m_pageSetupDone)
         return;
+    cancelRequestServerTest();
     m_settings.setRequestServerEnabled(arg1);
+    songbookApi.configurationChanged();
     emit requestServerEnableChanged(arg1);
 }
 
@@ -924,6 +936,7 @@ void DlgSettings::on_rbBgImage_toggled(bool checked) {
 
 void DlgSettings::on_lineEditApiKey_editingFinished() {
     m_settings.setRequestServerApiKey(ui->lineEditApiKey->text());
+    songbookApi.configurationChanged();
 }
 
 void DlgSettings::on_checkBoxShowKAAAlert_toggled(bool checked) {
@@ -1050,36 +1063,33 @@ void DlgSettings::on_spinBoxAppFontSize_valueChanged(int arg1) {
 }
 
 void DlgSettings::on_btnTestReqServer_clicked() {
-    auto api = new OKJSongbookAPI(this);
-    connect(api, &OKJSongbookAPI::testFailed, this, &DlgSettings::reqSvrTestError);
-    connect(api, &OKJSongbookAPI::testSslError, this, &DlgSettings::reqSvrTestSslError);
-    connect(api, &OKJSongbookAPI::testPassed, this, &DlgSettings::reqSvrTestPassed);
-    api->test();
-
-    delete api;
+    if (m_requestTest)
+        return;
+    m_requestTest = new QNetworkAccessManager(this);
+    ui->btnTestReqServer->setEnabled(false);
+    OKJSongbookAPI::testConnection(*m_requestTest, QUrl(ui->lineEditUrl->text()),
+        ui->lineEditApiKey->text(), ui->checkBoxIgnoreCertErrors->isChecked(),
+        [this, network = m_requestTest](const QString &error) {
+            if (m_requestTest != network)
+                return;
+            cancelRequestServerTest();
+            auto *message = new QMessageBox(error.isEmpty() ? QMessageBox::Information : QMessageBox::Warning,
+                tr("Songbook connection test"),
+                error.isEmpty() ? tr("The server accepted the connection and API key.") : error,
+                QMessageBox::Ok, this);
+            message->setAttribute(Qt::WA_DeleteOnClose);
+            message->open();
+        });
 }
 
-void DlgSettings::reqSvrTestError(QString error) {
-    QMessageBox msgBox;
-    msgBox.setWindowTitle("Request server test failed!");
-    msgBox.setText("Request server connection test was unsuccessful!");
-    msgBox.setInformativeText("Error msg:\n" + error);
-    msgBox.exec();
-}
-
-void DlgSettings::reqSvrTestSslError(QString error) {
-    QMessageBox msgBox;
-    msgBox.setWindowTitle("Request server test failed!");
-    msgBox.setText("Request server connection test was unsuccessful due to SSL errors!");
-    msgBox.setInformativeText("Error msg:\n" + error);
-    msgBox.exec();
-}
-
-void DlgSettings::reqSvrTestPassed() {
-    QMessageBox msgBox;
-    msgBox.setWindowTitle("Request server test passed");
-    msgBox.setText("Request server connection test was successful.  Server info and API key appear to be valid");
-    msgBox.exec();
+void DlgSettings::cancelRequestServerTest()
+{
+    if (!m_requestTest)
+        return;
+    // Destroy after the current network callback returns, if one is active.
+    m_requestTest->deleteLater();
+    m_requestTest = nullptr;
+    ui->btnTestReqServer->setEnabled(true);
 }
 
 void DlgSettings::on_checkBoxIncludeEmptySingers_clicked(bool checked) {
@@ -1309,6 +1319,7 @@ void DlgSettings::on_checkBoxCurrentSingerTop_toggled(bool checked) {
 
 
 void DlgSettings::closeEvent([[maybe_unused]]QCloseEvent *event) {
+    cancelRequestServerTest();
     m_settings.saveWindowState(this);
     deleteLater();
 }

@@ -1,5 +1,6 @@
 #include "dlgrequests.h"
 #include "ui_dlgrequests.h"
+#include <QApplication>
 #include <QDesktopServices>
 #include <QMenu>
 #include <QMessageBox>
@@ -62,6 +63,13 @@ DlgRequests::DlgRequests(TableModelRotation &rotationModel, OKJSongbookAPI &song
     connect(&songbookApi, &OKJSongbookAPI::synchronized, this, &DlgRequests::updateReceived);
     connect(&songbookApi, &OKJSongbookAPI::sslError, this, &DlgRequests::sslError);
     connect(&songbookApi, &OKJSongbookAPI::delayError, this, &DlgRequests::delayError);
+    connect(&songbookApi, &OKJSongbookAPI::requestActionFailed, this, [this](const QString &error) {
+        ui->checkBoxAccepting->setChecked(songbookApi.getAccepting());
+        auto *notice = new QMessageBox(QMessageBox::Warning, tr("Songbook request"), error,
+                                       QMessageBox::Ok, isVisible() ? this : QApplication::activeWindow());
+        notice->setAttribute(Qt::WA_DeleteOnClose);
+        notice->open();
+    });
     ui->comboBoxAddPosition->setEnabled(false);
     ui->comboBoxSingers->setEnabled(true);
     ui->lineEditSingerName->setEnabled(false);
@@ -386,7 +394,11 @@ void DlgRequests::venuesChanged(OkjsVenues venues) {
         }
     }
     ui->comboBoxVenue->setCurrentIndex(selItem);
-    m_settings.setRequestServerVenue(ui->comboBoxVenue->itemData(selItem).toInt());
+    const int selectedVenue = ui->comboBoxVenue->itemData(selItem).toInt();
+    if (selectedVenue != venue) {
+        m_settings.setRequestServerVenue(selectedVenue);
+        songbookApi.refreshRequests();
+    }
     ui->checkBoxAccepting->setChecked(songbookApi.getAccepting());
 }
 

@@ -6,13 +6,15 @@
 #include <QObject>
 #include <QUrl>
 #include <QTimer>
+#include <QTime>
+#include <QElapsedTimer>
+#include <QJsonObject>
+#include <QSet>
+#include <functional>
 #include "settings.h"
 #include "songbookupload.h"
 #include <spdlog/spdlog.h>
-#include <spdlog/async_logger.h>
-#include "logging.h"
 
-std::ostream& operator<<(std::ostream& os, const QString& s);
 
 
 class OkjsRequest
@@ -40,7 +42,6 @@ public:
     bool operator == (const OkjsVenue& v) const;
 };
 
-std::ostream& operator<<(std::ostream& os, const OkjsVenue& v);
 
 
 typedef QList<OkjsVenue> OkjsVenues;
@@ -53,29 +54,56 @@ private:
     std::shared_ptr<spdlog::logger> m_logger;
     int serial;
     OkjsVenues venues;
+    bool venuesLoaded = false;
     OkjsRequests requests;
     QNetworkAccessManager *manager;
     QTimer *timer;
     QTimer *alertTimer;
-    QTime lastSync;
+    QElapsedTimer syncAge;
     bool delayErrorEmitted;
     bool connectionReset;
     int entitledSystems;
     bool programIsIdle;
     Settings m_settings;
     okj::SongbookUpload m_songDbUpload{this};
+    struct Configuration {
+        QUrl url;
+        QString apiKey;
+        int venue;
+        int system;
+        bool enabled;
+        bool ignoreCertificates;
+        bool operator==(const Configuration &) const = default;
+    };
+    Configuration configuration;
+    quint64 generation = 0;
+    int deadlineMs;
+    bool sslErrorReported = false;
+    QSet<QString> polls;
+    QSet<QString> repeatPolls;
+    QSet<QNetworkReply *> activeReplies;
+
+    Configuration currentConfiguration();
+    void post(const QString &command, QJsonObject payload, bool poll, bool repeat = false);
+    void handleReply(const QString &command, const QJsonObject &response);
+    void refreshLists();
+    void markSynchronized();
 
 public:
-    explicit OKJSongbookAPI(QObject *parent = nullptr);
+    explicit OKJSongbookAPI(QObject *parent = nullptr, QNetworkAccessManager *network = nullptr,
+                            int requestDeadlineMs = 10000);
+    void configurationChanged();
     void getSerial();
     void refreshRequests();
     void removeRequest(int requestId);
     bool getAccepting();
     void setAccepting(bool enabled);
-    void refreshVenues(bool blocking = false);
+    void refreshVenues();
     void clearRequests();
     void updateSongDb();
-    bool test();
+    static void testConnection(QNetworkAccessManager &network, const QUrl &url, const QString &apiKey,
+                               bool ignoreCertificates, std::function<void(QString)> finished,
+                               int deadlineMs = 10000);
     void alertCheck();
     void getEntitledSystemCount();
     [[nodiscard]] int entitledSystemCount() const { return entitledSystems; }
@@ -90,9 +118,7 @@ signals:
     void requestsChanged(OkjsRequests);
     void synchronized(QTime);
     void delayError(int);
-    void testPassed();
-    void testFailed(QString error);
-    void testSslError(QString error);
+    void requestActionFailed(QString message);
     void alertRecieved(QString title, QString message);
     void entitledSystemCountChanged(int count);
 
@@ -103,9 +129,6 @@ public slots:
 
 
 private slots:
-        void onSslErrors(QNetworkReply * reply, const QList<QSslError>& errors);
-        void onTestSslErrors(QNetworkReply * reply, QList<QSslError> errors);
-        void onNetworkReply(QNetworkReply* reply);
         void timerTimeout();
         void alertTimerTimeout();
         void idleStateChanged(bool isIdle);

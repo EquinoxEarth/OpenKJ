@@ -1,6 +1,8 @@
 #include "zipfilepath.h"
 #include "okjversion.h"
 #include "songbookupload.h"
+#include "okjsongbookapi.h"
+#include "idledetect.h"
 #include "songshop.h"
 #include "updatechecker.h"
 
@@ -25,6 +27,8 @@
 #include <cstring>
 #include <spdlog/sinks/null_sink.h>
 #include <zip.h>
+
+IdleDetect *filter = nullptr;
 
 struct Response {
     QByteArray body;
@@ -236,6 +240,119 @@ private slots:
         settings->setStoreDownloadDir(savedFolder);
         settings->setUpdatesBranch(savedBranch);
         settings->setCheckUpdates(savedChecks);
+    }
+
+    void requestPollingRejectsBadListsAndChangesVenue()
+    {
+        const bool enabled = settings->requestServerEnabled();
+        const auto url = settings->requestServerUrl();
+        const int venue = settings->requestServerVenue();
+        const auto restore = qScopeGuard([&] {
+            settings->setRequestServerEnabled(enabled);
+            settings->setRequestServerUrl(url);
+            settings->setRequestServerVenue(venue);
+        });
+        settings->setRequestServerEnabled(false);
+        settings->setRequestServerUrl("https://songbook.example.test");
+        settings->setRequestServerVenue(1);
+        ScriptedNetwork network;
+        OKJSongbookAPI api(nullptr, &network, 150);
+        api.setInterval(60);
+        settings->setRequestServerEnabled(true);
+        QList<OkjsRequests> updates;
+        connect(&api, &OKJSongbookAPI::requestsChanged, this, [&](const auto &rows) { updates.append(rows); });
+        QSignalSpy failures(&api, &OKJSongbookAPI::requestActionFailed);
+        const QByteArray valid = R"({"command":"getRequests","requests":[{"request_id":9,"artist":"Artist","title":"Title","singer":"Singer","request_time":123,"key_change":-1}]})";
+        network.responses.append({valid});
+        api.refreshRequests();
+        api.refreshRequests();
+        QCOMPARE(network.requests.size(), 1);
+        QTRY_COMPARE(updates.size(), 1);
+        QCOMPARE(updates.first().first().requestId, 9);
+        QTRY_VERIFY(network.latest.isNull());
+
+        for (const auto &bad : {QByteArray(R"({"command":"getRequests","requests":[{}]})"),
+                               QByteArray(R"({"command":"getVenues","requests":[]})"),
+                               QByteArray(R"({"command":"getRequests"})")}) {
+            network.responses.append({bad});
+            api.refreshRequests();
+            QTRY_VERIFY(network.latest.isNull());
+            QCOMPARE(updates.size(), 1);
+        }
+
+        network.responses.append({{}, 200, {}, QNetworkReply::NoError, true});
+        api.refreshRequests();
+        QTRY_VERIFY(network.latest.isNull());
+        QCOMPARE(updates.size(), 1);
+
+        network.responses.append({valid});
+        api.refreshRequests();
+        const auto oldReply = network.latest;
+        settings->setRequestServerVenue(2);
+        network.responses.append({R"({"command":"getRequests","requests":[]})"});
+        api.refreshRequests();
+        QVERIFY(oldReply.isNull() || oldReply->isFinished());
+        QCOMPARE(QJsonDocument::fromJson(network.payloads.last()).object().value("venue_id").toInt(), 2);
+        QTRY_VERIFY(network.latest.isNull());
+        QCOMPARE(updates.size(), 2);
+        QVERIFY(updates.last().isEmpty());
+
+        network.responses.append({{}, 200, {}, QNetworkReply::RemoteHostClosedError});
+        api.removeRequest(9);
+        QTRY_COMPARE(failures.size(), 1);
+        QVERIFY(failures.first().first().toString().contains("Scripted network error"));
+    }
+
+    void confirmedSongbookActionRefreshesAfterPendingPoll()
+    {
+        const bool enabled = settings->requestServerEnabled();
+        const auto restore = qScopeGuard([&] { settings->setRequestServerEnabled(enabled); });
+        settings->setRequestServerEnabled(false);
+        ScriptedNetwork network;
+        OKJSongbookAPI api(nullptr, &network, 100);
+        api.setInterval(60);
+        settings->setRequestServerEnabled(true);
+        int updates = 0;
+        connect(&api, &OKJSongbookAPI::requestsChanged, this, [&](const auto &) { ++updates; });
+
+        network.responses.append({{}, 200, {}, QNetworkReply::NoError, true});
+        network.responses.append({R"({"command":"clearRequests","error":false})"});
+        network.responses.append({R"({"command":"getVenues","venues":[]})"});
+        network.responses.append({R"({"command":"getEntitledSystemCount","count":1})"});
+        network.responses.append({R"({"command":"getRequests","requests":[{"request_id":8,"artist":"Artist","title":"Title","singer":"New singer","request_time":124,"key_change":0}]})"});
+        api.refreshRequests();
+        api.clearRequests();
+        QTRY_COMPARE(updates, 1);
+        QCOMPARE(network.payloads.size(), 5);
+        QCOMPARE(QJsonDocument::fromJson(network.payloads.last()).object().value("command").toString(),
+                 QString("getRequests"));
+    }
+
+    void connectionTestTimesOutAndCanBeDestroyed()
+    {
+        ScriptedNetwork network;
+        const QUrl url("https://songbook.example.test");
+        QStringList results;
+        const auto finished = [&](const QString &error) { results.append(error); };
+        network.responses.append({{}, 200, {}, QNetworkReply::NoError, true});
+        OKJSongbookAPI::testConnection(network, url, "test-key", false, finished, 25);
+        QVERIFY(results.isEmpty());
+        QTRY_COMPARE(results.size(), 1);
+        QVERIFY(results.first().contains("timed out"));
+
+        network.responses.append({R"({"command":"getSerial","error":"false","serial":"25"})"});
+        OKJSongbookAPI::testConnection(network, url, "test-key", false, finished);
+        QTRY_COMPARE(results.size(), 2);
+        QVERIFY(results.last().isEmpty());
+
+        auto closing = std::make_unique<ScriptedNetwork>();
+        closing->responses.append({{}, 200, {}, QNetworkReply::NoError, true});
+        OKJSongbookAPI::testConnection(*closing, url, "test-key", false, finished, 10);
+        const auto reply = closing->latest;
+        closing.reset();
+        QVERIFY(reply.isNull());
+        QTest::qWait(25);
+        QCOMPARE(results.size(), 2);
     }
 
     void updateChecksFilterPlatformAndChannelAndCompareVersions()

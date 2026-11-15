@@ -65,6 +65,7 @@ private:
         QString sequenceName;
     };
     OKJSongbookAPI &songbookApi;
+    QNetworkAccessManager *m_requestTest = nullptr;
     Settings m_settings;
 
 
@@ -162,9 +163,7 @@ private slots:
     void on_fontComboBox_currentFontChanged(const QFont &f);
     void on_spinBoxAppFontSize_valueChanged(int arg1);
     void on_btnTestReqServer_clicked();
-    void reqSvrTestError(QString error);
-    void reqSvrTestSslError(QString error);
-    void reqSvrTestPassed();
+    void cancelRequestServerTest();
     void on_checkBoxIncludeEmptySingers_clicked(bool checked);
     void on_spinBoxDefaultPadTime_valueChanged(int arg1);
     void on_spinBoxDefaultSongDuration_valueChanged(int arg1);

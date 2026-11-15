@@ -414,7 +414,8 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     set_tests_properties(audio-recorder PROPERTIES TIMEOUT 15)
     add_executable(openkj-network-handling-test
         packaging/network_handling_test.cpp src/songshop.cpp src/updatechecker.cpp
-        src/songbookupload.cpp src/mzarchive.cpp src/settings.cpp src/simplecrypt.cpp)
+        src/songbookupload.cpp src/okjsongbookapi.cpp src/idledetect.cpp
+        src/mzarchive.cpp src/settings.cpp src/simplecrypt.cpp)
     target_link_libraries(openkj-network-handling-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Network
         Qt6::Concurrent Qt6::Sql spdlog::spdlog zip tag)
     add_test(NAME network-handling COMMAND openkj-network-handling-test)

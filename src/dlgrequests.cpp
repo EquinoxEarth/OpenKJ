@@ -309,6 +309,10 @@ void DlgRequests::on_pushButtonAddSong_clicked() {
     );
     int keyChg = ui->spinBoxKey->value();
     if (ui->radioButtonNewSinger->isChecked()) {
+        if (rotModel.pausedSingerExists(ui->lineEditSingerName->text())) {
+            QMessageBox::warning(this, tr("Singer paused"), tr("Resume this singer from the Paused list."));
+            return;
+        }
         if (ui->lineEditSingerName->text() == "" || rotModel.singerExists(ui->lineEditSingerName->text()))
             return;
         int newSingerId = rotModel.singerAdd(ui->lineEditSingerName->text(),

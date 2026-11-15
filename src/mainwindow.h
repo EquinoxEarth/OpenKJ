@@ -183,6 +183,12 @@ private:
     std::optional<KaraokePlaybackRequest> m_pendingKaraokePlayback;
     std::optional<KaraokePlaybackRequest> m_startingKaraokePlayback;
     bool m_karaokeStopReady{false};
+    int m_preparingSingerId{-1};
+    int m_singerPausePending{-1};
+    QPointer<QDialog> m_pausedSingersDialog;
+    bool canPauseSinger(int singerId) const;
+    void setSingerPaused(int singerId, bool paused);
+    void showPausedSingers();
 
     void requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning);
     void requestRotationSong(const okj::RotationSinger &singer, InterruptionWarning warning, bool selectSinger);

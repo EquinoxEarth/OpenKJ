@@ -204,13 +204,42 @@ void TableModelRotation::commitChanges() {
 }
 
 void TableModelRotation::onRotationLoaded(const QList<okj::RotationSinger> &singers) {
-    emit layoutAboutToBeChanged();
-    m_expectedState = singers;
+    QList<int> previousPaused, loadedPaused;
+    for (const auto &singer : m_pausedSingers)
+        previousPaused.append(singer.id);
+    for (const auto &singer : singers)
+        if (singer.paused)
+            loadedPaused.append(singer.id);
+    const bool changedPausedList = previousPaused != loadedPaused;
+    if (changedPausedList)
+        beginResetModel();
+    else
+        emit layoutAboutToBeChanged();
+    const int oldCurrentPosition = getSinger(m_currentSingerId).position;
+    m_expectedState.clear();
+    m_pausedSingers.clear();
     m_singers.clear();
     for (const auto &singer : singers) {
-        m_singers.push_back(singer);
+        if (singer.paused) {
+            m_pausedSingers.append(singer);
+        } else {
+            m_singers.push_back(singer);
+            m_expectedState.append(singer);
+        }
     }
-    emit layoutChanged();
+    // Keep the next turn when the previous singer is paused between songs.
+    if (std::any_of(m_pausedSingers.cbegin(), m_pausedSingers.cend(), [this](const auto &singer) {
+        return singer.id == m_currentSingerId;
+    })) {
+        m_currentSingerId = -1;
+        if (!m_settings.rotationAltSortOrder() && oldCurrentPosition > 0 && !m_singers.empty())
+            m_currentSingerId = m_singers.at(qMin(oldCurrentPosition, int(m_singers.size())) - 1).id;
+        m_settings.setCurrentRotationPosition(m_currentSingerId);
+    }
+    if (changedPausedList)
+        endResetModel();
+    else
+        emit layoutChanged();
     emit rotationModified();
 }
 
@@ -335,6 +364,12 @@ void TableModelRotation::singerDelete(const int singerId) {
     outputRotationDebug();
 }
 
+bool TableModelRotation::pausedSingerExists(const QString &name) const {
+    return std::any_of(m_pausedSingers.cbegin(), m_pausedSingers.cend(), [&name](const auto &singer) {
+        return singer.name.compare(name, Qt::CaseInsensitive) == 0;
+    });
+}
+
 bool TableModelRotation::singerExists(const QString &name) const {
     auto it = std::find_if(m_singers.begin(), m_singers.end(), [&name](const okj::RotationSinger &singer) {
         return (name.toLower() == singer.name.toLower());
@@ -422,6 +457,7 @@ void TableModelRotation::clearRotation() {
     emit layoutAboutToBeChanged();
     m_singers.clear();
     m_expectedState.clear();
+    m_pausedSingers.clear();
     m_settings.setCurrentRotationPosition(-1);
     m_currentSingerId = -1;
     emit layoutChanged();
@@ -722,6 +758,19 @@ okj::RotationSinger TableModelRotation::nextSinger() const
 {
     const auto positions = upcomingSingerPositions(1, false);
     return positions.isEmpty() ? InvalidSinger : m_singers[positions.first()];
+}
+
+int TableModelRotation::resumeAfterSingerId() const
+{
+    // Anchor to the next turn in the rotation, even if autoplay would skip it.
+    const auto positions = upcomingSingerPositions(1, true);
+    if (positions.isEmpty())
+        return -1;
+
+    const int nextId = m_singers[positions.first()].id;
+    if (nextId == m_currentSingerId && m_settings.rotationAltSortOrder())
+        return -1;
+    return nextId;
 }
 
 QStringList TableModelRotation::upcomingSingerNames(int limit, bool includeEmpty) const

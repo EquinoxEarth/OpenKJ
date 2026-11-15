@@ -18,6 +18,10 @@ DlgAddSinger::DlgAddSinger(TableModelRotation &rotationModel, QWidget *parent) :
 DlgAddSinger::~DlgAddSinger() = default;
 
 void DlgAddSinger::addSinger() {
+    if (m_rotModel.pausedSingerExists(ui->lineEditName->text())) {
+        QMessageBox::warning(this, tr("Singer paused"), tr("Resume this singer from the Paused list."));
+        return;
+    }
     if (m_rotModel.singerExists(ui->lineEditName->text())) {
         QMessageBox::warning(this, "Unable to add singer", "A singer with the same name already exists.");
         return;

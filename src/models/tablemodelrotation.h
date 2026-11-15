@@ -72,9 +72,12 @@ public:
     [[nodiscard]] int rotationDuration() const;
     void invalidateWaitEstimates();
     [[nodiscard]] size_t singerCount();
+    [[nodiscard]] const QList<okj::RotationSinger> &pausedSingers() const { return m_pausedSingers; }
+    [[nodiscard]] bool pausedSingerExists(const QString &name) const;
     [[nodiscard]] bool singerExists(const QString &name) const;
     [[nodiscard]] QStringList singers() const;
     [[nodiscard]] okj::RotationSinger nextSinger() const;
+    [[nodiscard]] int resumeAfterSingerId() const;
     [[nodiscard]] QStringList upcomingSingerNames(int limit, bool includeEmpty) const;
     [[nodiscard]] int singerTurnDistance(int singerId) const;
     void loadData();
@@ -99,6 +102,7 @@ private:
     std::string m_loggingPrefix{"[RotationModel]"};
     std::shared_ptr<spdlog::logger> m_logger;
     std::vector<okj::RotationSinger> m_singers;
+    QList<okj::RotationSinger> m_pausedSingers;
     int m_currentSingerId{-1};
     int m_rotationTopSingerId{-1};
     QImage m_iconGreenCircle;

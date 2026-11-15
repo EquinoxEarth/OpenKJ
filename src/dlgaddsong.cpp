@@ -207,6 +207,10 @@ void DlgAddSong::pushButtonAddClicked()
 {
     switch (m_rButtons.checkedId()) {
     case 0:
+        if (m_rotModel.pausedSingerExists(ui->lineEditNewSingerName->text())) {
+            QMessageBox::warning(this, tr("Singer paused"), tr("Resume this singer from the Paused list."));
+            return;
+        }
         if (ui->lineEditNewSingerName->text() == QString())
         {
             QMessageBox::warning(this, "No singer name specified", "You must enter a new singer name to add the song to.");
@@ -246,6 +250,10 @@ void DlgAddSong::pushButtonAddClicked()
         break;
     }
     case 2:
+        if (m_rotModel.pausedSingerExists(ui->comboBoxRegSingers->currentText())) {
+            QMessageBox::warning(this, tr("Singer paused"), tr("Resume this singer from the Paused list."));
+            return;
+        }
         if (m_rotModel.singerExists(ui->comboBoxRegSingers->currentText()))
         {
             int existingId = m_rotModel.getSingerByName(ui->comboBoxRegSingers->currentText()).id;

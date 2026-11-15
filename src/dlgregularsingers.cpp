@@ -139,6 +139,10 @@ void DlgRegularSingers::on_lineEditSearch_textChanged(const QString &arg1)
 void DlgRegularSingers::on_tableViewRegulars_doubleClicked(const QModelIndex &index)
 {
     QString singerName = index.sibling(index.row(), 1).data().toString();
+    if (m_rotModel->pausedSingerExists(singerName)) {
+        QMessageBox::warning(this, tr("Singer paused"), tr("Resume this singer from the Paused list."));
+        return;
+    }
     if (m_rotModel->singerExists(singerName))
     {
         if (m_rotModel->getSingerByName(singerName).regular)

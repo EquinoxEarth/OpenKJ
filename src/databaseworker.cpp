@@ -111,7 +111,7 @@ void DatabaseWorker::loadRotation()
             "SELECT r.singerid, r.name, r.position, r.regular, r.addts, "
             "(SELECT COUNT(*) FROM queueSongs WHERE singer = r.singerid AND played = 1), "
             "(SELECT COUNT(*) FROM queueSongs WHERE singer = r.singerid AND played = 0), "
-            "d.path, d.artist, d.title, d.discid, d.duration, q.keychg, q.qsongid "
+            "d.path, d.artist, d.title, d.discid, d.duration, q.keychg, q.qsongid, r.paused "
             "FROM rotationSingers r "
             "LEFT JOIN queueSongs q ON q.qsongid = ("
             "  SELECT next.qsongid FROM queueSongs next "
@@ -131,6 +131,7 @@ void DatabaseWorker::loadRotation()
             query.value(3).toBool(),
             query.value(4).toDateTime()
         );
+        singer.paused = query.value(14).toBool();
         singer.cachedNumSongsSung = query.value(5).toInt();
         singer.cachedNumSongsUnsung = query.value(6).toInt();
         if (!query.value(7).isNull()) {
@@ -191,7 +192,7 @@ void DatabaseWorker::addSinger(const QString &name, int positionHint, bool makeR
     if (!write(-1, [&] {
         QSqlQuery query(m_db);
         int addPos = 0;
-        execute(query, "SELECT COUNT(singerid) FROM rotationsingers");
+        execute(query, "SELECT COUNT(singerid) FROM rotationsingers WHERE paused = 0");
         if (query.next()) {
             addPos = query.value(0).toInt();
         }
@@ -217,7 +218,7 @@ void DatabaseWorker::addSingerWithSong(const QString &name, int positionHint, in
     if (!write(-1, [&] {
         QSqlQuery query(m_db);
         int addPos = 0;
-        execute(query, "SELECT COUNT(singerid) FROM rotationsingers");
+        execute(query, "SELECT COUNT(singerid) FROM rotationsingers WHERE paused = 0");
         if (query.next()) {
             addPos = query.value(0).toInt();
         }
@@ -278,6 +279,46 @@ void DatabaseWorker::setSingerRegular(int singerId, bool isRegular)
         execute(query);
     })) return;
     loadRotation();
+}
+
+void DatabaseWorker::setSingerPaused(int singerId, bool paused, int anchorId)
+{
+    if (write(-1, [&] {
+        QSqlQuery query(m_db);
+        query.prepare("SELECT position FROM rotationSingers WHERE singerid = ? AND paused = ?");
+        query.addBindValue(singerId);
+        query.addBindValue(!paused);
+        execute(query);
+        require(query.next(), "Singer changed while editing the rotation.");
+        int position = query.value(0).toInt();
+        query.finish();
+
+        if (!paused) {
+            position = 0;
+            if (anchorId >= 0) {
+                query.prepare("SELECT position FROM rotationSingers WHERE singerid = ? AND paused = 0");
+                query.addBindValue(anchorId);
+                execute(query);
+                require(query.next(), "The resume position changed. Please try again.");
+                position = query.value(0).toInt() + 1;
+                query.finish();
+            }
+        }
+
+        query.prepare(paused
+            ? "UPDATE rotationSingers SET position = position - 1 WHERE paused = 0 AND position > ?"
+            : "UPDATE rotationSingers SET position = position + 1 WHERE paused = 0 AND position >= ?");
+        query.addBindValue(position);
+        execute(query);
+        query.prepare("UPDATE rotationSingers SET paused = ?, position = ? WHERE singerid = ?");
+        query.addBindValue(paused);
+        query.addBindValue(paused ? -1 : position);
+        query.addBindValue(singerId);
+        execute(query);
+    })) {
+        loadRotation();
+    }
+    emit singerPauseFinished(singerId);
 }
 
 void DatabaseWorker::clearRotation()
@@ -437,7 +478,7 @@ void DatabaseWorker::commitRotation(const QList<okj::RotationSinger> &singers,
         Records baseline;
         for (const auto &s : expected)
             baseline.insert(s.id, {s.name, s.position, int(s.regular), s.addTs.toString(Qt::ISODateWithMs)});
-        auto current = records(m_db, "SELECT singerid, name, position, regular, addts FROM rotationsingers");
+        auto current = records(m_db, "SELECT singerid, name, position, regular, addts FROM rotationsingers WHERE paused = 0");
         // Normalize timestamps through the same conversion as loadRotation().
         for (auto &row : current) {
             row[1] = row[1].toInt();

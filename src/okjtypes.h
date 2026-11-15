@@ -40,6 +40,7 @@ namespace okj {
         int position{0};
         bool regular{false};
         QDateTime addTs;
+        bool paused{false};
         bool valid{true};
         std::shared_ptr<spdlog::logger> m_logger;
         std::shared_ptr<Settings> m_settings;

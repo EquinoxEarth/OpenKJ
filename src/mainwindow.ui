@@ -456,6 +456,28 @@
                      </property>
                     </widget>
                    </item>
+                   <item>
+                    <widget class="QPushButton" name="buttonPausedSingers">
+                     <property name="toolTip">
+                      <string>Paused singers</string>
+                     </property>
+                     <property name="accessibleName">
+                      <string>Paused singers</string>
+                     </property>
+                     <property name="text">
+                      <string/>
+                     </property>
+                     <property name="iconSize">
+                      <size>
+                       <width>32</width>
+                       <height>32</height>
+                      </size>
+                     </property>
+                     <property name="flat">
+                      <bool>false</bool>
+                     </property>
+                    </widget>
+                   </item>
                   </layout>
                  </item>
                 </layout>

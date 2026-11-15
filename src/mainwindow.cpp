@@ -18,6 +18,9 @@
 #include <QHeaderView>
 #include <QTableView>
 #include <QToolButton>
+#include <QDialogButtonBox>
+#include <QListWidget>
+#include <QVBoxLayout>
 #include <algorithm>
 #include "mzarchive.h"
 #include "mediapreparation.h"
@@ -85,6 +88,7 @@ void MainWindow::updateIcons() {
     ui->buttonClearRotation->setIcon(QIcon(thm + "actions/22/edit-clear-all.svg"));
     ui->buttonAddSinger->setIcon(QIcon(thm + "actions/22/list-add-user.svg"));
     ui->buttonRegulars->setIcon(QIcon(thm + "actions/22/user-others.svg"));
+    ui->buttonPausedSingers->setIcon(QIcon(thm + "actions/22/user-others-paused.svg"));
     ui->btnRotTop->setIcon(QIcon(thm + "actions/22/go-top.svg"));
     ui->btnRotUp->setIcon(QIcon(thm + "actions/22/go-up.svg"));
     ui->btnRotBottom->setIcon(QIcon(thm + "actions/22/go-bottom.svg"));
@@ -992,6 +996,7 @@ void MainWindow::setupConnections() {
     connect(ui->buttonClearQueue, &QPushButton::clicked, this, &MainWindow::clearSingerQueue);
     connect(ui->spinBoxKey, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::spinBoxKeyValueChanged);
     connect(ui->buttonRegulars, &QPushButton::clicked, &m_dlgRegularSingers, &DlgRegularSingers::toggleVisibility);
+    connect(ui->buttonPausedSingers, &QPushButton::clicked, this, &MainWindow::showPausedSingers);
     connect(ui->tableViewDB, &QTableView::customContextMenuRequested, this,
             &MainWindow::tableViewDBContextMenuRequested);
     connect(ui->tableViewQueue, &QTableView::customContextMenuRequested, this,
@@ -1190,6 +1195,14 @@ void MainWindow::initDatabaseWorker() {
 
     // Connection: Worker reads -> Models
     connect(m_dbWorker, &DatabaseWorker::rotationLoaded, &m_rotModel, &TableModelRotation::onRotationLoaded);
+    connect(m_dbWorker, &DatabaseWorker::singerPauseFinished, this, [this](int singerId) {
+        if (m_singerPausePending == singerId)
+            m_singerPausePending = -1;
+        if (!ui->tableViewRotation->selectionModel()->hasSelection()) {
+            m_qModel.loadSinger(-1);
+            tableViewRotationSelChanged();
+        }
+    });
     connect(m_dbWorker, &DatabaseWorker::queueLoaded, &m_qModel, &TableModelQueueSongs::onQueueLoaded);
 
     // Connection: Models requests -> Worker reads
@@ -1265,7 +1278,9 @@ bool MainWindow::discardKaraokeStart()
 
 void MainWindow::requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning)
 {
-    if (m_shuttingDown || request.song.path.isEmpty())
+    if (m_shuttingDown || request.song.path.isEmpty() ||
+        (request.trackSong && request.song.singerId > 0 && (request.song.singerId == m_singerPausePending ||
+                                      !m_rotModel.getSinger(request.song.singerId).isValid())))
         return;
 
     if (m_karaokeInterruptionPrompt)
@@ -1413,6 +1428,7 @@ void MainWindow::startKaraokePlayback(const KaraokePlaybackRequest &request)
     const auto filename = request.song.path;
     const auto cancelled = std::make_shared<std::atomic_bool>(false);
     m_mediaPreparationCancelled = cancelled;
+    m_preparingSingerId = request.song.singerId;
     auto *watcher = new QFutureWatcher<PreparedKaraokeMedia>(this);
     connect(watcher, &QFutureWatcher<PreparedKaraokeMedia>::finished, this,
             [this, watcher, cancelled, selection = request]() mutable {
@@ -1900,8 +1916,7 @@ void MainWindow::clearRotation() {
     }
     QMessageBox msgBox;
     msgBox.setText("Are you sure?");
-    msgBox.setInformativeText(
-            "This action will clear all rotation singers and queues. This operation can not be undone.");
+    msgBox.setInformativeText(tr("This will clear all active and paused singers and their queues. This cannot be undone."));
     msgBox.setIcon(QMessageBox::Warning);
     msgBox.addButton(QMessageBox::Cancel);
     QPushButton *yesButton = msgBox.addButton(QMessageBox::Yes);
@@ -2100,6 +2115,10 @@ void MainWindow::hasActiveVideoChanged() {
 void MainWindow::rotationDataChanged() {
     if (m_shuttingDown)
         return;
+    const auto pausedCount = m_rotModel.pausedSingers().size();
+    const auto pausedLabel = tr("Paused singers (%1)").arg(pausedCount);
+    ui->buttonPausedSingers->setToolTip(pausedLabel);
+    ui->buttonPausedSingers->setAccessibleName(pausedLabel);
     if (m_timerKaraokeAA.isActive()) {
         if (!updateKaraokeAutoAdvanceTarget()) {
             m_timerKaraokeAA.stop();
@@ -2239,12 +2258,90 @@ void MainWindow::tableViewRotationContextMenuRequested(const QPoint &pos) {
             contextMenu.addAction("Delete", &m_scutDeleteSinger, &QShortcut::activated);
         } else {
             contextMenu.addAction("Rename", this, &MainWindow::renameSinger);
+            const int singerId = m_rtClickRotationSingerId;
+            auto *pause = contextMenu.addAction(tr("Pause Singer"), this, [this, singerId] {
+                setSingerPaused(singerId, true);
+            });
+            pause->setEnabled(canPauseSinger(singerId));
             contextMenu.addAction("Set as top of rotation", [&]() {
                 m_rotModel.setRotationTopSingerId(m_rtClickRotationSingerId);
             });
         }
         contextMenu.exec(QCursor::pos());
     }
+}
+
+bool MainWindow::canPauseSinger(int singerId) const
+{
+    return singerId > 0 && m_singerPausePending < 0 && m_rotModel.getSinger(singerId).isValid() &&
+           !(m_karaokePlaybackActive && m_rotModel.currentSinger() == singerId) &&
+           !(m_mediaPreparationCancelled && m_preparingSingerId == singerId) &&
+           !(m_startingKaraokePlayback && m_startingKaraokePlayback->song.singerId == singerId) &&
+           !(m_pendingKaraokePlayback && m_pendingKaraokePlayback->song.singerId == singerId);
+}
+
+void MainWindow::setSingerPaused(int singerId, bool paused)
+{
+    if (m_singerPausePending >= 0 || (paused && !canPauseSinger(singerId)))
+        return;
+
+    const int anchorId = paused ? -1 : m_rotModel.resumeAfterSingerId();
+    m_singerPausePending = singerId;
+    QMetaObject::invokeMethod(m_dbWorker, [worker = m_dbWorker, singerId, paused, anchorId] {
+        worker->setSingerPaused(singerId, paused, anchorId);
+    }, Qt::QueuedConnection);
+}
+
+void MainWindow::showPausedSingers()
+{
+    if (m_pausedSingersDialog) {
+        m_pausedSingersDialog->raise();
+        m_pausedSingersDialog->activateWindow();
+        return;
+    }
+    auto *dialog = new QDialog(this);
+    m_pausedSingersDialog = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Paused Singers"));
+    auto *layout = new QVBoxLayout(dialog);
+    auto *list = new QListWidget(dialog);
+    list->setAccessibleName(tr("Paused singers"));
+    auto *empty = new QLabel(tr("No singers are paused."), dialog);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+    auto *resume = buttons->addButton(tr("Resume Singer"), QDialogButtonBox::ActionRole);
+    layout->addWidget(list);
+    layout->addWidget(empty);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+    connect(list, &QListWidget::currentItemChanged, dialog, [this, resume](QListWidgetItem *item) {
+        resume->setEnabled(item && m_singerPausePending < 0);
+    });
+    const auto refresh = [this, list, empty, resume] {
+        const int selected = list->currentItem() ? list->currentItem()->data(Qt::UserRole).toInt() : -1;
+        list->clear();
+        for (const auto &singer : m_rotModel.pausedSingers()) {
+            auto *item = new QListWidgetItem(tr("%1  (%n song(s) remaining)", nullptr, singer.numSongsUnsung())
+                                            .arg(singer.name), list);
+            item->setData(Qt::UserRole, singer.id);
+            if (singer.id == selected)
+                list->setCurrentItem(item);
+        }
+        if (!list->currentItem() && list->count())
+            list->setCurrentRow(0);
+        empty->setVisible(list->count() == 0);
+        resume->setEnabled(list->currentItem() && m_singerPausePending < 0);
+    };
+    connect(&m_rotModel, &TableModelRotation::rotationModified, dialog, refresh);
+    connect(m_dbWorker, &DatabaseWorker::singerPauseFinished, dialog, refresh);
+    connect(resume, &QPushButton::clicked, dialog, [this, list, resume] {
+        if (const auto *item = list->currentItem()) {
+            setSingerPaused(item->data(Qt::UserRole).toInt(), false);
+            resume->setEnabled(false);
+        }
+    });
+    refresh();
+    dialog->resize(360, 250);
+    dialog->show();
 }
 
 void MainWindow::sfxButtonContextMenuRequested([[maybe_unused]]const QPoint &pos) {
@@ -2449,6 +2546,10 @@ void MainWindow::markSongBad(const std::shared_ptr<okj::KaraokeSong>& song) {
 }
 
 void MainWindow::karaokeAATimerTimeout() {
+    if (m_singerPausePending > 0 && m_rotModel.nextSinger().id == m_singerPausePending) {
+        m_timerKaraokeAA.start(100);
+        return;
+    }
     m_logger->info("{} KaraokeAA - timer timeout", m_loggingPrefix);
     m_timerKaraokeAA.stop();
     updateAutoplayStatus();

@@ -8,6 +8,7 @@
 #include <QMimeData>
 #include <QPersistentModelIndex>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
@@ -74,11 +75,12 @@ private slots:
         QVERIFY(database.open());
         exec("CREATE TABLE rotationsingers (singerid INTEGER PRIMARY KEY, name TEXT, "
              "position INT, regular INT, regularid INT, addts TEXT)");
+        exec("ALTER TABLE rotationsingers ADD COLUMN paused INTEGER NOT NULL DEFAULT 0");
         exec("CREATE TABLE dbsongs (songid INTEGER PRIMARY KEY, artist TEXT, title TEXT, discid TEXT, "
              "duration INT, path TEXT, filename TEXT, searchstring TEXT, plays INT, lastplay TEXT)");
         exec("CREATE TABLE queuesongs (qsongid INTEGER PRIMARY KEY, singer INT, song INT, "
              "artist INT, title INT, discid INT, path INT, keychg INT, played INT, position INT)");
-        exec("INSERT INTO rotationsingers VALUES (1, 'A', 0, 0, -1, ''), "
+        exec("INSERT INTO rotationsingers (singerid, name, position, regular, regularid, addts) VALUES (1, 'A', 0, 0, -1, ''), "
              "(2, 'B', 1, 0, -1, ''), (3, 'Empty', 2, 0, -1, '')");
         exec("INSERT INTO dbsongs VALUES (1, 'Artist A', 'Song A', 'A', 1000, '/a', 'a', 'a', 0, ''), "
              "(2, 'Artist B', 'Song B', 'B', 2000, '/b', 'b', 'b', 0, ''), "
@@ -288,6 +290,88 @@ private slots:
                 tiedIds.append(song.id);
         }
         QCOMPARE(tiedIds, QList<int>({20, 21}));
+    }
+
+    void pausedSingerKeepsQueueAndResumesBehindOnDeck()
+    {
+        Settings settings;
+        const bool altOrder = settings.rotationAltSortOrder();
+        const int current = settings.currentRotationPosition();
+        const auto restore = qScopeGuard([&] {
+            settings.setRotationAltSortOrder(altOrder);
+            settings.setCurrentRotationPosition(current);
+        });
+        settings.setRotationAltSortOrder(false);
+        exec("UPDATE queuesongs SET keychg = -3, played = 1 WHERE qsongid = 21");
+        TableModelRotation rotation;
+        connect(worker.get(), &DatabaseWorker::rotationLoaded, &rotation, &TableModelRotation::onRotationLoaded);
+        connect(&rotation, &TableModelRotation::requestCommitRotation, worker.get(), &DatabaseWorker::commitRotation);
+        QSignalSpy errors(worker.get(), &DatabaseWorker::errorOccurred);
+        worker->loadRotation();
+        worker->setSingerPaused(2, true, -1);
+        QCOMPARE(rotation.pausedSingers().size(), 1);
+        QVERIFY(rotation.pausedSingerExists("b"));
+        QVERIFY(!rotation.getSinger(2).isValid());
+        QCOMPARE(rotation.nextSinger().id, 1);
+
+        // An active-only write must preserve the omitted paused singer and their songs.
+        rotation.singerMove(1, 0);
+        QCOMPARE(errors.size(), 0);
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs WHERE singer = 2").toInt(), 2);
+        rotation.singerMove(0, 1);
+        QCOMPARE(rotation.resumeAfterSingerId(), 1);
+        worker->setSingerPaused(2, false, rotation.resumeAfterSingerId());
+        QVERIFY(rotation.pausedSingers().isEmpty());
+        QCOMPARE(rotation.upcomingSingerNames(3, false), QStringList({"A", "B"}));
+        QCOMPARE(value("SELECT keychg FROM queuesongs WHERE qsongid = 21").toInt(), -3);
+        QCOMPARE(value("SELECT played FROM queuesongs WHERE qsongid = 21").toInt(), 1);
+        QCOMPARE(value("SELECT position FROM queuesongs WHERE qsongid = 22").toInt(), 1);
+
+        // A paused current cursor should retain its next singer in circular mode.
+        rotation.setCurrentSinger(1);
+        QCOMPARE(rotation.nextSinger().id, 2);
+        worker->setSingerPaused(1, true, -1);
+        QCOMPARE(rotation.nextSinger().id, 2);
+        worker->setSingerPaused(2, true, -1);
+        worker->setSingerPaused(3, true, -1);
+        QVERIFY(!rotation.nextSinger().isValid());
+        QCOMPARE(rotation.resumeAfterSingerId(), -1);
+        worker->setSingerPaused(2, false, -1);
+        QCOMPARE(rotation.nextSinger().id, 2);
+
+        worker->clearRotation();
+        QVERIFY(rotation.pausedSingers().isEmpty());
+        QCOMPARE(value("SELECT COUNT(*) FROM queuesongs").toInt(), 0);
+        QCOMPARE(errors.size(), 0);
+    }
+
+    void resumeFollowsOnDeckSingerWithoutAPlayableSong()
+    {
+        Settings settings;
+        const bool altOrder = settings.rotationAltSortOrder();
+        const int current = settings.currentRotationPosition();
+        const auto restore = qScopeGuard([&] {
+            settings.setRotationAltSortOrder(altOrder);
+            settings.setCurrentRotationPosition(current);
+        });
+        exec("UPDATE rotationSingers SET name = 'Mike' WHERE singerid = 1");
+        exec("UPDATE rotationSingers SET name = 'Alex' WHERE singerid = 2");
+        exec("UPDATE rotationSingers SET name = 'Larry' WHERE singerid = 3");
+        exec("UPDATE queueSongs SET played = 1 WHERE singer = 2");
+        exec("INSERT INTO queueSongs (qsongid, singer, song, keychg, played, position) VALUES (31, 3, 3, 0, 0, 0)");
+        TableModelRotation rotation;
+        connect(worker.get(), &DatabaseWorker::rotationLoaded, &rotation, &TableModelRotation::onRotationLoaded);
+        worker->loadRotation();
+        rotation.setCurrentSinger(1);
+
+        for (bool alternateOrder : {false, true}) {
+            settings.setRotationAltSortOrder(alternateOrder);
+            worker->setSingerPaused(3, true, -1);
+            QCOMPARE(rotation.nextSinger().id, 1);
+            QCOMPARE(rotation.resumeAfterSingerId(), 2);
+            worker->setSingerPaused(3, false, rotation.resumeAfterSingerId());
+            QCOMPARE(rotation.upcomingSingerNames(3, true), QStringList({"Alex", "Larry", "Mike"}));
+        }
     }
 
     void staleRotationCannotEraseDelayedSingerAddition()

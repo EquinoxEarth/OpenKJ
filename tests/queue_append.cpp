@@ -49,12 +49,12 @@ int main(int argc, char **argv)
         require(error.isEmpty(), "Cannot initialize database worker");
         auto db = QSqlDatabase::database("openkj_background");
         exec(db, "CREATE TABLE rotationsingers (singerid INTEGER PRIMARY KEY, name TEXT, "
-                 "position INT, regular INT, regularid INT, addts TEXT)");
+                 "position INT, regular INT, regularid INT, addts TEXT, paused INTEGER NOT NULL DEFAULT 0)");
         exec(db, "CREATE TABLE dbsongs (songid INTEGER PRIMARY KEY, artist TEXT, title TEXT, "
                  "discid TEXT, duration INT, path TEXT)");
         exec(db, "CREATE TABLE queuesongs (qsongid INTEGER PRIMARY KEY, singer INT, song INT, "
                  "artist INT, title INT, discid INT, path INT, keychg INT, played INT, position INT)");
-        exec(db, "INSERT INTO rotationsingers VALUES (1, 'Two songs', 0, 0, -1, ''), "
+        exec(db, "INSERT INTO rotationsingers (singerid, name, position, regular, regularid, addts) VALUES (1, 'Two songs', 0, 0, -1, ''), "
                  "(2, 'Seven songs', 1, 0, -1, ''), (3, 'Empty queue', 2, 0, -1, '')");
         for (int id = 1; id <= 12; ++id)
             exec(db, QString("INSERT INTO dbsongs VALUES (%1, 'Artist', 'Title', 'Disc', 1000, '/song%1')").arg(id));

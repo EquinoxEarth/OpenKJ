@@ -29,6 +29,7 @@ public slots:
     void deleteSinger(int singerId);
     void setSingerRegular(int singerId, bool isRegular);
     void clearRotation();
+    void setSingerPaused(int singerId, bool paused, int anchorId);
     
     void addSongToQueue(int singerId, int songId, int keyChange);
     void moveQueueSong(int singerId, int oldPosition, int newPosition);
@@ -46,6 +47,7 @@ signals:
     void queueLoaded(int singerId, quint64 requestId, const QList<okj::QueueSong> &songs);
     void singerAdded(int singerId, const QString &name, int positionHint);
     void rotationUpdated();
+    void singerPauseFinished(int singerId);
     void queueUpdated(int singerId);
     void karaokePlayRecorded(const okj::QueueSong &song, const QString &historySinger,
                              int plays, const QDateTime &playedAt);

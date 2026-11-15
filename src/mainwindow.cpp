@@ -19,6 +19,7 @@
 #include <QTableView>
 #include <QToolButton>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
 #include <QListWidget>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -2287,12 +2288,12 @@ bool MainWindow::canPauseSinger(int singerId) const
            !(m_pendingKaraokePlayback && m_pendingKaraokePlayback->song.singerId == singerId);
 }
 
-void MainWindow::setSingerPaused(int singerId, bool paused)
+void MainWindow::setSingerPaused(int singerId, bool paused, bool upNext)
 {
     if (m_singerPausePending >= 0 || (paused && !canPauseSinger(singerId)))
         return;
 
-    const int anchorId = paused ? -1 : m_rotModel.resumeAfterSingerId();
+    const int anchorId = paused ? -1 : m_rotModel.resumeAfterSingerId(upNext);
     m_singerPausePending = singerId;
     QMetaObject::invokeMethod(m_dbWorker, [worker = m_dbWorker, singerId, paused, anchorId] {
         worker->setSingerPaused(singerId, paused, anchorId);
@@ -2315,10 +2316,16 @@ void MainWindow::showPausedSingers()
     list->setAccessibleName(tr("Paused singers"));
     auto *empty = new QLabel(tr("No singers are paused."), dialog);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
-    auto *resume = buttons->addButton(tr("Resume Singer"), QDialogButtonBox::ActionRole);
+    auto *resume = new QPushButton(tr("Resume"), dialog);
+    auto *upNext = new QCheckBox(tr("Up Next"), dialog);
+    auto *actions = new QHBoxLayout;
+    actions->addWidget(resume);
+    actions->addWidget(upNext);
+    actions->addStretch();
+    actions->addWidget(buttons);
     layout->addWidget(list);
     layout->addWidget(empty);
-    layout->addWidget(buttons);
+    layout->addLayout(actions);
     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
     connect(list, &QListWidget::currentItemChanged, dialog, [this, resume](QListWidgetItem *item) {
         resume->setEnabled(item && m_singerPausePending < 0);
@@ -2340,9 +2347,9 @@ void MainWindow::showPausedSingers()
     };
     connect(&m_rotModel, &TableModelRotation::rotationModified, dialog, refresh);
     connect(m_dbWorker, &DatabaseWorker::singerPauseFinished, dialog, refresh);
-    connect(resume, &QPushButton::clicked, dialog, [this, list, resume] {
+    connect(resume, &QPushButton::clicked, dialog, [this, list, resume, upNext] {
         if (const auto *item = list->currentItem()) {
-            setSingerPaused(item->data(Qt::UserRole).toInt(), false);
+            setSingerPaused(item->data(Qt::UserRole).toInt(), false, upNext->isChecked());
             resume->setEnabled(false);
         }
     });

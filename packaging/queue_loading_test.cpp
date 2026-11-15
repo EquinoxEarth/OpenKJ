@@ -371,6 +371,11 @@ private slots:
             QCOMPARE(rotation.resumeAfterSingerId(), 2);
             worker->setSingerPaused(3, false, rotation.resumeAfterSingerId());
             QCOMPARE(rotation.upcomingSingerNames(3, true), QStringList({"Alex", "Larry", "Mike"}));
+
+            worker->setSingerPaused(3, true, -1);
+            QCOMPARE(rotation.resumeAfterSingerId(true), 1);
+            worker->setSingerPaused(3, false, rotation.resumeAfterSingerId(true));
+            QCOMPARE(rotation.upcomingSingerNames(3, true), QStringList({"Larry", "Alex", "Mike"}));
         }
     }
 

@@ -187,7 +187,7 @@ private:
     int m_singerPausePending{-1};
     QPointer<QDialog> m_pausedSingersDialog;
     bool canPauseSinger(int singerId) const;
-    void setSingerPaused(int singerId, bool paused);
+    void setSingerPaused(int singerId, bool paused, bool upNext = false);
     void showPausedSingers();
 
     void requestKaraokePlayback(KaraokePlaybackRequest request, InterruptionWarning warning);

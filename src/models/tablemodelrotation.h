@@ -78,7 +78,7 @@ public:
     [[nodiscard]] bool singerExists(const QString &name) const;
     [[nodiscard]] QStringList singers() const;
     [[nodiscard]] okj::RotationSinger nextSinger() const;
-    [[nodiscard]] int resumeAfterSingerId() const;
+    [[nodiscard]] int resumeAfterSingerId(bool upNext = false) const;
     [[nodiscard]] QStringList upcomingSingerNames(int limit, bool includeEmpty) const;
     [[nodiscard]] int singerTurnDistance(int singerId) const;
     void loadData();

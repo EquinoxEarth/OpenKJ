@@ -770,8 +770,13 @@ okj::RotationSinger TableModelRotation::nextSinger() const
     return positions.isEmpty() ? InvalidSinger : m_singers[positions.first()];
 }
 
-int TableModelRotation::resumeAfterSingerId() const
+int TableModelRotation::resumeAfterSingerId(bool upNext) const
 {
+    if (upNext) {
+        const auto &current = getSinger(m_currentSingerId);
+        return current.isValid() ? current.id : -1;
+    }
+
     // Anchor to the next turn in the rotation, even if autoplay would skip it.
     const auto positions = upcomingSingerPositions(1, true);
     if (positions.isEmpty())

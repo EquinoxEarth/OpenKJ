@@ -4,6 +4,13 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: 'Reviewed tag build run ID (leave both inputs blank to build)'
+        type: string
+      manifest_sha256:
+        description: 'SHA-256 of SHA256SUMS from the reviewed download'
+        type: string
 
 permissions:
   contents: read
@@ -17,17 +24,23 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      commit: ${{ steps.version.outputs.commit }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v5
       - name: Check release integrity gates
-        run: python3 -m unittest discover -s packaging/tests -p 'test_prepare_release.py' -v
+        run: |
+          python3 -m unittest discover -s packaging/tests -p 'test_prepare_release.py' -v
+          python3 -m unittest discover -s packaging -p 'test_publish_release.py' -v
       - name: Validate version and release channel
         id: version
         env:
           RELEASE_REF: ${{ github.ref }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
         run: |
           python3 - <<'PY'
-          import os, pathlib, re, xml.etree.ElementTree as ET
+          import os, pathlib, re, subprocess, xml.etree.ElementTree as ET
           header = pathlib.Path('src/okjversion.h').read_text()
           version = re.search(r'OKJ_VERSION_STRING "([^"\n]+)"', header)[1]
           parts = [re.search(r'OKJ_VERSION_' + part + r' (\d+)', header)[1]
@@ -54,13 +67,23 @@ jobs:
           expected_type = 'stable' if channel == 'stable' else 'development'
           if release is None or release.get('version') != version or release.get('type') != expected_type:
               raise SystemExit('Update Linux AppStream release metadata')
+          run_id = os.environ['CANDIDATE_RUN_ID']
+          checksum = os.environ['MANIFEST_SHA256']
+          promote = bool(run_id or checksum)
+          if promote and (not ref.startswith('refs/tags/') or not re.fullmatch(r'[1-9][0-9]*', run_id)
+                          or not re.fullmatch(r'[0-9a-f]{64}', checksum)):
+              raise SystemExit('Select the release tag and supply both the candidate run ID and the manifest SHA-256')
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               print('tag=' + tag, file=out)
+              print('commit=' + commit, file=out)
+              print('publish=' + str(promote).lower(), file=out)
           PY
 
   macos:
     name: macOS Build
     needs: validate
+    if: needs.validate.outputs.publish == 'false'
     uses: ./.github/workflows/macos-build.yml
     permissions:
       contents: write
@@ -68,6 +91,7 @@ jobs:
   windows:
     name: Windows Build
     needs: validate
+    if: needs.validate.outputs.publish == 'false'
     uses: ./.github/workflows/windows-test.yml
     permissions:
       contents: write
@@ -75,13 +99,12 @@ jobs:
   linux:
     name: Linux Build
     needs: validate
+    if: needs.validate.outputs.publish == 'false'
     uses: ./.github/workflows/linux-test.yml
 
-  publish:
+  candidate:
     needs: [validate, macos, windows, linux]
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -107,42 +130,58 @@ jobs:
       - name: Verify checksums, versions, and source provenance
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-        run: python3 packaging/prepare_release.py --artifacts downloads --output release --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: python3 packaging/prepare_release.py --artifacts downloads --output release --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT"
       - name: Upload staged release for review
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v6
         with:
           name: OpenKJ-release-candidate
           path: release/
           if-no-files-found: error
-      - name: Publish all platforms together
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Record candidate details
+        run: |
+          {
+            echo "Candidate run ID: $GITHUB_RUN_ID"
+            echo
+            echo 'SHA-256 of SHA256SUMS:'
+            echo
+            sha256sum release/SHA256SUMS
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: validate
+    if: needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify candidate run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" | jq -e \
+            --arg repo "$GITHUB_REPOSITORY" --arg commit "$RELEASE_COMMIT" \
+            '.path == ".github/workflows/release.yml" and
+             .head_repository.full_name == $repo and .head_sha == $commit and
+             .event == "push" and .conclusion == "success"'
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+          name: OpenKJ-release-candidate
+          path: release
+      - name: Publish reviewed candidate
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
         run: |
-          cd release
-          sha256sum --check SHA256SUMS
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo 'A release already exists for this tag; refusing to overwrite it.' >&2
-            exit 1
-          fi
-          VERSION="${RELEASE_TAG#v}"
-          VERSION="${VERSION%%-*}"
-          TITLE="OpenKJ $VERSION Preview"
-          RELEASE_FLAGS=(--prerelease)
-          MARK_LATEST=false
-          if [[ "$RELEASE_TAG" != *-* ]]; then
-            TITLE="OpenKJ $VERSION"
-            RELEASE_FLAGS=(--prerelease=false)
-            MARK_LATEST=true
-          elif [[ "$RELEASE_TAG" == *-beta.* ]]; then
-            TITLE="$VERSION Beta"
-            RELEASE_FLAGS=(--prerelease=false)
-            MARK_LATEST=true
-          fi
-          gh release create "$RELEASE_TAG" --verify-tag --draft --latest=false "${RELEASE_FLAGS[@]}" \
-            --title "$TITLE" --notes-file RELEASE_NOTES.md
-          gh release upload "$RELEASE_TAG" ./*
-          gh release edit "$RELEASE_TAG" --draft=false "${RELEASE_FLAGS[@]}" --latest="$MARK_LATEST"
+          python3 packaging/publish_release.py release --repo "$GH_REPO" --tag "$RELEASE_TAG" \
+            --commit "$RELEASE_COMMIT" --run-id "$CANDIDATE_RUN_ID" --manifest-sha256 "$MANIFEST_SHA256"

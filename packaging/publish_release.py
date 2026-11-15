@@ -74,7 +74,7 @@ class GitHubReleases:
         return [item for page in self.api(path + '?per_page=100', '--paginate', '--slurp') for item in page]
 
     def tag_commit(self, tag):
-        return self.api(f'commits/{quote("tags/" + tag, safe="")}')['sha']
+        return self.api(f'commits/{quote("refs/tags/" + tag, safe="")}')['sha']
 
     def find(self, tag):
         matches = [release for release in self.paginated('releases') if release['tag_name'] == tag]

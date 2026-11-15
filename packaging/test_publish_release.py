@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from prepare_release import digest
-from publish_release import publish
+from publish_release import GitHubReleases, publish
 
 
 VERSION = '3.0.1'
@@ -94,6 +95,12 @@ class PublishReleaseTest(unittest.TestCase):
         self.assertFalse(self.promote()['draft'])
         self.assertEqual(set(self.client.remote), {path.name for path in self.root.iterdir()})
         self.assertTrue(self.client.latest)
+
+    def test_github_lookup_uses_fully_qualified_tag_ref(self):
+        client = GitHubReleases('example/OpenKJ')
+        with patch.object(client, 'api', return_value={'sha': COMMIT}) as api:
+            self.assertEqual(client.tag_commit(TAG), COMMIT)
+        api.assert_called_once_with('commits/refs%2Ftags%2Fv3.0.1')
 
     def test_resumes_partial_upload_without_overwriting(self):
         self.interrupt()

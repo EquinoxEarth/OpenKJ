@@ -33,7 +33,7 @@ The Windows packages are unsigned. Back up your OpenKJ data before upgrading. Ea
 - Restore the selected Karaoke, Break Music and Preview output devices when their pipelines are recreated after playback stops. [`57a08b33`](https://github.com/EquinoxEarth/OpenKJ/commit/57a08b33)
 - Handle karaoke startup and playback failures more reliably and preserve the handoff between Break Music and Karaoke during repeated starts and stops. [`1291ef44`](https://github.com/EquinoxEarth/OpenKJ/commit/1291ef44)
 - Restore WAV playback in the packaged macOS app and add smoke checks for the bundled media runtime. [`1fa7e26b`](https://github.com/EquinoxEarth/OpenKJ/commit/1fa7e26b)
-- Open karaoke ZIP archives whose Windows paths contain Unicode characters. [`f0150342`](https://github.com/EquinoxEarth/OpenKJ/commit/f0150342)
+- Open karaoke ZIP archives whose Windows paths contain Unicode characters. The regression test covers both the archive path and the paths of files used to create it. [`f0150342`](https://github.com/EquinoxEarth/OpenKJ/commit/f0150342), [`bd9e6701`](https://github.com/EquinoxEarth/OpenKJ/commit/bd9e6701)
 - Prepare CD+G media on a worker thread for song startup so extraction and file preparation leave the interface responsive. [`b51002ef`](https://github.com/EquinoxEarth/OpenKJ/commit/b51002ef)
 
 ## Library, queues and history

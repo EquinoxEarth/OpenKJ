@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMediaPlayer>
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -17,6 +18,9 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QVariantAnimation>
+#include <QVideoFrame>
+#include <QVideoSink>
 #include <spdlog/sinks/null_sink.h>
 #include <algorithm>
 
@@ -47,6 +51,7 @@ private slots:
         settings.setEstimationSkipEmptySingers(true);
         settings.setRotationDisplayVisible(false);
         settings.setRotationDisplayFullscreen(false);
+        settings.setRotationDisplayTicker(false);
         settings.setRotationDisplaySingerCount(5);
         settings.setRotationDisplayShowEmptySingers(false);
         settings.setRotationDisplayShowSummary(false);
@@ -754,6 +759,203 @@ private slots:
             QVERIFY(display.rect().contains(video->geometry()));
             QVERIFY(!display.grab().isNull());
         }
+    }
+
+    void tickerShowsTheFullRotationAndCentersTheVideo()
+    {
+        auto records = singers();
+        records[4].paused = true;
+        QStringList expected{"Drew"};
+        for (int index = 0; index < 21; ++index) {
+            const auto name = QString("Singer %1").arg(index + 1);
+            okj::RotationSinger singer(200 + index, name, static_cast<int>(records.size()), false,
+                                        QDateTime::currentDateTime());
+            singer.cachedNextSongPath = QString("/test/extra-%1.zip").arg(index);
+            records.append(singer);
+            expected.append(name);
+        }
+        expected.append(QStringList{"Alex", "Morgan"});
+
+        TableModelRotation model;
+        model.onRotationLoaded(records);
+        model.setCurrentSinger(105);
+        Settings settings;
+        settings.setRotationDisplaySingerCount(2);
+        settings.setRotationDisplayVideoEnabled(true);
+        settings.setRotationDisplayVideoOnLeft(false);
+        settings.setRotationDisplayShowSummary(true);
+        RotationDisplay display(model);
+        display.resize(1100, 650);
+        display.show();
+        display.setCurrentSinger("Morgan", true);
+        QCOMPARE(display.singerNames(), QStringList({"Drew", "Singer 1"}));
+        auto *video = display.videoDisplay();
+        QVERIFY(video->geometry().center().x() > display.width() / 2);
+
+        settings.setRotationDisplayTicker(true);
+        display.applySettings();
+        QVERIFY(Settings().rotationDisplayTicker());
+        QCOMPARE(display.singerNames(), expected);
+        QCOMPARE(display.currentSingerName(), QString("Morgan"));
+        RotationDisplay restored(model);
+        QCOMPARE(restored.singerNames(), expected);
+
+        auto *summary = display.findChild<QLabel *>("rotationSummary");
+        QVERIFY(summary && summary->isVisible());
+        for (const auto size : {QSize(1100, 650), QSize(320, 240)}) {
+            display.resize(size);
+            const auto area = video->geometry();
+            QVERIFY(!area.isEmpty());
+            QVERIFY(display.rect().contains(area));
+            QVERIFY(qAbs(area.center().x() - display.rect().center().x()) <= 1);
+            QVERIFY(area.left() > 0 && area.right() < display.width() - 1);
+            QVERIFY(summary->geometry().top() > area.bottom());
+        }
+
+        settings.setRotationDisplayShowEmptySingers(true);
+        display.applySettings();
+        expected.prepend("Taylor");
+        expected.insert(expected.size() - 1, "Jamie");
+        QCOMPARE(display.singerNames(), expected);
+
+        settings.setRotationDisplayTicker(false);
+        display.applySettings();
+        QCOMPARE(display.singerNames(), QStringList({"Taylor", "Drew"}));
+        QVERIFY(video->geometry().center().x() > display.width() / 2);
+    }
+
+    void tickerRepeatsAndMovesWithOneSinger()
+    {
+        TableModelRotation model;
+        model.onRotationLoaded(singers().mid(0, 1));
+        Settings settings;
+        settings.setRotationDisplayTicker(true);
+        settings.setRotationDisplayVideoEnabled(true);
+        settings.setRotationDisplayShowSummary(true);
+        settings.setRotationDisplayShowHeading(false);
+        const auto restoreOpacity = qScopeGuard([&settings, opacity = settings.rotationDisplayRowOpacity()] {
+            settings.setRotationDisplayRowOpacity(opacity);
+        });
+        settings.setRotationDisplayRowOpacity(60);
+        RotationDisplay display(model);
+        display.resize(1100, 650);
+        display.show();
+        QCOMPARE(display.singerNames(), QStringList({"Alex"}));
+        auto *summary = display.findChild<QLabel *>("rotationSummary");
+        QVERIFY(summary && summary->isVisible());
+        const int top = display.videoDisplay()->geometry().bottom() + 1;
+        const QRect strip(0, top, display.width(), summary->geometry().top() - top);
+        QVERIFY(!strip.isEmpty());
+        const auto grabStrip = [&] { return display.grab(strip).toImage(); };
+        const auto first = grabStrip();
+        QVERIFY(!first.isNull());
+
+        // A single name must repeat across the strip from the first frame.
+        const auto background = settings.rotationDisplayBackgroundColor();
+        bool repeated = false;
+        for (int y = 0; y < first.height() && !repeated; ++y) {
+            int cards = 0;
+            int run = 0;
+            for (int x = 0; x < first.width(); ++x) {
+                if (first.pixelColor(x, y) != background) {
+                    ++run;
+                } else {
+                    if (run > 20 * first.devicePixelRatio())
+                        ++cards;
+                    run = 0;
+                }
+            }
+            repeated = cards >= 3;
+        }
+        QVERIFY(repeated);
+        QTRY_VERIFY_WITH_TIMEOUT(grabStrip() != first, 1500);
+    }
+
+    void videoBackgroundFramesDoNotAdvanceTheTicker()
+    {
+        if (QGuiApplication::platformName() == QStringLiteral("cocoa"))
+            QSKIP("This test pauses the Qt animation used by the offscreen backend.");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        Settings settings;
+        settings.setRotationDisplayTicker(true);
+        settings.setRotationDisplayBackgroundImage(directory.filePath("background.mp4"));
+        TableModelRotation model;
+        model.onRotationLoaded(singers().mid(0, 1));
+        RotationDisplay display(model);
+        display.resize(900, 500);
+        display.show();
+
+        auto *ticker = display.findChild<QWidget *>("rotationTickerStrip");
+        auto *animation = display.findChild<QVariantAnimation *>("rotationTickerAnimation");
+        auto *player = display.findChild<QMediaPlayer *>();
+        QVERIFY(ticker && ticker->isVisible() && !ticker->geometry().isEmpty());
+        QVERIFY(animation && player && player->videoSink());
+        QTRY_COMPARE(player->source(), QUrl::fromLocalFile(settings.rotationDisplayBackgroundImage()));
+        QTRY_COMPARE(animation->state(), QAbstractAnimation::Running);
+        animation->pause();
+
+        // Change the image above the strip while preserving its background pixels.
+        QImage frame(display.size(), QImage::Format_RGB32);
+        frame.fill(settings.rotationDisplayBackgroundColor());
+        player->videoSink()->setVideoFrame(QVideoFrame(frame));
+        const auto strip = ticker->geometry();
+        const auto grabStrip = [&] { return display.grab(strip).toImage(); };
+        QTRY_COMPARE(display.grab(QRect(0, 0, 1, 1)).toImage().pixelColor(0, 0),
+                     settings.rotationDisplayBackgroundColor());
+        const auto pausedStrip = grabStrip();
+        QVERIFY(!pausedStrip.isNull());
+        for (const auto color : {Qt::red, Qt::blue}) {
+            QTest::qWait(25);
+            QPainter painter(&frame);
+            painter.fillRect(QRect(0, 0, frame.width(), strip.top() / 2), color);
+            painter.end();
+            player->videoSink()->setVideoFrame(QVideoFrame(frame));
+            QTRY_COMPARE(display.grab(QRect(0, 0, 1, 1)).toImage().pixelColor(0, 0), QColor(color));
+            QVERIFY(grabStrip() == pausedStrip);
+        }
+
+        animation->resume();
+        QTRY_VERIFY_WITH_TIMEOUT(grabStrip() != pausedStrip, 1500);
+    }
+
+    void macTickerPresentsTheLatestBackgroundFrameAtRefresh()
+    {
+        if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
+            QSKIP("Requires native macOS display refresh callbacks.");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        Settings settings;
+        settings.setRotationDisplayTicker(true);
+        settings.setRotationDisplayBackgroundImage(directory.filePath("background.mp4"));
+        TableModelRotation model;
+        model.onRotationLoaded(singers().mid(0, 1));
+        RotationDisplay display(model);
+        display.resize(900, 500);
+        display.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&display));
+
+        auto *player = display.findChild<QMediaPlayer *>();
+        QVERIFY(player && player->videoSink());
+        QTRY_COMPARE(player->source(), QUrl::fromLocalFile(settings.rotationDisplayBackgroundImage()));
+        const auto backgroundPixel = [&] {
+            return display.grab(QRect(0, 0, 1, 1)).toImage().pixelColor(0, 0);
+        };
+        const auto sendFrame = [&](Qt::GlobalColor color) {
+            QImage frame(display.size(), QImage::Format_RGB32);
+            frame.fill(color);
+            player->videoSink()->setVideoFrame(QVideoFrame(frame));
+        };
+        sendFrame(Qt::red);
+        sendFrame(Qt::blue);
+        QCOMPARE(backgroundPixel(), settings.rotationDisplayBackgroundColor());
+        QTRY_COMPARE(backgroundPixel(), QColor(Qt::blue));
+
+        const auto source = player->source();
+        display.hide();
+        QCOMPARE(player->source(), source);
+        display.show();
+        QCOMPARE(backgroundPixel(), QColor(Qt::blue));
     }
 
     void closeFullscreenAndRestartPreserveIndependentState()

@@ -351,6 +351,11 @@ void DlgSettings::setupRotationDisplayPage()
     layout->addWidget(help);
     auto *listGroup = new QGroupBox(tr("Upcoming singers"), page);
     auto *listLayout = new QFormLayout(listGroup);
+    auto *singerLayout = new QComboBox(listGroup);
+    singerLayout->setObjectName("comboBoxRotationDisplaySingerLayout");
+    singerLayout->addItems({tr("Vertical list"), tr("Horizontal ticker")});
+    singerLayout->setCurrentIndex(m_settings.rotationDisplayTicker() ? 1 : 0);
+    listLayout->addRow(tr("Singer list style"), singerLayout);
     auto *count = new QSpinBox(listGroup);
     count->setObjectName("spinBoxRotationDisplaySingers");
     count->setRange(1, 20);
@@ -399,11 +404,26 @@ void DlgSettings::setupRotationDisplayPage()
     videoPosition->setObjectName("comboBoxRotationDisplayVideoPosition");
     videoPosition->addItems({tr("Left of singer list"), tr("Right of singer list")});
     videoPosition->setCurrentIndex(m_settings.rotationDisplayVideoOnLeft() ? 0 : 1);
-    videoPosition->setEnabled(showVideo->isChecked());
     videoLayout->addRow(tr("CDG/video position"), videoPosition);
-    connect(showVideo, &QCheckBox::toggled, this, [this, videoPosition](bool checked) {
+    const auto updateLayoutControls = [singerLayout, count, showVideo, videoPosition,
+                                       countLabel = listLayout->labelForField(count),
+                                       positionLabel = videoLayout->labelForField(videoPosition)] {
+        const bool vertical = singerLayout->currentIndex() == 0;
+        count->setEnabled(vertical);
+        countLabel->setEnabled(vertical);
+        const bool positionEnabled = vertical && showVideo->isChecked();
+        videoPosition->setEnabled(positionEnabled);
+        positionLabel->setEnabled(positionEnabled);
+    };
+    updateLayoutControls();
+    connect(singerLayout, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, updateLayoutControls](int index) {
+        m_settings.setRotationDisplayTicker(index == 1);
+        updateLayoutControls();
+        emit rotationDisplaySettingsChanged();
+    });
+    connect(showVideo, &QCheckBox::toggled, this, [this, updateLayoutControls](bool checked) {
         m_settings.setRotationDisplayVideoEnabled(checked);
-        videoPosition->setEnabled(checked);
+        updateLayoutControls();
         emit rotationDisplaySettingsChanged();
     });
     connect(videoPosition, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {

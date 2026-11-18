@@ -128,6 +128,8 @@ public:
     void setRotationDisplayFullscreen(bool fullscreen);
     [[nodiscard]] QByteArray rotationDisplayGeometry() const;
     void setRotationDisplayGeometry(const QByteArray &geometry);
+    [[nodiscard]] bool rotationDisplayTicker() const;
+    void setRotationDisplayTicker(bool enabled);
     [[nodiscard]] int rotationDisplaySingerCount() const;
     void setRotationDisplaySingerCount(int count);
     [[nodiscard]] bool rotationDisplayShowEmptySingers() const;

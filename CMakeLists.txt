@@ -436,7 +436,7 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
         src/models/tablemodelrotation.cpp src/okjtypes.cpp src/settings.cpp src/simplecrypt.cpp
         src/resources.qrc)
     target_link_libraries(openkj-rotation-display-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
-        Qt6::Svg Qt6::Multimedia spdlog::spdlog)
+        Qt6::Svg Qt6::Multimedia Qt6::Concurrent spdlog::spdlog)
     add_test(NAME rotation-display COMMAND openkj-rotation-display-test)
     set_tests_properties(rotation-display PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

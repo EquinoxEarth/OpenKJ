@@ -462,6 +462,16 @@ void Settings::setRotationDisplayGeometry(const QByteArray &geometry)
         settings->setValue("rotationDisplay/geometry", geometry);
 }
 
+bool Settings::rotationDisplayTicker() const
+{
+    return settings->value("rotationDisplay/ticker", false).toBool();
+}
+
+void Settings::setRotationDisplayTicker(bool enabled)
+{
+    settings->setValue("rotationDisplay/ticker", enabled);
+}
+
 int Settings::rotationDisplaySingerCount() const
 {
     return qBound(1, settings->value("rotationDisplay/singerCount", 5).toInt(), 20);

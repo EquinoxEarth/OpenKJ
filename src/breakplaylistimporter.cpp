@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QScopeGuard>
+#include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -38,6 +39,44 @@ struct Song {
     int duration = 0;
     bool known = false;
 };
+
+int destinationPlaylistId(QSqlDatabase &database, const BreakPlaylistImportRequest &request)
+{
+    QSqlQuery playlist(database);
+    if (request.playlistId >= 0) {
+        prepare(playlist, "SELECT playlistid FROM bmplaylists WHERE playlistid=:id");
+        playlist.bindValue(":id", request.playlistId);
+        execute(playlist);
+        if (!playlist.next())
+            throw std::runtime_error("The destination playlist was removed during import.");
+        return request.playlistId;
+    }
+
+    prepare(playlist, "SELECT playlistid FROM bmplaylists WHERE title=:title COLLATE NOCASE");
+    playlist.bindValue(":title", request.playlistTitle);
+    execute(playlist);
+    if (playlist.next())
+        return playlist.value(0).toInt();
+
+    prepare(playlist, "INSERT INTO bmplaylists (title) VALUES (:title)");
+    playlist.bindValue(":title", request.playlistTitle);
+    execute(playlist);
+    return playlist.lastInsertId().toInt();
+}
+
+qint64 nextPlaylistPosition(QSqlDatabase &database, int playlistId)
+{
+    QSqlQuery playlist(database);
+    prepare(playlist, "SELECT COALESCE(MAX(position),-1)+1 FROM bmplsongs WHERE playlist=:playlist");
+    playlist.bindValue(":playlist", playlistId);
+    execute(playlist);
+    if (!playlist.next())
+        throw std::runtime_error("Unable to determine the playlist append position.");
+    return playlist.value(0).toLongLong();
+}
+
+constexpr auto insertPlaylistSong = "INSERT INTO bmplsongs (playlist,position,artist,title,filename,duration,path) "
+                                    "VALUES (:playlist,:position,:song,:song,:song,:song,:song)";
 }
 
 BreakPlaylistImporter::BreakPlaylistImporter(QObject *parent) : QObject(parent)
@@ -78,6 +117,88 @@ void BreakPlaylistImporter::cancel()
         m_state->cancelled = true;
 }
 
+void BreakPlaylistImporter::importFolder(const BreakPlaylistImportRequest &request, QSqlDatabase &database,
+                                         State &state, BreakPlaylistImportResult &result)
+{
+    const auto cancelled = [&] {
+        result.cancelled = state.cancelled.load();
+        return result.cancelled;
+    };
+    if (cancelled())
+        return;
+
+    QSqlQuery transaction(database);
+    if (!transaction.exec("BEGIN IMMEDIATE"))
+        throw std::runtime_error(transaction.lastError().text().toStdString());
+    bool committed = false;
+    const auto rollback = qScopeGuard([&] { if (!committed) database.rollback(); });
+
+    auto prefix = QDir(request.libraryFolder).absolutePath();
+    if (!prefix.endsWith('/'))
+        prefix += '/';
+    // Match the literal folder and its descendants using the existing path index.
+    QSqlQuery tracks(database);
+    tracks.setForwardOnly(true);
+    prepare(tracks, "SELECT songid FROM bmsongs WHERE path COLLATE BINARY >= :start "
+                    "AND path COLLATE BINARY < :end ORDER BY path COLLATE BINARY");
+    tracks.bindValue(":start", prefix);
+    tracks.bindValue(":end", prefix.chopped(1) + '0');
+    execute(tracks);
+    QList<int> songs;
+    while (tracks.next()) {
+        if (cancelled())
+            return;
+        songs.append(tracks.value(0).toInt());
+    }
+    if (tracks.lastError().isValid())
+        throw std::runtime_error(tracks.lastError().text().toStdString());
+    tracks.finish();
+    if (songs.isEmpty() || cancelled())
+        return;
+    state.total = songs.size();
+
+    result.playlistId = destinationPlaylistId(database, request);
+    QSqlQuery existing(database);
+    existing.setForwardOnly(true);
+    prepare(existing, "SELECT artist FROM bmplsongs WHERE playlist=:playlist");
+    existing.bindValue(":playlist", result.playlistId);
+    execute(existing);
+    QSet<int> added;
+    while (existing.next()) {
+        if (cancelled())
+            return;
+        added.insert(existing.value(0).toInt());
+    }
+    if (existing.lastError().isValid())
+        throw std::runtime_error(existing.lastError().text().toStdString());
+    existing.finish();
+
+    auto position = nextPlaylistPosition(database, result.playlistId);
+    QSqlQuery insert(database);
+    prepare(insert, insertPlaylistSong);
+    insert.bindValue(":playlist", result.playlistId);
+    qint64 imported = 0;
+    for (int song : songs) {
+        if (cancelled())
+            return;
+        if (added.contains(song)) {
+            ++result.skipped;
+        } else {
+            insert.bindValue(":position", position++);
+            insert.bindValue(":song", song);
+            execute(insert);
+            ++imported;
+        }
+        ++state.processed;
+    }
+    if (cancelled())
+        return;
+    if (!database.commit())
+        throw std::runtime_error(database.lastError().text().toStdString());
+    committed = true;
+    result.imported = imported;
+}
+
 BreakPlaylistImportResult BreakPlaylistImporter::run(const BreakPlaylistImportRequest &request,
                                                      const std::shared_ptr<State> &state)
 {
@@ -102,6 +223,10 @@ BreakPlaylistImportResult BreakPlaylistImporter::run(const BreakPlaylistImportRe
                     throw std::runtime_error("A playlist title is required.");
                 if (!db.open())
                     throw std::runtime_error(db.lastError().text().toStdString());
+                if (!request.libraryFolder.isEmpty()) {
+                    importFolder(request, db, *state, result);
+                    return;
+                }
                 QFile file(request.filename);
                 if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
                     throw std::runtime_error(file.errorString().toStdString());
@@ -166,28 +291,7 @@ BreakPlaylistImportResult BreakPlaylistImporter::run(const BreakPlaylistImportRe
                     throw std::runtime_error(transaction.lastError().text().toStdString());
                 bool committed = false;
                 const auto rollback = qScopeGuard([&] { if (!committed) db.rollback(); });
-                QSqlQuery playlist(db);
-                if (request.playlistId >= 0) {
-                    prepare(playlist, "SELECT playlistid FROM bmplaylists WHERE playlistid=:id");
-                    playlist.bindValue(":id", request.playlistId);
-                    execute(playlist);
-                    if (!playlist.next())
-                        throw std::runtime_error("The destination playlist was removed during import.");
-                    result.playlistId = request.playlistId;
-                } else {
-                    prepare(playlist, "SELECT playlistid FROM bmplaylists WHERE title=:title COLLATE NOCASE");
-                    playlist.bindValue(":title", request.playlistTitle);
-                    execute(playlist);
-                    if (playlist.next())
-                        result.playlistId = playlist.value(0).toInt();
-                }
-                playlist.finish();
-                if (result.playlistId < 0) {
-                    prepare(playlist, "INSERT INTO bmplaylists (title) VALUES (:title)");
-                    playlist.bindValue(":title", request.playlistTitle);
-                    execute(playlist);
-                    result.playlistId = playlist.lastInsertId().toInt();
-                }
+                result.playlistId = destinationPlaylistId(db, request);
                 QHash<QString, int> ids;
                 QSqlQuery insert(db);
                 prepare(insert, "INSERT OR IGNORE INTO bmsongs (artist,title,path,filename,duration,searchstring) "
@@ -212,15 +316,8 @@ BreakPlaylistImportResult BreakPlaylistImporter::run(const BreakPlaylistImportRe
                     }
                     ids.insert(it.key(), id);
                 }
-                prepare(playlist, "SELECT COALESCE(MAX(position),-1)+1 FROM bmplsongs WHERE playlist=:playlist");
-                playlist.bindValue(":playlist", result.playlistId);
-                execute(playlist);
-                if (!playlist.next())
-                    throw std::runtime_error("Unable to determine the playlist append position.");
-                int position = playlist.value(0).toInt();
-                playlist.finish();
-                prepare(insert, "INSERT INTO bmplsongs (playlist,position,artist,title,filename,duration,path) "
-                                "VALUES (:playlist,:position,:song,:song,:song,:song,:song)");
+                auto position = nextPlaylistPosition(db, result.playlistId);
+                prepare(insert, insertPlaylistSong);
                 for (const auto &path : orderedPaths) {
                     if (cancelled())
                         return;

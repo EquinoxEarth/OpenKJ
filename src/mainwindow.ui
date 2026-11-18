@@ -3493,6 +3493,7 @@ QPushButton:default {
      </property>
      <addaction name="actionPlaylistNew"/>
      <addaction name="actionPlaylistImport"/>
+     <addaction name="actionPlaylistCreateFromFolder"/>
      <addaction name="actionPlaylistExport"/>
      <addaction name="actionPlaylistDelete"/>
     </widget>
@@ -3632,6 +3633,11 @@ QPushButton:default {
   <action name="actionPlaylistImport">
    <property name="text">
     <string>Import</string>
+   </property>
+  </action>
+  <action name="actionPlaylistCreateFromFolder">
+   <property name="text">
+    <string>Create From Folder…</string>
    </property>
   </action>
   <action name="actionPlaylistExport">

@@ -202,6 +202,95 @@ private slots:
         QCOMPARE(scalar("SELECT COUNT(*) FROM bmplsongs WHERE playlist=7").toInt(), 3);
     }
 
+    void folderImportUsesIndexedDescendantsAndSkipsExistingTracks()
+    {
+        auto folder = request();
+        folder.filename.clear();
+        folder.libraryFolder = temporary.filePath(QStringLiteral("Música_%[Mix]"));
+        const QStringList paths{
+            folder.libraryFolder + "/Rock/03.mp3",
+            folder.libraryFolder + "/01.mp3",
+            folder.libraryFolder + "/Dance/Disco/02.mp3",
+            folder.libraryFolder + " Extra/04.mp3",
+            temporary.filePath(QStringLiteral("Música-X[Mix]/05.mp3")),
+            temporary.filePath(QStringLiteral("música_%[Mix]/06.mp3"))
+        };
+        QSqlQuery insert;
+        QVERIFY(insert.prepare("INSERT INTO bmsongs (path,artist,title,duration) VALUES (?,'Library Artist','Indexed Song',123)"));
+        for (const auto &path : paths) {
+            insert.bindValue(0, path);
+            QVERIFY(insert.exec());
+        }
+
+        BreakPlaylistImporter importer;
+        QSignalSpy finished(&importer, &BreakPlaylistImporter::finished);
+        QVERIFY(importer.start(folder));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 10000);
+        const auto result = finished.takeFirst()[0].value<BreakPlaylistImportResult>();
+        QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+        QCOMPARE(result.imported, 3);
+        QCOMPARE(result.skipped, 0);
+        QVERIFY(result.playlistId >= 0);
+        QCOMPARE(scalar("SELECT COUNT(*) FROM bmsongs").toInt(), paths.size());
+        QSqlQuery songs("SELECT s.path,s.artist,s.title,s.duration FROM bmplsongs p "
+                        "JOIN bmsongs s ON s.songid=p.artist ORDER BY p.position");
+        for (const int row : {1, 2, 0}) {
+            QVERIFY(songs.next());
+            QCOMPARE(songs.value(0).toString(), paths[row]);
+            QCOMPARE(songs.value(1).toString(), QString("Library Artist"));
+            QCOMPARE(songs.value(2).toString(), QString("Indexed Song"));
+            QCOMPARE(songs.value(3).toInt(), 123);
+        }
+        QVERIFY(!songs.next());
+        songs.finish();
+
+        folder.playlistId = result.playlistId;
+        folder.playlistTitle.clear();
+        folder.libraryFolder += '/';
+        QVERIFY(importer.start(folder));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 10000);
+        const auto repeated = finished.takeFirst()[0].value<BreakPlaylistImportResult>();
+        QVERIFY2(repeated.error.isEmpty(), qPrintable(repeated.error));
+        QCOMPARE(repeated.playlistId, result.playlistId);
+        QCOMPARE(repeated.imported, 0);
+        QCOMPARE(repeated.skipped, 3);
+        QCOMPARE(scalar("SELECT COUNT(*) FROM bmplsongs").toInt(), 3);
+    }
+
+    void folderImportWithNoMatchesOrFailedWriteLeavesNoPlaylist()
+    {
+        auto folder = request();
+        folder.filename.clear();
+        folder.libraryFolder = "/Disconnected";
+        BreakPlaylistImporter importer;
+        QSignalSpy finished(&importer, &BreakPlaylistImporter::finished);
+        QVERIFY(importer.start(folder));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 10000);
+        const auto empty = finished.takeFirst()[0].value<BreakPlaylistImportResult>();
+        QVERIFY2(empty.error.isEmpty(), qPrintable(empty.error));
+        QCOMPARE(empty.playlistId, -1);
+        QCOMPARE(empty.imported, 0);
+        QCOMPARE(scalar("SELECT COUNT(*) FROM bmplaylists").toInt(), 0);
+
+        QSqlQuery track;
+        QVERIFY(track.prepare("INSERT INTO bmsongs (path) VALUES (?)"));
+        folder.libraryFolder = temporary.filePath("nested");
+        for (const auto &path : {"first.mp3", "second.mp3"}) {
+            track.bindValue(0, QDir(folder.libraryFolder).filePath(path));
+            QVERIFY(track.exec());
+        }
+        exec("CREATE TRIGGER reject_import BEFORE INSERT ON bmplsongs WHEN NEW.position=1 "
+             "BEGIN SELECT RAISE(ABORT,'test rollback'); END");
+        QVERIFY(importer.start(folder));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 10000);
+        const auto failed = finished.takeFirst()[0].value<BreakPlaylistImportResult>();
+        QVERIFY(failed.error.contains("test rollback"));
+        QCOMPARE(failed.imported, 0);
+        QCOMPARE(scalar("SELECT COUNT(*) FROM bmplaylists").toInt(), 0);
+        QCOMPARE(scalar("SELECT COUNT(*) FROM bmplsongs").toInt(), 0);
+        QCOMPARE(scalar("SELECT COUNT(*) FROM bmsongs").toInt(), 2);
+    }
+
     void failureRollsBackSongsAndPlaylist()
     {
         writePlaylist({relative, relative});

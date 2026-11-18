@@ -13,6 +13,7 @@
 #include <QMenu>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QDir>
 #include <QImageReader>
 #include <QDesktopServices>
 #include <QHeaderView>
@@ -1021,6 +1022,8 @@ void MainWindow::setupConnections() {
     connect(ui->actionDisplay_Metadata, &QAction::toggled, this, &MainWindow::actionDisplayMetadataToggled);
     connect(ui->actionPlaylistNew, &QAction::triggered, this, &MainWindow::actionPlaylistNewTriggered);
     connect(ui->actionPlaylistImport, &QAction::triggered, this, &MainWindow::actionPlaylistImportTriggered);
+    connect(ui->actionPlaylistCreateFromFolder, &QAction::triggered,
+            this, &MainWindow::actionPlaylistCreateFromFolderTriggered);
     connect(ui->actionPlaylistExport, &QAction::triggered, this, &MainWindow::actionPlaylistExportTriggered);
     connect(ui->actionPlaylistDelete, &QAction::triggered, this, &MainWindow::actionPlaylistDeleteTriggered);
     connect(ui->buttonBmSearch, &QPushButton::clicked, this, &MainWindow::searchBreakMusic);
@@ -2668,6 +2671,7 @@ void MainWindow::bmDbUpdated() {
         return;
     m_tableModelBreakSongs.loadDatabase();
     ui->actionPlaylistImport->setEnabled(!m_playlistImporter.isRunning());
+    ui->actionPlaylistCreateFromFolder->setEnabled(!m_playlistImporter.isRunning());
 }
 
 void MainWindow::bmDbCleared() {
@@ -2885,12 +2889,56 @@ void MainWindow::actionPlaylistImportTriggered() {
     bool ok = false;
     const auto title = QInputDialog::getText(this, tr("New Playlist"), tr("Playlist title:"),
                                              QLineEdit::Normal, tr("New Playlist"), &ok);
-    if (!ok || title.isEmpty() || m_playlistImporter.isRunning() || bmDbDialog->isUpdating())
+    if (ok && !title.isEmpty())
+        startBreakPlaylistImport({.databasePath = m_database.databaseName(), .filename = importFile,
+                                  .playlistTitle = title});
+}
+
+void MainWindow::actionPlaylistCreateFromFolderTriggered()
+{
+    if (m_playlistImporter.isRunning() || bmDbDialog->isUpdating())
         return;
-    BreakPlaylistImportRequest request{m_database.databaseName(), importFile, title};
+
+    auto startFolder = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    QSqlQuery sources(m_database);
+    if (sources.exec("SELECT path FROM bmsrcdirs ORDER BY path LIMIT 1") && sources.next())
+        startFolder = sources.value(0).toString();
+    sources.finish();
+
+    QFileDialog::Options options = QFileDialog::ShowDirsOnly;
+#ifdef Q_OS_LINUX
+    options |= QFileDialog::DontUseNativeDialog;
+#endif
+    const auto folder = QFileDialog::getExistingDirectory(this, tr("Choose a Break Music folder"),
+                                                           startFolder, options);
+    if (folder.isEmpty())
+        return;
+
+    auto folderName = QDir(folder).dirName();
+    if (folderName.isEmpty())
+        folderName = tr("New Playlist");
+    QStringList titles{folderName};
+    while (m_tableModelPlaylists->canFetchMore())
+        m_tableModelPlaylists->fetchMore();
+    for (int row = 0; row < m_tableModelPlaylists->rowCount(); ++row)
+        titles.append(m_tableModelPlaylists->index(row, 1).data().toString());
+    titles.removeDuplicates();
+    bool ok = false;
+    const auto title = QInputDialog::getItem(this, tr("Create From Folder"),
+        tr("Enter a new playlist name or select a playlist to add to."), titles, 0, true, &ok).trimmed();
+    if (ok && !title.isEmpty())
+        startBreakPlaylistImport({.databasePath = m_database.databaseName(), .playlistTitle = title,
+                                  .libraryFolder = folder});
+}
+
+void MainWindow::startBreakPlaylistImport(BreakPlaylistImportRequest request)
+{
+    if (m_playlistImporter.isRunning() || bmDbDialog->isUpdating())
+        return;
+    const bool folderImport = !request.libraryFolder.isEmpty();
     QSqlQuery destination(m_database);
     destination.prepare("SELECT playlistid FROM bmplaylists WHERE title=:title COLLATE NOCASE");
-    destination.bindValue(":title", title);
+    destination.bindValue(":title", request.playlistTitle);
     if (!destination.exec()) {
         QMessageBox::warning(this, tr("Playlist import failed"), destination.lastError().text());
         return;
@@ -2899,8 +2947,9 @@ void MainWindow::actionPlaylistImportTriggered() {
         request.playlistId = destination.value(0).toInt();
     destination.finish();
     const int selectedAtStart = m_bmCurrentPlaylist;
-    auto *progress = new QProgressDialog(tr("Reading playlist…"), tr("Cancel"), 0, 0, this);
-    progress->setWindowTitle(tr("Import Playlist"));
+    auto *progress = new QProgressDialog(folderImport ? tr("Finding tracks in the library…") : tr("Reading playlist…"),
+                                         tr("Cancel"), 0, 0, this);
+    progress->setWindowTitle(folderImport ? tr("Create From Folder") : tr("Import Playlist"));
     progress->setWindowModality(Qt::NonModal);
     progress->setAutoClose(false);
     progress->setAutoReset(false);
@@ -2909,7 +2958,7 @@ void MainWindow::actionPlaylistImportTriggered() {
     const QList<QWidget *> widgets{ui->tableViewBmDb, ui->tableViewBmPlaylist,
         ui->btnPlTop, ui->btnPlUp, ui->btnPlDown, ui->btnPlBottom, ui->btnBmPlRandomize, bmDbDialog.get()};
     const QList<QAction *> actions{ui->actionPlaylistImport, ui->actionPlaylistNew,
-        ui->actionPlaylistDelete, ui->actionManage_Break_DB};
+        ui->actionPlaylistCreateFromFolder, ui->actionPlaylistDelete, ui->actionManage_Break_DB};
     QList<bool> widgetEnabled, actionEnabled;
     for (auto *widget : widgets) {
         widgetEnabled.append(widget->isEnabled());
@@ -2921,17 +2970,21 @@ void MainWindow::actionPlaylistImportTriggered() {
     }
     connect(progress, &QProgressDialog::canceled, &m_playlistImporter, &BreakPlaylistImporter::cancel);
     connect(&m_playlistImporter, &BreakPlaylistImporter::progressChanged, progress,
-            [progress](qint64 processed, qint64 total) {
+            [progress, folderImport](qint64 processed, qint64 total) {
         if (total > 0) {
             const auto limit = std::numeric_limits<int>::max();
             progress->setRange(0, static_cast<int>(std::min<qint64>(total, limit)));
             progress->setValue(static_cast<int>(std::min<qint64>(processed, limit)));
-            progress->setLabelText(processed == total ? tr("Saving playlist…") :
-                tr("Reading song metadata… %1 of %2").arg(processed).arg(total));
+            if (processed == total)
+                progress->setLabelText(tr("Saving playlist…"));
+            else if (folderImport)
+                progress->setLabelText(tr("Adding tracks… %1 of %2").arg(processed).arg(total));
+            else
+                progress->setLabelText(tr("Reading song metadata… %1 of %2").arg(processed).arg(total));
         }
     });
     connect(&m_playlistImporter, &BreakPlaylistImporter::finished, progress,
-            [this, progress, selectedAtStart, widgets, actions, widgetEnabled, actionEnabled]
+            [this, progress, selectedAtStart, folderImport, widgets, actions, widgetEnabled, actionEnabled]
             (const BreakPlaylistImportResult &result) {
         progress->hide();
         progress->deleteLater();
@@ -2946,9 +2999,18 @@ void MainWindow::actionPlaylistImportTriggered() {
             QMessageBox::warning(this, tr("Playlist import failed"), result.error);
             return;
         }
-        m_tableModelBreakSongs.loadDatabase();
-        // Keep a later user selection; otherwise display the import destination.
-        const int desired = m_bmCurrentPlaylist == selectedAtStart ? result.playlistId : m_bmCurrentPlaylist;
+        if (folderImport && result.imported == 0) {
+            QMessageBox::information(this, tr("Create From Folder"), result.skipped > 0
+                ? tr("All matching tracks are already in the playlist.")
+                : tr("No tracks from this folder or its subfolders are in the Break Music library. "
+                     "Scan the folder in Manage Break DB, then try again."));
+            return;
+        }
+        if (!folderImport)
+            m_tableModelBreakSongs.loadDatabase();
+        const bool canSwitchPlaylist = !folderImport || m_mediaBackendBm.state() == MediaBackend::StoppedState;
+        const int desired = canSwitchPlaylist && m_bmCurrentPlaylist == selectedAtStart
+            ? result.playlistId : m_bmCurrentPlaylist;
         int row = -1;
         {
             const QSignalBlocker block(ui->comboBoxBmPlaylists);
@@ -2966,10 +3028,15 @@ void MainWindow::actionPlaylistImportTriggered() {
             ui->comboBoxBmPlaylists->setCurrentIndex(row);
         }
         const int selected = m_tableModelPlaylists->index(row, 0).data().toInt();
-        if (selected != m_bmCurrentPlaylist || selected == result.playlistId)
+        if (folderImport && selected == m_bmCurrentPlaylist && selected == result.playlistId) {
+            m_tableModelPlaylistSongs.setCurrentPlaylist(selected);
+            checkBoxBmBreakToggled(ui->checkBoxBmBreak->isChecked());
+        } else if (selected != m_bmCurrentPlaylist || selected == result.playlistId) {
             comboBoxBmPlaylistsIndexChanged(row);
-        statusBar()->showMessage(tr("Imported %1 songs; skipped %2 unavailable files.")
-                                 .arg(result.imported).arg(result.skipped), 10000);
+        }
+        const auto summary = folderImport ? tr("Added %1 tracks; skipped %2 already in the playlist.")
+                                          : tr("Imported %1 songs; skipped %2 unavailable files.");
+        statusBar()->showMessage(summary.arg(result.imported).arg(result.skipped), 10000);
     });
     m_playlistImporter.start(request);
     progress->show();
@@ -3533,6 +3600,7 @@ void MainWindow::bmDatabaseAboutToUpdate() {
     while (m_tableModelPlaylists->canFetchMore())
         m_tableModelPlaylists->fetchMore();
     ui->actionPlaylistImport->setEnabled(false);
+    ui->actionPlaylistCreateFromFolder->setEnabled(false);
 }
 
 void MainWindow::bmSongMoved(const int &oldPos, const int &newPos) {

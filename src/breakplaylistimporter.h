@@ -8,9 +8,12 @@
 #include <atomic>
 #include <memory>
 
+class QSqlDatabase;
+
 struct BreakPlaylistImportRequest {
     QString databasePath, filename, playlistTitle;
     int playlistId = -1; // Existing destination, or create/reuse the named playlist.
+    QString libraryFolder = {}; // Import indexed descendants when set.
 };
 
 struct BreakPlaylistImportResult {
@@ -41,6 +44,8 @@ private:
     };
     static BreakPlaylistImportResult run(const BreakPlaylistImportRequest &request,
                                          const std::shared_ptr<State> &state);
+    static void importFolder(const BreakPlaylistImportRequest &request, QSqlDatabase &database,
+                             State &state, BreakPlaylistImportResult &result);
     QFutureWatcher<BreakPlaylistImportResult> m_watcher{this};
     QTimer m_progressTimer{this};
     std::shared_ptr<State> m_state;

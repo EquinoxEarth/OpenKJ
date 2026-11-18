@@ -293,6 +293,8 @@ private slots:
     void actionDisplayFilenamesToggled(const bool &arg1);
     void actionPlaylistNewTriggered();
     void actionPlaylistImportTriggered();
+    void actionPlaylistCreateFromFolderTriggered();
+    void startBreakPlaylistImport(BreakPlaylistImportRequest request);
     void actionPlaylistExportTriggered();
     void actionPlaylistDeleteTriggered();
     void actionAboutTriggered();

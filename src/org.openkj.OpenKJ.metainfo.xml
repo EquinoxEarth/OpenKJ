@@ -32,6 +32,11 @@
         <binary>openkj</binary>
     </provides>
     <releases>
+        <release version="3.2.0" date="2026-11-26" type="stable">
+            <description>
+                <p>Added a scrolling horizontal singer ticker, faster Rotation Display video backgrounds with an in-memory cache, playlists created from Break Music library folders, and progressive singer history search.</p>
+            </description>
+        </release>
         <release version="3.1.0" date="2026-11-15" type="stable">
             <description>
                 <p>Added paused singers with preserved song queues, optional audio normalization for Karaoke and Break Music, and a queue summary on the Rotation Display. Improved audio device routing, playback transitions, and library reliability.</p>

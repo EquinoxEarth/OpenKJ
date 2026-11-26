@@ -328,6 +328,7 @@ if(OPENKJ_BUILD_SMOKE_TESTS)
     set_tests_properties(run-guard PROPERTIES TIMEOUT 20)
     add_executable(openkj-library-sort-test
         packaging/library_sort_test.cpp src/models/tablemodelkaraokesongs.cpp
+        src/models/tablemodelhistorysongs.cpp
         src/okjtypes.cpp src/settings.cpp src/simplecrypt.cpp src/resources.qrc)
     target_link_libraries(openkj-library-sort-test PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql
         Qt6::Svg Qt6::Concurrent spdlog::spdlog)

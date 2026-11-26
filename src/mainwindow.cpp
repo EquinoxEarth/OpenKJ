@@ -97,6 +97,7 @@ void MainWindow::updateIcons() {
     ui->btnRotDown->setIcon(QIcon(thm + "actions/22/go-down.svg"));
     ui->pushButton->setIcon(QIcon(thm + "actions/22/edit-find.svg"));
     ui->buttonClearSearch->setIcon(QIcon(thm + "actions/22/edit-clear.svg"));
+    ui->buttonClearHistorySearch->setIcon(QIcon(thm + "actions/22/edit-clear.svg"));
     ui->buttonClearQueue->setIcon(QIcon(thm + "actions/22/edit-clear-all.svg"));
     ui->btnQTop->setIcon(QIcon(thm + "actions/22/go-top.svg"));
     ui->btnQUp->setIcon(QIcon(thm + "actions/22/go-up.svg"));
@@ -1112,6 +1113,23 @@ void MainWindow::setupConnections() {
     connect(ui->btnToggleCdgWindow, &QPushButton::toggled, cdgWindow.get(), &DlgCdg::setVisible);
     connect(ui->tableViewBmPlaylist, &QTableView::customContextMenuRequested, this,
             &MainWindow::tableViewBmPlaylistContextMenu);
+    const auto searchHistory = [this] {
+        m_historySongsModel.search(ui->lineEditHistorySearch->text());
+        ui->tableViewHistory->scrollToTop();
+    };
+    connect(ui->lineEditHistorySearch, &QLineEdit::textChanged, this, [this, searchHistory] {
+        if (m_settings.progressiveSearchEnabled())
+            searchHistory();
+    });
+    connect(ui->lineEditHistorySearch, &QLineEdit::returnPressed, this, searchHistory);
+    const auto clearHistorySearch = [this, searchHistory] {
+        const QSignalBlocker block(ui->lineEditHistorySearch);
+        ui->lineEditHistorySearch->clear();
+        searchHistory();
+        ui->lineEditHistorySearch->setFocus();
+    };
+    connect(ui->buttonClearHistorySearch, &QPushButton::clicked, this, clearHistorySearch);
+    connect(ui->lineEditHistorySearch, &CustomLineEdit::escapePressed, this, clearHistorySearch);
     connect(ui->pushButtonHistoryPlay, &QPushButton::clicked, this, &MainWindow::buttonHistoryPlayClicked);
     connect(ui->pushButtonHistoryToQueue, &QPushButton::clicked, this, &MainWindow::buttonHistoryToQueueClicked);
     connect(ui->tableViewHistory, &QTableView::doubleClicked, this, &MainWindow::tableViewHistoryDoubleClicked);
@@ -3697,7 +3715,12 @@ void MainWindow::showAlert(const QString &title, const QString &message) {
 void MainWindow::tableViewRotationCurrentChanged(const QModelIndex &cur, const QModelIndex &prev) {
     Q_UNUSED(prev)
     m_qModel.loadSinger(cur.data(Qt::UserRole).toInt());
-    m_historySongsModel.loadSinger(m_rotModel.getSinger(cur.data(Qt::UserRole).toInt()).name);
+    const auto singerName = m_rotModel.getSinger(cur.data(Qt::UserRole).toInt()).name;
+    if (singerName != m_historySongsModel.currentSingerName()) {
+        const QSignalBlocker block(ui->lineEditHistorySearch);
+        ui->lineEditHistorySearch->clear();
+    }
+    m_historySongsModel.loadSinger(singerName);
     if (!m_settings.treatAllSingersAsRegs() && !cur.sibling(cur.row(), TableModelRotation::COL_REGULAR).data().toBool())
         ui->tabWidgetQueue->removeTab(1);
     else if (ui->tabWidgetQueue->count() == 1) {
@@ -4393,15 +4416,22 @@ void MainWindow::buttonHistoryPlayClicked()
 }
 
 void MainWindow::buttonHistoryToQueueClicked() {
-    auto selRows = ui->tableViewHistory->selectionModel()->selectedRows();
+    const auto selRows = ui->tableViewHistory->selectionModel()->selectedRows();
     if (selRows.empty())
         return;
 
-    std::for_each(selRows.begin(), selRows.end(), [&](auto index) {
-        auto path = index.sibling(index.row(), 2).data().toString();
-        int curSingerId = m_rotModel.getSingerByName(m_historySongsModel.currentSingerName()).id;
-        int key = index.sibling(index.row(), 6).data().toInt();
-        int dbSongId = m_karaokeSongsModel.getIdForPath(path);
+    struct SelectedSong {
+        QString path;
+        int key;
+    };
+    QList<SelectedSong> songs;
+    songs.reserve(selRows.size());
+    for (const auto &index : selRows)
+        songs.append({index.siblingAtColumn(TableModelHistorySongs::PATH).data().toString(),
+                      index.siblingAtColumn(TableModelHistorySongs::KEY_CHANGE).data().toInt()});
+    const int singerId = m_rotModel.getSingerByName(m_historySongsModel.currentSingerName()).id;
+    for (const auto &[path, key] : songs) {
+        const int dbSongId = m_karaokeSongsModel.getIdForPath(path);
         if (dbSongId == -1) {
             QMessageBox::warning(this,
                                  "Unable to add history song",
@@ -4410,10 +4440,10 @@ void MainWindow::buttonHistoryToQueueClicked() {
                                  "OpenKJ's database has been removed or renamed outside of OpenKJ\n\n"
                                  "Song: " + path
             );
-            return;
+            continue;
         }
-        m_qModel.songAddSlot(dbSongId, curSingerId, key);
-    });
+        m_qModel.songAddSlot(dbSongId, singerId, key);
+    }
     ui->tableViewHistory->clearSelection();
     ui->tabWidgetQueue->setCurrentIndex(0);
 }
@@ -4430,18 +4460,21 @@ void MainWindow::tableViewHistoryDoubleClicked([[maybe_unused]]const QModelIndex
 }
 
 void MainWindow::tableViewHistoryContextMenu(const QPoint &pos) {
-    int selCount = ui->tableViewHistory->selectionModel()->selectedRows().size();
+    const auto rows = ui->tableViewHistory->selectionModel()->selectedRows(TableModelHistorySongs::SONG_ID);
+    const auto selCount = rows.size();
     if (selCount == 1) {
         QModelIndex index = ui->tableViewHistory->indexAt(pos);
         if (index.isValid()) {
             QMenu contextMenu(this);
-            contextMenu.addAction("Preview", [&]() {
-                previewKaraokeSong(index.siblingAtColumn(TableModelHistorySongs::PATH).data().toString());
+            const auto path = index.siblingAtColumn(TableModelHistorySongs::PATH).data().toString();
+            const int songId = index.siblingAtColumn(TableModelHistorySongs::SONG_ID).data().toInt();
+            contextMenu.addAction("Preview", [this, path]() {
+                previewKaraokeSong(path);
             });
             contextMenu.addAction("Play", this, &MainWindow::buttonHistoryPlayClicked);
             contextMenu.addAction("Add to queue", this, &MainWindow::buttonHistoryToQueueClicked);
             contextMenu.addSeparator();
-            contextMenu.addAction("Delete", [&]() {
+            contextMenu.addAction("Delete", [this, songId]() {
                 QMessageBox msgBox;
                 msgBox.setText("Delete song from singer history?");
                 msgBox.setIcon(QMessageBox::Warning);
@@ -4451,8 +4484,7 @@ void MainWindow::tableViewHistoryContextMenu(const QPoint &pos) {
                 int ret = msgBox.exec();
                 if (ret == QMessageBox::Cancel)
                     return;
-                int songIndex = index.sibling(index.row(), 0).data().toInt();
-                m_historySongsModel.deleteSong(songIndex);
+                m_historySongsModel.deleteSong(songId);
                 ui->tableViewHistory->clearSelection();
             });
             contextMenu.exec(QCursor::pos());
@@ -4461,7 +4493,11 @@ void MainWindow::tableViewHistoryContextMenu(const QPoint &pos) {
         QMenu contextMenu(this);
         contextMenu.addAction("Add to queue", this, &MainWindow::buttonHistoryToQueueClicked);
         contextMenu.addSeparator();
-        contextMenu.addAction("Delete", [&]() {
+        QList<int> songIds;
+        songIds.reserve(rows.size());
+        for (const auto &row : rows)
+            songIds.append(row.data().toInt());
+        contextMenu.addAction("Delete", [this, songIds]() {
             QMessageBox msgBox;
             msgBox.setText("Delete songs from singer history?");
             msgBox.setIcon(QMessageBox::Warning);
@@ -4471,10 +4507,8 @@ void MainWindow::tableViewHistoryContextMenu(const QPoint &pos) {
             int ret = msgBox.exec();
             if (ret == QMessageBox::Cancel)
                 return;
-            auto indexes = ui->tableViewHistory->selectionModel()->selectedRows();
-            std::for_each(indexes.rbegin(), indexes.rend(), [&](QModelIndex index) {
-                m_historySongsModel.deleteSong(index.data().toInt());
-            });
+            for (int songId : songIds)
+                m_historySongsModel.deleteSong(songId);
             ui->tableViewHistory->clearSelection();
         });
 

@@ -18,7 +18,9 @@ private:
     std::string m_loggingPrefix{"[HistorySongsModel]"};
     std::shared_ptr<spdlog::logger> m_logger;
     std::vector<okj::HistorySong> m_songs;
+    std::vector<size_t> m_visibleRows;
     QString m_currentSinger;
+    QString m_searchText;
     int m_lastSortColumn{3};
     Qt::SortOrder m_lastSortOrder{Qt::AscendingOrder};
     TableModelKaraokeSongs &m_karaokeSongsModel;
@@ -30,6 +32,9 @@ private:
 
     QVariant getSizeHint(int section) const;
     QString getColumnName(int section) const;
+    void rebuildVisibleRows();
+    void sortSongs();
+    [[nodiscard]] static QVariant getDisplayData(const okj::HistorySong &song, int column);
 
 public slots:
     void setFont(const QFont &font);
@@ -52,6 +57,7 @@ public:
     [[nodiscard]] QVariant data(const QModelIndex &index, int role) const override;
     void loadSinger(int historySingerId);
     void loadSinger(const QString &historySingerName);
+    void search(const QString &text);
     void saveSong(const QString &singerName, const QString &filePath, const QString &artist, const QString &title,
                   const QString &songid, int keyChange);
     void saveSong(const QString &singerName, const QString &filePath, const QString &artist, const QString &title,
@@ -65,7 +71,6 @@ public:
     void refresh();
     [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
     void sort(int column, Qt::SortOrder order) override;
-    [[nodiscard]] QVariant getDisplayData(const QModelIndex &index) const;
     [[nodiscard]] static QVariant getTextAlignment(const QModelIndex &index) ;
 
 };

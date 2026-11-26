@@ -1,6 +1,8 @@
 // Uses a temporary SQLite library and test-mode settings, never the host library.
 #include "models/tablemodelkaraokesongs.h"
+#include "models/tablemodelhistorysongs.h"
 
+#include <QAbstractItemModelTester>
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QSemaphore>
@@ -135,6 +137,51 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, 10000);
         QCOMPARE(ids(model), QList<int>({1,4,3,2}));
         QVERIFY(!wrongThread);
+    }
+
+    void historySearchUsesCorrectSongAfterFilteringAndSorting()
+    {
+        exec("CREATE TABLE historySingers (id INTEGER PRIMARY KEY, name TEXT)");
+        exec("CREATE TABLE historySongs (id INTEGER PRIMARY KEY, historySinger INT, filepath TEXT, "
+             "artist TEXT, title TEXT, songid TEXT, keychange INT, plays INT, lastplay TEXT)");
+        exec("INSERT INTO historySingers VALUES (1,'Ada'),(2,'Riley')");
+        exec("INSERT INTO historySongs VALUES "
+             "(10,1,'/songs/LIVE.zip','O''Neill','Rock & Roll','D1',-2,1,NULL),"
+             "(11,1,'/songs/second.zip','O''Neill','Rock & Roll','D2',0,2,NULL),"
+             "(12,1,'/songs/other.zip','Another','Track','D3',0,3,NULL),"
+             "(13,2,'/songs/riley.zip','Another','Song','D4',0,1,NULL)");
+
+        SearchOptions options;
+        options.ignoreApostrophes(true);
+        TableModelKaraokeSongs library;
+        TableModelHistorySongs model(library);
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+        model.loadSinger("Ada");
+        QCOMPARE(model.rowCount({}), 3);
+
+        model.search("roll, oneill ROCK and");
+        QCOMPARE(model.rowCount({}), 2);
+        model.sort(TableModelHistorySongs::SONGID, Qt::AscendingOrder);
+        QPersistentModelIndex selected(model.index(0, TableModelHistorySongs::SONG_ID));
+        QCOMPARE(selected.data().toUInt(), 10u);
+        model.sort(TableModelHistorySongs::SONGID, Qt::DescendingOrder);
+        QCOMPARE(selected.row(), 1);
+        QCOMPARE(selected.data().toUInt(), 10u);
+        model.search("live D1");
+        QCOMPARE(model.rowCount({}), 1);
+        QCOMPARE(model.index(0, TableModelHistorySongs::PATH).data().toString(), "/songs/LIVE.zip");
+        QCOMPARE(model.index(0, TableModelHistorySongs::KEY_CHANGE).data().toInt(), -2);
+
+        model.refresh();
+        QCOMPARE(model.rowCount({}), 1);
+        model.deleteSong(model.index(0, TableModelHistorySongs::SONG_ID).data().toInt());
+        QCOMPARE(model.rowCount({}), 0);
+        model.search({});
+        QCOMPARE(model.rowCount({}), 2);
+        model.search("missing");
+        model.loadSinger("Riley");
+        QCOMPARE(model.rowCount({}), 1);
+        QCOMPARE(model.index(0, TableModelHistorySongs::SONG_ID).data().toUInt(), 13u);
     }
 
     void normalizedSearchText()
